@@ -22,6 +22,7 @@ policies:
 
         This policy provides security checks across key GCP services, uncovering misconfigurations that could put critical resources at risk, particularly those exposed to the public internet:
 
+        - Agent Identity
         - AlloyDB
         - API Gateway
         - API Keys
@@ -59,6 +60,7 @@ policies:
         - Essential Contacts
         - Filestore
         - Firestore
+        - Gemini Enterprise
         - Google Kubernetes Engine (GKE)
         - Identity and Access Management (IAM)
         - Identity-Aware Proxy (IAP)
@@ -445,6 +447,21 @@ policies:
           - uid: mondoo-gcp-security-workbench-instance-no-default-service-account
           - uid: mondoo-gcp-security-vertexai-rag-corpus-cmek-encryption
           - uid: mondoo-gcp-security-vertexai-job-cmek-encryption
+          - uid: mondoo-gcp-security-vertexai-agent-engine-not-public
+          - uid: mondoo-gcp-security-vertexai-agent-engine-no-plaintext-secrets
+          - uid: mondoo-gcp-security-vertexai-agent-engine-cmek-encryption
+          - uid: mondoo-gcp-security-vertexai-notebook-runtime-template-no-actas-bypass
+          - uid: mondoo-gcp-security-vertexai-notebook-runtime-template-not-public
+          - uid: mondoo-gcp-security-workbench-instance-not-public
+      - title: Gemini Enterprise
+        checks:
+          - uid: mondoo-gcp-security-gemini-enterprise-app-not-public
+          - uid: mondoo-gcp-security-gemini-enterprise-widget-no-public-access
+          - uid: mondoo-gcp-security-gemini-enterprise-assistant-model-armor
+          - uid: mondoo-gcp-security-gemini-enterprise-assistant-model-armor-fail-closed
+      - title: Agent Identity
+        checks:
+          - uid: mondoo-gcp-security-agent-identity-auth-provider-not-public
       - title: Cloud Workstations
         checks:
           - uid: mondoo-gcp-security-workstations-cluster-private-cluster
@@ -471,6 +488,7 @@ policies:
           - uid: mondoo-gcp-security-model-armor-sanitize-logging
           - uid: mondoo-gcp-security-model-armor-rai-confidence
           - uid: mondoo-gcp-security-model-armor-fail-closed-on-detector-failure
+          - uid: mondoo-gcp-security-model-armor-floor-setting-enforced
       - title: Security Command Center
         checks:
           - uid: mondoo-gcp-security-scc-notification-configs
@@ -44449,3 +44467,1695 @@ queries:
     refs:
       - url: https://docs.cloud.google.com/gemini-enterprise-agent-platform/machine-learning/general/cmek
         title: Customer-managed encryption keys (CMEK) for Vertex AI
+  - uid: mondoo-gcp-security-vertexai-agent-engine-not-public
+    title: Ensure Vertex AI Agent Engine agents are not publicly accessible
+    impact: 95
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-5-15
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
+      compliance/owasp-llm-top-10-2025: owasp-llm-top-10-2025-llm02
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-7-2-1
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    variants:
+      - uid: mondoo-gcp-security-vertexai-agent-engine-not-public-gcp
+        tags:
+          mondoo.com/filter-title: GCP Project
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-vertexai-agent-engine-not-public-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-vertexai-agent-engine-not-public-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-vertexai-agent-engine-not-public-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check verifies that no Vertex AI Agent Engine agent grants access to a principal that represents the public rather than a known identity.
+
+        An Agent Engine agent is a reasoning engine resource with its own IAM policy. The check fails an agent when any binding in that policy names `allUsers`, which admits any caller on the internet, or `allAuthenticatedUsers`, which admits every holder of a Google account. It also fails an agent whose IAM policy the scan cannot read, because an unread policy is not evidence that the agent is private.
+
+        **Why this matters**
+
+        A deployed agent does more than answer questions. It calls tools, reads Secret Manager secrets, queries data sources, and invokes other Google Cloud APIs, all under the service account it runs as. A public binding lets anyone who learns the agent's resource name drive that machinery, so the exposure is everything the agent's identity can reach, not only the model behind it.
+
+        Public callers also bring the attacks an agent is weakest against. Prompt injection from an untrusted caller can steer tool calls, pull data out of connected stores, or run up model spend, and none of it requires breaking authentication, because there is none to break.
+
+        Remove the public bindings and grant `roles/aiplatform.user` or a narrower custom role to the specific users, groups, or service accounts that call the agent. The `constraints/iam.allowedPolicyMemberDomains` organization policy rejects future bindings to public principals across the organization.
+      audit: |
+        ### Audit via Console
+
+        1. In the Google Cloud console, go to the **Agent Platform** > **Deployments** page and note each deployed agent's resource name.
+        2. Read each agent's IAM policy as shown in the CLI audit below, because the console does not display resource-level bindings for Agent Engine.
+
+        ### Audit via CLI
+
+        1. Read the IAM policy of each agent:
+
+        ```bash
+        curl -s -X POST \
+          -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+          -H "Content-Type: application/json" \
+          "https://REGION-aiplatform.googleapis.com/v1/projects/PROJECT_ID/locations/REGION/reasoningEngines/AGENT_ID:getIamPolicy" \
+          -d '{}' \
+          | jq '.bindings[]? | select(.members[] | test("^allUsers$|^allAuthenticatedUsers$"))'
+        ```
+
+        A passing agent returns no output from the `jq` filter. A failing agent returns one or more bindings that include `allUsers` or `allAuthenticatedUsers`.
+      remediation:
+        - id: terraform
+          desc: |
+            Grant agent access to named principals with `google_vertex_ai_reasoning_engine_iam_member`, and never to `allUsers` or `allAuthenticatedUsers`:
+
+            ```hcl
+            resource "google_vertex_ai_reasoning_engine_iam_member" "caller" {
+              reasoning_engine = google_vertex_ai_reasoning_engine.agent.id
+              region           = "us-central1"
+              role             = "roles/aiplatform.user"
+              member           = "group:agent-users@example.com"
+            }
+            ```
+        - id: cli
+          desc: |
+            Agent Engine has no `gcloud` command for resource IAM, so update the policy through the API:
+
+            1. Save the current policy, which includes the `etag` the update must carry:
+
+            ```bash
+            curl -s -X POST \
+              -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+              -H "Content-Type: application/json" \
+              "https://REGION-aiplatform.googleapis.com/v1/projects/PROJECT_ID/locations/REGION/reasoningEngines/AGENT_ID:getIamPolicy" \
+              -d '{}' > policy.json
+            ```
+
+            2. Remove `allUsers` and `allAuthenticatedUsers` from every binding in `policy.json`, and add the named principals that need access.
+
+            3. Write the policy back:
+
+            ```bash
+            curl -s -X POST \
+              -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+              -H "Content-Type: application/json" \
+              "https://REGION-aiplatform.googleapis.com/v1/projects/PROJECT_ID/locations/REGION/reasoningEngines/AGENT_ID:setIamPolicy" \
+              -d "{\"policy\": $(cat policy.json)}"
+            ```
+    refs:
+      - url: https://docs.cloud.google.com/gemini-enterprise-agent-platform/reference/rest/v1/projects.locations.reasoningEngines/setIamPolicy
+        title: "Method: reasoningEngines.setIamPolicy"
+      - url: https://docs.cloud.google.com/iam/docs/overview
+        title: IAM overview
+  - uid: mondoo-gcp-security-vertexai-agent-engine-not-public-gcp
+    filters: asset.platform == 'gcp-project'
+    mql: |
+      gcp.project.vertexai.reasoningEngines.all(public == false)
+  - uid: mondoo-gcp-security-vertexai-agent-engine-not-public-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_vertex_ai_reasoning_engine_iam_member') ||
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_vertex_ai_reasoning_engine_iam_binding')
+    mql: |
+      terraform.resources('google_vertex_ai_reasoning_engine_iam_member').all(
+        arguments['member'] != "allUsers" &&
+        arguments['member'] != "allAuthenticatedUsers"
+      )
+      terraform.resources('google_vertex_ai_reasoning_engine_iam_binding').all(
+        arguments['members'].none(_ == "allUsers" || _ == "allAuthenticatedUsers")
+      )
+  - uid: mondoo-gcp-security-vertexai-agent-engine-not-public-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_vertex_ai_reasoning_engine_iam_member') ||
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_vertex_ai_reasoning_engine_iam_binding')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_vertex_ai_reasoning_engine_iam_member').all(
+        change.after['member'] != "allUsers" &&
+        change.after['member'] != "allAuthenticatedUsers"
+      )
+      terraform.plan.resourceChanges.where(type == 'google_vertex_ai_reasoning_engine_iam_binding').all(
+        change.after['members'].none(_ == "allUsers" || _ == "allAuthenticatedUsers")
+      )
+  - uid: mondoo-gcp-security-vertexai-agent-engine-not-public-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_vertex_ai_reasoning_engine_iam_member') ||
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_vertex_ai_reasoning_engine_iam_binding')
+    mql: |
+      terraform.state.resources.where(type == 'google_vertex_ai_reasoning_engine_iam_member').all(
+        values['member'] != "allUsers" &&
+        values['member'] != "allAuthenticatedUsers"
+      )
+      terraform.state.resources.where(type == 'google_vertex_ai_reasoning_engine_iam_binding').all(
+        values['members'].none(_ == "allUsers" || _ == "allAuthenticatedUsers")
+      )
+  - uid: mondoo-gcp-security-vertexai-agent-engine-no-plaintext-secrets
+    title: Ensure Agent Engine agents do not store secrets in plaintext env vars
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-dsp-17
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-3
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ds-5
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-28
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/owasp-llm-top-10-2025: owasp-llm-top-10-2025-llm02
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a04
+      compliance/pci-dss-4: pcidss-requirement-8-6-2
+      compliance/soc2-2017: soc2-control-cc6-1-9
+      compliance/vda-isa-5: vda-isa-5-4-1-3
+    variants:
+      - uid: mondoo-gcp-security-vertexai-agent-engine-no-plaintext-secrets-gcp
+        tags:
+          mondoo.com/filter-title: GCP Project
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-vertexai-agent-engine-no-plaintext-secrets-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-vertexai-agent-engine-no-plaintext-secrets-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-vertexai-agent-engine-no-plaintext-secrets-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check verifies that credentials reach a Vertex AI Agent Engine agent through Secret Manager rather than through plain environment variables in its deployment.
+
+        An agent's deployment specification carries two kinds of environment variable. Plain variables in `spec.deploymentSpec.env` hold their value in the agent configuration, while secret variables in `spec.deploymentSpec.secretEnv` hold a reference to a Secret Manager secret. The check reads the names of the plain variables and fails any agent whose plain variable names match a common secret pattern such as `PASSWORD`, `API_KEY`, `SECRET`, `PRIVATE_KEY`, `ACCESS_TOKEN`, `AUTH_TOKEN`, `CREDENTIALS`, or `CONNECTION_STRING`. The scan never reads the values.
+
+        **Why this matters**
+
+        Agents are built to call other systems, so they routinely need API keys for model providers, SaaS tools, and databases. A key placed in a plain variable is part of the agent configuration and is returned to any principal allowed to read the agent, which in most projects includes developers and CI pipelines that have no reason to hold the key.
+
+        The value also spreads beyond the agent. It sits in deployment scripts, in Terraform state, and in the source repository that defines the agent, and reading it leaves no audit record. A Secret Manager reference logs every access, limits who can read the value with its own IAM policy, and lets the secret rotate without redeploying the agent.
+
+        Because the check reads names rather than values, a match is a signal to review rather than proof of a live credential. Move each matched value into Secret Manager and pass it to the agent as a secret environment variable.
+      audit: |
+        ### Audit via Console
+
+        1. In the Google Cloud console, go to the **Agent Platform** > **Deployments** page.
+        2. Open each agent and review the environment variables listed in its deployment configuration.
+
+        A passing agent shows no plain environment variable whose name resembles a secret. A failing agent shows one or more plain variables with names such as `API_KEY` or `PASSWORD`.
+
+        ### Audit via CLI
+
+        1. List the plain environment variable names of an agent:
+
+        ```bash
+        curl -s \
+          -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+          "https://REGION-aiplatform.googleapis.com/v1/projects/PROJECT_ID/locations/REGION/reasoningEngines/AGENT_ID" \
+          | jq -r '.spec.deploymentSpec.env[]?.name'
+        ```
+
+        A passing agent returns no names that resemble secrets. A failing agent returns names such as `OPENAI_API_KEY` or `DB_PASSWORD`.
+      remediation:
+        - id: terraform
+          desc: |
+            Pass credentials to the agent as `secret_env` entries that reference Secret Manager, and keep `env` for non-sensitive settings:
+
+            ```hcl
+            resource "google_vertex_ai_reasoning_engine" "agent" {
+              display_name = "support-agent"
+              region       = "us-central1"
+
+              spec {
+                deployment_spec {
+                  env {
+                    name  = "LOG_LEVEL"
+                    value = "info"
+                  }
+
+                  secret_env {
+                    name = "MODEL_PROVIDER_API_KEY"
+
+                    secret_ref {
+                      secret  = google_secret_manager_secret.model_provider_key.secret_id
+                      version = "latest"
+                    }
+                  }
+                }
+              }
+            }
+            ```
+        - id: console
+          desc: |
+            To move a credential into Secret Manager:
+
+            1. In the Google Cloud console, go to **Security** > **Secret Manager** and create a secret that holds the credential.
+            2. Grant the agent's service account `roles/secretmanager.secretAccessor` on that secret.
+            3. Redeploy the agent with the variable passed as a secret environment variable that references the secret, and without the plain variable.
+    refs:
+      - url: https://docs.cloud.google.com/gemini-enterprise-agent-platform/scale/runtime/deploy-an-agent
+        title: Deploy an agent
+  - uid: mondoo-gcp-security-vertexai-agent-engine-no-plaintext-secrets-gcp
+    filters: asset.platform == 'gcp-project'
+    mql: |
+      gcp.project.vertexai.reasoningEngines.all(
+        envVarNames.none(
+          _ == /(?i)(password|secret|api[_-]?key|private[_-]?key|access[_-]?token|auth[_-]?token|credentials|connection[_-]?string)/
+        )
+      )
+  - uid: mondoo-gcp-security-vertexai-agent-engine-no-plaintext-secrets-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_vertex_ai_reasoning_engine')
+    mql: |
+      terraform.resources('google_vertex_ai_reasoning_engine').all(
+        blocks.where(type == 'spec').all(
+          blocks.where(type == 'deployment_spec').all(
+            blocks.where(type == 'env').none(
+              arguments['name'] == /(?i)(password|secret|api[_-]?key|private[_-]?key|access[_-]?token|auth[_-]?token|credentials|connection[_-]?string)/
+            )
+          )
+        )
+      )
+  - uid: mondoo-gcp-security-vertexai-agent-engine-no-plaintext-secrets-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_vertex_ai_reasoning_engine')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_vertex_ai_reasoning_engine').all(
+        change.after['spec'] == empty ||
+        change.after['spec'].all(
+          _['deployment_spec'] == empty ||
+          _['deployment_spec'].all(
+            _['env'] == empty ||
+            _['env'].none(
+              _['name'] == /(?i)(password|secret|api[_-]?key|private[_-]?key|access[_-]?token|auth[_-]?token|credentials|connection[_-]?string)/
+            )
+          )
+        )
+      )
+  - uid: mondoo-gcp-security-vertexai-agent-engine-no-plaintext-secrets-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_vertex_ai_reasoning_engine')
+    mql: |
+      terraform.state.resources.where(type == 'google_vertex_ai_reasoning_engine').all(
+        values['spec'] == empty ||
+        values['spec'].all(
+          _['deployment_spec'] == empty ||
+          _['deployment_spec'].all(
+            _['env'] == empty ||
+            _['env'].none(
+              _['name'] == /(?i)(password|secret|api[_-]?key|private[_-]?key|access[_-]?token|auth[_-]?token|credentials|connection[_-]?string)/
+            )
+          )
+        )
+      )
+  - uid: mondoo-gcp-security-vertexai-agent-engine-cmek-encryption
+    title: Ensure Vertex AI Agent Engine agents are encrypted with CMEK
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-2-iv-access-control-encryption-and-decryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-1
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-28
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/owasp-llm-top-10-2025: owasp-llm-top-10-2025-llm02
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a04
+      compliance/pci-dss-4: pcidss-requirement-3-5-1
+      compliance/soc2-2017: soc2-control-cc6-1-10
+      compliance/vda-isa-5: vda-isa-5-5-1-1
+    variants:
+      - uid: mondoo-gcp-security-vertexai-agent-engine-cmek-encryption-gcp
+        tags:
+          mondoo.com/filter-title: GCP Project
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-vertexai-agent-engine-cmek-encryption-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-vertexai-agent-engine-cmek-encryption-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-vertexai-agent-engine-cmek-encryption-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check verifies that each Vertex AI Agent Engine agent is encrypted with a customer-managed Cloud KMS key.
+
+        An agent carries an `encryptionSpec` whose `kmsKeyName` names the Cloud KMS key protecting its data at rest. The key is chosen when the agent is created. An agent without one is encrypted with a Google-managed key, and the check fails it.
+
+        **Why this matters**
+
+        Agent Engine stores more than code. Sessions keep the conversation history of every user, and Memory Bank keeps facts the agent extracted from those conversations, so an agent accumulates exactly the personal and business data its users typed into it.
+
+        A customer-managed key puts that data under the organization's own key lifecycle. Disabling or destroying the key makes the stored conversations unreadable, which is a revocation control that a Google-managed key does not offer. Cloud KMS also records every use of the key, which shows when the data was decrypted.
+
+        Regulated workloads that already require CMEK for databases and buckets usually require it for the same data once it is held by an agent. Other Vertex AI resources in this policy are checked for CMEK on the same basis.
+      audit: |
+        ### Audit via Console
+
+        1. In the Google Cloud console, go to the **Agent Platform** > **Deployments** page.
+        2. Open each agent and review its encryption setting.
+
+        A passing agent shows a customer-managed Cloud KMS key. A failing agent shows Google-managed encryption.
+
+        ### Audit via CLI
+
+        1. Read the encryption key of an agent:
+
+        ```bash
+        curl -s \
+          -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+          "https://REGION-aiplatform.googleapis.com/v1/projects/PROJECT_ID/locations/REGION/reasoningEngines/AGENT_ID" \
+          | jq -r '.encryptionSpec.kmsKeyName // "none"'
+        ```
+
+        A passing agent returns a Cloud KMS key name. A failing agent returns `none`.
+      remediation:
+        - id: terraform
+          desc: |
+            Set `encryption_spec` when the agent is created. The key cannot be added to an existing agent, so changing it replaces the agent:
+
+            ```hcl
+            resource "google_vertex_ai_reasoning_engine" "agent" {
+              display_name = "support-agent"
+              region       = "us-central1"
+
+              encryption_spec {
+                kms_key_name = google_kms_crypto_key.agents.id
+              }
+            }
+            ```
+
+            Grant the Vertex AI service agent `roles/cloudkms.cryptoKeyEncrypterDecrypter` on the key before the agent is created.
+        - id: console
+          desc: |
+            The key is set at creation, so remediation replaces the agent:
+
+            1. Create a Cloud KMS key in the agent's region and grant the Vertex AI service agent `roles/cloudkms.cryptoKeyEncrypterDecrypter` on it.
+            2. Redeploy the agent with the key set as its encryption key.
+            3. Move callers to the new agent and delete the old one.
+    refs:
+      - url: https://docs.cloud.google.com/gemini-enterprise-agent-platform/scale/runtime/deploy-an-agent
+        title: Deploy an agent
+      - url: https://docs.cloud.google.com/kms/docs/cmek
+        title: Customer-managed encryption keys (CMEK)
+  - uid: mondoo-gcp-security-vertexai-agent-engine-cmek-encryption-gcp
+    filters: asset.platform == 'gcp-project'
+    mql: |
+      gcp.project.vertexai.reasoningEngines.all(kmsKey != null)
+  - uid: mondoo-gcp-security-vertexai-agent-engine-cmek-encryption-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_vertex_ai_reasoning_engine')
+    mql: |
+      terraform.resources('google_vertex_ai_reasoning_engine').all(
+        blocks.where(type == 'encryption_spec') != empty &&
+        blocks.where(type == 'encryption_spec').all(arguments['kms_key_name'] != empty)
+      )
+  - uid: mondoo-gcp-security-vertexai-agent-engine-cmek-encryption-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_vertex_ai_reasoning_engine')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_vertex_ai_reasoning_engine').all(
+        change.after['encryption_spec'] != empty &&
+        change.after['encryption_spec'].all(_['kms_key_name'] != empty)
+      )
+  - uid: mondoo-gcp-security-vertexai-agent-engine-cmek-encryption-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_vertex_ai_reasoning_engine')
+    mql: |
+      terraform.state.resources.where(type == 'google_vertex_ai_reasoning_engine').all(
+        values['encryption_spec'] != empty &&
+        values['encryption_spec'].all(_['kms_key_name'] != empty)
+      )
+  # No Terraform variants: google_colab_runtime_template exposes only euc_config.euc_disabled; the act-as bypass is set through the Vertex AI API and has no Terraform attribute.
+  - uid: mondoo-gcp-security-vertexai-notebook-runtime-template-no-actas-bypass
+    title: Ensure Colab Enterprise runtime templates keep the act-as permission check
+    impact: 85
+    filters: asset.platform == 'gcp-vertexai-notebookruntimetemplate'
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-2
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
+      compliance/owasp-llm-top-10-2025: owasp-llm-top-10-2025-llm06
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-7-2-1
+      compliance/soc2-2017: soc2-control-cc6-3-3
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    mql: |
+      gcp.project.vertexaiService.notebookRuntimeTemplate.bypassActasCheck == false
+    docs:
+      desc: |
+        This check verifies that a Colab Enterprise runtime template keeps the permission check that stops users from running notebooks as a service account they are not allowed to use.
+
+        Creating a runtime from a template normally requires `iam.serviceAccounts.actAs` on the template's service account. The template's end-user credential configuration carries a `bypassActasCheck` flag that skips this check. The check fails any template where the flag is `true`.
+
+        **Why this matters**
+
+        The `actAs` permission is what separates being allowed to start a notebook from being allowed to become the identity the notebook runs as. With the check bypassed, anyone who may create a runtime from the template gets a notebook running as the template's service account, even if they hold no permission on that account.
+
+        That is a direct privilege escalation path. Notebook code runs with whatever the service account can reach, which for a data science template is commonly broad read access to BigQuery datasets and Cloud Storage buckets, and sometimes write access to model and pipeline resources.
+
+        Keep the check in place, and grant `roles/iam.serviceAccountUser` on the service account only to the users who should run notebooks as it. A companion check in this policy covers who can use the template itself.
+      audit: |
+        ### Audit via Console
+
+        1. In the Google Cloud console, go to **Colab Enterprise** > **Runtime templates**.
+        2. Note each template's ID and region, and read its end-user credential configuration as shown in the CLI audit below.
+
+        ### Audit via CLI
+
+        1. Read the act-as bypass setting of a runtime template:
+
+        ```bash
+        curl -s \
+          -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+          "https://REGION-aiplatform.googleapis.com/v1/projects/PROJECT_ID/locations/REGION/notebookRuntimeTemplates/TEMPLATE_ID" \
+          | jq '.eucConfig.bypassActasCheck // false'
+        ```
+
+        A passing template returns `false`. A failing template returns `true`.
+      remediation:
+        - id: console
+          desc: |
+            A runtime template's end-user credential configuration cannot be changed after creation, so replace the template:
+
+            1. In the Google Cloud console, go to **Colab Enterprise** > **Runtime templates** and select **New template**.
+            2. Recreate the template's settings without the act-as bypass.
+            3. Grant `roles/iam.serviceAccountUser` on the template's service account to the users who need to run notebooks as it.
+            4. Move users to the new template and delete the old one.
+        - id: cli
+          desc: |
+            To create a replacement template and remove the old one:
+
+            ```bash
+            gcloud colab runtime-templates create \
+              --region=REGION \
+              --display-name=TEMPLATE_NAME \
+              --machine-type=e2-standard-4
+
+            gcloud colab runtime-templates delete OLD_TEMPLATE_ID \
+              --region=REGION
+            ```
+
+            The `gcloud colab runtime-templates create` command does not set the act-as bypass, so a template it creates passes this check.
+    refs:
+      - url: https://docs.cloud.google.com/colab/docs/access-control
+        title: Access control with IAM
+      - url: https://docs.cloud.google.com/colab/docs/create-runtime-template
+        title: Create a runtime template in Colab Enterprise
+  - uid: mondoo-gcp-security-vertexai-notebook-runtime-template-not-public
+    title: Ensure Colab Enterprise runtime templates are not publicly accessible
+    impact: 90
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-5-15
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
+      compliance/owasp-llm-top-10-2025: owasp-llm-top-10-2025-llm02
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-7-2-1
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    variants:
+      - uid: mondoo-gcp-security-vertexai-notebook-runtime-template-not-public-gcp
+        tags:
+          mondoo.com/filter-title: GCP Vertex AI Notebook Runtime Template
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-vertexai-notebook-runtime-template-not-public-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-vertexai-notebook-runtime-template-not-public-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-vertexai-notebook-runtime-template-not-public-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check verifies that no Colab Enterprise runtime template grants access to a principal that represents the public rather than a known identity.
+
+        A runtime template has its own IAM policy, which decides who may create notebook runtimes from it. The check fails a template when any binding names `allUsers` or `allAuthenticatedUsers`, and when the scan cannot read the template's policy.
+
+        **Why this matters**
+
+        A runtime template fixes the machine, the network, and the service account a notebook runs with. Granting a public principal access to it lets anyone with a Google account start notebook runtimes inside the project, attached to the template's network and billed to the project.
+
+        Combined with a template that bypasses the act-as check, a public binding is the shortest path from an anonymous Google account to code running as a project service account. Even without the bypass, public runtime creation consumes compute quota and places attacker-controlled code on the project's network.
+
+        Remove the public bindings and grant `roles/aiplatform.notebookRuntimeUser` to the specific users or groups who run notebooks from the template.
+      audit: |
+        ### Audit via Console
+
+        1. In the Google Cloud console, go to **Colab Enterprise** > **Runtime templates** and select the region.
+        2. Select each template and select **Permissions**.
+        3. Scan the bindings for `allUsers` or `allAuthenticatedUsers`.
+
+        A passing template shows no binding to a public principal. A failing template shows at least one.
+
+        ### Audit via CLI
+
+        1. Read the template's IAM policy:
+
+        ```bash
+        gcloud colab runtime-templates get-iam-policy TEMPLATE_ID \
+          --region=REGION \
+          --format=json \
+          | jq '.bindings[]? | select(.members[] | test("^allUsers$|^allAuthenticatedUsers$"))'
+        ```
+
+        A passing template returns no output from the `jq` filter. A failing template returns one or more bindings that include `allUsers` or `allAuthenticatedUsers`.
+      remediation:
+        - id: terraform
+          desc: |
+            Grant template access to named principals with `google_colab_runtime_template_iam_member`:
+
+            ```hcl
+            resource "google_colab_runtime_template_iam_member" "notebook_users" {
+              runtime_template = google_colab_runtime_template.data_science.id
+              location         = "us-central1"
+              role             = "roles/aiplatform.notebookRuntimeUser"
+              member           = "group:data-science@example.com"
+            }
+            ```
+        - id: console
+          desc: |
+            To remove public access from a runtime template:
+
+            1. In the Google Cloud console, go to **Colab Enterprise** > **Runtime templates** and select the region.
+            2. Select the template and select **Permissions**.
+            3. Remove every binding whose principal is `allUsers` or `allAuthenticatedUsers`.
+            4. Grant the role the users need to the specific users or groups instead.
+        - id: cli
+          desc: |
+            Remove each public binding, then grant access to a named principal:
+
+            ```bash
+            gcloud colab runtime-templates remove-iam-policy-binding TEMPLATE_ID \
+              --region=REGION \
+              --member=allUsers \
+              --role=ROLE
+
+            gcloud colab runtime-templates add-iam-policy-binding TEMPLATE_ID \
+              --region=REGION \
+              --member=group:data-science@example.com \
+              --role=roles/aiplatform.notebookRuntimeUser
+            ```
+
+            Repeat the removal with `--member=allAuthenticatedUsers` if that principal is bound.
+    refs:
+      - url: https://docs.cloud.google.com/colab/docs/manage-access-runtime-template
+        title: Manage access to a runtime template in Colab Enterprise
+  - uid: mondoo-gcp-security-vertexai-notebook-runtime-template-not-public-gcp
+    filters: asset.platform == 'gcp-vertexai-notebookruntimetemplate'
+    mql: |
+      gcp.project.vertexaiService.notebookRuntimeTemplate.public == false
+  - uid: mondoo-gcp-security-vertexai-notebook-runtime-template-not-public-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_colab_runtime_template_iam_member') ||
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_colab_runtime_template_iam_binding')
+    mql: |
+      terraform.resources('google_colab_runtime_template_iam_member').all(
+        arguments['member'] != "allUsers" &&
+        arguments['member'] != "allAuthenticatedUsers"
+      )
+      terraform.resources('google_colab_runtime_template_iam_binding').all(
+        arguments['members'].none(_ == "allUsers" || _ == "allAuthenticatedUsers")
+      )
+  - uid: mondoo-gcp-security-vertexai-notebook-runtime-template-not-public-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_colab_runtime_template_iam_member') ||
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_colab_runtime_template_iam_binding')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_colab_runtime_template_iam_member').all(
+        change.after['member'] != "allUsers" &&
+        change.after['member'] != "allAuthenticatedUsers"
+      )
+      terraform.plan.resourceChanges.where(type == 'google_colab_runtime_template_iam_binding').all(
+        change.after['members'].none(_ == "allUsers" || _ == "allAuthenticatedUsers")
+      )
+  - uid: mondoo-gcp-security-vertexai-notebook-runtime-template-not-public-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_colab_runtime_template_iam_member') ||
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_colab_runtime_template_iam_binding')
+    mql: |
+      terraform.state.resources.where(type == 'google_colab_runtime_template_iam_member').all(
+        values['member'] != "allUsers" &&
+        values['member'] != "allAuthenticatedUsers"
+      )
+      terraform.state.resources.where(type == 'google_colab_runtime_template_iam_binding').all(
+        values['members'].none(_ == "allUsers" || _ == "allAuthenticatedUsers")
+      )
+  - uid: mondoo-gcp-security-workbench-instance-not-public
+    title: Ensure Vertex AI Workbench instances are not publicly accessible
+    impact: 95
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-5-15
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
+      compliance/owasp-llm-top-10-2025: owasp-llm-top-10-2025-llm02
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-7-2-1
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    variants:
+      - uid: mondoo-gcp-security-workbench-instance-not-public-gcp
+        tags:
+          mondoo.com/filter-title: GCP Project
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-workbench-instance-not-public-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-workbench-instance-not-public-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-workbench-instance-not-public-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check verifies that no Vertex AI Workbench instance grants access to a principal that represents the public rather than a known identity.
+
+        A Workbench instance has its own IAM policy, which decides who may open its JupyterLab interface and manage the instance. The check fails an instance when any binding names `allUsers` or `allAuthenticatedUsers`, and when the scan cannot read the instance's policy.
+
+        **Why this matters**
+
+        JupyterLab is an interactive shell on the instance. Anyone who reaches it can run arbitrary code as the instance's service account, read every file on its disks, and use any credentials the notebooks have loaded, so a public binding hands out a command line inside the project.
+
+        Workbench instances usually sit close to sensitive data. They are where analysts load training sets, query production datasets, and keep exported results, which makes them a high-value target with weak monitoring.
+
+        Remove the public bindings and grant `roles/notebooks.runner` or a narrower role to the specific users who work on the instance. The `constraints/iam.allowedPolicyMemberDomains` organization policy rejects future bindings to public principals across the organization.
+      audit: |
+        ### Audit via Console
+
+        1. In the Google Cloud console, go to **Vertex AI** > **Workbench** > **Instances**.
+        2. Select each instance and open its **Permissions** panel.
+        3. Scan the bindings for `allUsers` or `allAuthenticatedUsers`.
+
+        A passing instance shows no binding to a public principal. A failing instance shows at least one.
+
+        ### Audit via CLI
+
+        1. Read the instance's IAM policy:
+
+        ```bash
+        gcloud workbench instances get-iam-policy INSTANCE_NAME \
+          --location=LOCATION \
+          --format=json \
+          | jq '.bindings[]? | select(.members[] | test("^allUsers$|^allAuthenticatedUsers$"))'
+        ```
+
+        A passing instance returns no output from the `jq` filter. A failing instance returns one or more bindings that include `allUsers` or `allAuthenticatedUsers`.
+      remediation:
+        - id: terraform
+          desc: |
+            Grant instance access to named principals with `google_workbench_instance_iam_member`:
+
+            ```hcl
+            resource "google_workbench_instance_iam_member" "analyst" {
+              name     = google_workbench_instance.analysis.name
+              location = "us-central1-a"
+              role     = "roles/notebooks.runner"
+              member   = "user:analyst@example.com"
+            }
+            ```
+        - id: console
+          desc: |
+            To remove public access from a Workbench instance:
+
+            1. In the Google Cloud console, go to **Vertex AI** > **Workbench** > **Instances**.
+            2. Select the instance and open its **Permissions** panel.
+            3. Remove every binding whose principal is `allUsers` or `allAuthenticatedUsers`.
+            4. Grant the role the users need to the specific users or groups instead.
+        - id: cli
+          desc: |
+            Remove each public binding, then grant access to a named principal:
+
+            ```bash
+            gcloud workbench instances remove-iam-policy-binding INSTANCE_NAME \
+              --location=LOCATION \
+              --member=allUsers \
+              --role=ROLE
+
+            gcloud workbench instances add-iam-policy-binding INSTANCE_NAME \
+              --location=LOCATION \
+              --member=user:analyst@example.com \
+              --role=roles/notebooks.runner
+            ```
+
+            Repeat the removal with `--member=allAuthenticatedUsers` if that principal is bound.
+    refs:
+      - url: https://docs.cloud.google.com/gemini-enterprise-agent-platform/notebooks/workbench/instances/manage-access
+        title: Manage access to a Agent Platform Workbench instance
+  - uid: mondoo-gcp-security-workbench-instance-not-public-gcp
+    filters: asset.platform == 'gcp-project'
+    mql: |
+      gcp.project.workbench.instances.all(public == false)
+  - uid: mondoo-gcp-security-workbench-instance-not-public-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_workbench_instance_iam_member') ||
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_workbench_instance_iam_binding')
+    mql: |
+      terraform.resources('google_workbench_instance_iam_member').all(
+        arguments['member'] != "allUsers" &&
+        arguments['member'] != "allAuthenticatedUsers"
+      )
+      terraform.resources('google_workbench_instance_iam_binding').all(
+        arguments['members'].none(_ == "allUsers" || _ == "allAuthenticatedUsers")
+      )
+  - uid: mondoo-gcp-security-workbench-instance-not-public-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_workbench_instance_iam_member') ||
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_workbench_instance_iam_binding')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_workbench_instance_iam_member').all(
+        change.after['member'] != "allUsers" &&
+        change.after['member'] != "allAuthenticatedUsers"
+      )
+      terraform.plan.resourceChanges.where(type == 'google_workbench_instance_iam_binding').all(
+        change.after['members'].none(_ == "allUsers" || _ == "allAuthenticatedUsers")
+      )
+  - uid: mondoo-gcp-security-workbench-instance-not-public-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_workbench_instance_iam_member') ||
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_workbench_instance_iam_binding')
+    mql: |
+      terraform.state.resources.where(type == 'google_workbench_instance_iam_member').all(
+        values['member'] != "allUsers" &&
+        values['member'] != "allAuthenticatedUsers"
+      )
+      terraform.state.resources.where(type == 'google_workbench_instance_iam_binding').all(
+        values['members'].none(_ == "allUsers" || _ == "allAuthenticatedUsers")
+      )
+  - uid: mondoo-gcp-security-gemini-enterprise-app-not-public
+    title: Ensure Gemini Enterprise apps are not publicly accessible through IAM
+    impact: 95
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-5-15
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
+      compliance/owasp-llm-top-10-2025: owasp-llm-top-10-2025-llm02
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-7-2-1
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    variants:
+      - uid: mondoo-gcp-security-gemini-enterprise-app-not-public-gcp
+        tags:
+          mondoo.com/filter-title: GCP Project
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-gemini-enterprise-app-not-public-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-gemini-enterprise-app-not-public-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-gemini-enterprise-app-not-public-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check verifies that no Gemini Enterprise app grants access to a principal that represents the public rather than a known identity.
+
+        A Gemini Enterprise app is a Discovery Engine engine with its own IAM policy, which decides who may use the app. The check fails an app when any binding names `allUsers` or `allAuthenticatedUsers`, and when the scan cannot read the app's policy. The same check covers the search and chat apps built in AI Applications, which are the same resource.
+
+        **Why this matters**
+
+        A Gemini Enterprise app answers questions from the organization's own content. Its data stores can index Google Drive, Gmail, SharePoint, Jira, and internal websites, and the assistant can act through connected tools. A public binding lets anyone with a Google account, or anyone at all, query that content through the app.
+
+        The exposure is broader than any single document permission suggests. The assistant summarizes and combines what it retrieves, so a public caller can extract information across many sources with a few well-chosen questions, and the retrieval leaves no trace in the source systems' own access logs.
+
+        Remove the public bindings and grant access to the workforce groups that should use the app.
+      audit: |
+        ### Audit via Console
+
+        1. In the Google Cloud console, go to **Gemini Enterprise** and open each app.
+        2. Review who has access to the app.
+
+        A passing app grants access only to named users, groups, or workforce identities. A failing app grants access to `allUsers` or `allAuthenticatedUsers`.
+
+        ### Audit via CLI
+
+        1. Read the app's IAM policy:
+
+        ```bash
+        curl -s \
+          -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+          "https://discoveryengine.googleapis.com/v1/projects/PROJECT_ID/locations/LOCATION/collections/default_collection/engines/APP_ID:getIamPolicy" \
+          | jq '.bindings[]? | select(.members[] | test("^allUsers$|^allAuthenticatedUsers$"))'
+        ```
+
+        A passing app returns no output from the `jq` filter. A failing app returns one or more bindings that include `allUsers` or `allAuthenticatedUsers`.
+      remediation:
+        - id: terraform
+          desc: |
+            Grant app access to named principals with `google_discovery_engine_search_engine_iam_member`:
+
+            ```hcl
+            resource "google_discovery_engine_search_engine_iam_member" "users" {
+              engine_id     = google_discovery_engine_search_engine.assistant.engine_id
+              collection_id = "default_collection"
+              location      = "global"
+              role          = "roles/discoveryengine.user"
+              member        = "group:employees@example.com"
+            }
+            ```
+        - id: cli
+          desc: |
+            Update the app's IAM policy through the API:
+
+            1. Save the current policy, which includes the `etag` the update must carry:
+
+            ```bash
+            curl -s \
+              -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+              "https://discoveryengine.googleapis.com/v1/projects/PROJECT_ID/locations/LOCATION/collections/default_collection/engines/APP_ID:getIamPolicy" \
+              > policy.json
+            ```
+
+            2. Remove `allUsers` and `allAuthenticatedUsers` from every binding in `policy.json`, and add the groups that should use the app.
+
+            3. Write the policy back:
+
+            ```bash
+            curl -s -X POST \
+              -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+              -H "Content-Type: application/json" \
+              "https://discoveryengine.googleapis.com/v1/projects/PROJECT_ID/locations/LOCATION/collections/default_collection/engines/APP_ID:setIamPolicy" \
+              -d "{\"policy\": $(cat policy.json)}"
+            ```
+    refs:
+      - url: https://docs.cloud.google.com/gemini/enterprise/docs/iam-policy-for-apps
+        title: Configure access controls for apps
+  - uid: mondoo-gcp-security-gemini-enterprise-app-not-public-gcp
+    filters: asset.platform == 'gcp-project'
+    mql: |
+      gcp.project.discoveryEngine.engines.all(public == false)
+  - uid: mondoo-gcp-security-gemini-enterprise-app-not-public-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_discovery_engine_search_engine_iam_member') ||
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_discovery_engine_search_engine_iam_binding')
+    mql: |
+      terraform.resources('google_discovery_engine_search_engine_iam_member').all(
+        arguments['member'] != "allUsers" &&
+        arguments['member'] != "allAuthenticatedUsers"
+      )
+      terraform.resources('google_discovery_engine_search_engine_iam_binding').all(
+        arguments['members'].none(_ == "allUsers" || _ == "allAuthenticatedUsers")
+      )
+  - uid: mondoo-gcp-security-gemini-enterprise-app-not-public-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_discovery_engine_search_engine_iam_member') ||
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_discovery_engine_search_engine_iam_binding')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_discovery_engine_search_engine_iam_member').all(
+        change.after['member'] != "allUsers" &&
+        change.after['member'] != "allAuthenticatedUsers"
+      )
+      terraform.plan.resourceChanges.where(type == 'google_discovery_engine_search_engine_iam_binding').all(
+        change.after['members'].none(_ == "allUsers" || _ == "allAuthenticatedUsers")
+      )
+  - uid: mondoo-gcp-security-gemini-enterprise-app-not-public-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_discovery_engine_search_engine_iam_member') ||
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_discovery_engine_search_engine_iam_binding')
+    mql: |
+      terraform.state.resources.where(type == 'google_discovery_engine_search_engine_iam_member').all(
+        values['member'] != "allUsers" &&
+        values['member'] != "allAuthenticatedUsers"
+      )
+      terraform.state.resources.where(type == 'google_discovery_engine_search_engine_iam_binding').all(
+        values['members'].none(_ == "allUsers" || _ == "allAuthenticatedUsers")
+      )
+  - uid: mondoo-gcp-security-gemini-enterprise-widget-no-public-access
+    title: Ensure Gemini Enterprise app widgets do not allow unauthenticated access
+    impact: 95
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-5-15
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
+      compliance/owasp-llm-top-10-2025: owasp-llm-top-10-2025-llm02
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-7-2-1
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    variants:
+      - uid: mondoo-gcp-security-gemini-enterprise-widget-no-public-access-gcp
+        tags:
+          mondoo.com/filter-title: GCP Project
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-gemini-enterprise-widget-no-public-access-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-gemini-enterprise-widget-no-public-access-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-gemini-enterprise-widget-no-public-access-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check verifies that the web widget of a Gemini Enterprise or AI Applications app requires users to sign in.
+
+        Each app has a default widget configuration whose access settings decide how the widget authorizes callers. The console calls the unauthenticated option **Public Access**, and the API reports it as `accessSettings.allowPublicAccess`. The check fails an app whose widget allows public access, and passes an app that has no widget configuration.
+
+        **Why this matters**
+
+        With public access, the widget does not restrict who can get results from a query. Anyone who can load the page that embeds the widget, or call the widget's endpoint directly, can search the app's data stores and read the generated answers, with no identity attached to the request.
+
+        That is the same exposure as a public IAM binding on the app, reached through a different setting, and it is easy to enable for a quick demonstration and forget. The resulting traffic is attributed to no user, so it cannot be reviewed or revoked per caller.
+
+        Switch the widget to an authenticated authorization type, either JSON Web Token or OAuth-based access, or workforce identity federation, so that each request carries a user identity that the app's access controls can evaluate.
+
+        If the scan cannot read the widget configuration, the app is treated as having none and passes. A companion check in this policy covers public access through the app's IAM policy.
+      audit: |
+        ### Audit via Console
+
+        1. In the Google Cloud console, go to **AI Applications** and select each app.
+        2. Select **Integration**, then the **Widget** tab.
+        3. Review the widget authorization type.
+
+        A passing app uses an authenticated authorization type. A failing app shows **Public Access**.
+
+        ### Audit via CLI
+
+        1. Read the access settings of the app's default widget:
+
+        ```bash
+        curl -s \
+          -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+          "https://discoveryengine.googleapis.com/v1/projects/PROJECT_ID/locations/LOCATION/collections/default_collection/engines/APP_ID/widgetConfigs/default_search_widget_config" \
+          | jq '.accessSettings.allowPublicAccess // false'
+        ```
+
+        A passing app returns `false`. A failing app returns `true`.
+      remediation:
+        - id: terraform
+          desc: |
+            Set `allow_public_access = false` in the widget's `access_settings`:
+
+            ```hcl
+            resource "google_discovery_engine_widget_config" "default" {
+              location         = "global"
+              collection_id    = "default_collection"
+              engine_id        = google_discovery_engine_search_engine.assistant.engine_id
+              widget_config_id = "default_search_widget_config"
+
+              access_settings {
+                allow_public_access = false
+              }
+            }
+            ```
+        - id: console
+          desc: |
+            To require sign-in on the widget:
+
+            1. In the Google Cloud console, go to **AI Applications** and select the app.
+            2. Select **Integration**, then the **Widget** tab.
+            3. Change the widget authorization type from **Public Access** to an authenticated type.
+            4. Save the configuration and update any page that embeds the widget to pass user credentials.
+    refs:
+      - url: https://docs.cloud.google.com/generative-ai-app-builder/docs/add-widget
+        title: Add the search widget to a web page
+      - url: https://docs.cloud.google.com/gemini/enterprise/docs/reference/rest/v1/projects.locations.collections.engines.widgetConfigs
+        title: "REST Resource: projects.locations.collections.engines.widgetConfigs"
+  - uid: mondoo-gcp-security-gemini-enterprise-widget-no-public-access-gcp
+    filters: asset.platform == 'gcp-project'
+    mql: |
+      gcp.project.discoveryEngine.engines.all(
+        widgetConfig == empty || widgetConfig.allowPublicAccess == false
+      )
+  - uid: mondoo-gcp-security-gemini-enterprise-widget-no-public-access-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_discovery_engine_widget_config')
+    mql: |
+      terraform.resources('google_discovery_engine_widget_config').all(
+        blocks.where(type == 'access_settings').all(arguments['allow_public_access'] != true)
+      )
+  - uid: mondoo-gcp-security-gemini-enterprise-widget-no-public-access-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_discovery_engine_widget_config')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_discovery_engine_widget_config').all(
+        change.after['access_settings'] == empty ||
+        change.after['access_settings'].all(_['allow_public_access'] != true)
+      )
+  - uid: mondoo-gcp-security-gemini-enterprise-widget-no-public-access-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_discovery_engine_widget_config')
+    mql: |
+      terraform.state.resources.where(type == 'google_discovery_engine_widget_config').all(
+        values['access_settings'] == empty ||
+        values['access_settings'].all(_['allow_public_access'] != true)
+      )
+  - uid: mondoo-gcp-security-gemini-enterprise-assistant-model-armor
+    title: Ensure Gemini Enterprise assistants screen traffic with Model Armor
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: false
+      compliance/dora: false
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-26
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ds-5
+      compliance/nist-csf-2: nist-csf-2-pr-ds-10
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-10
+      compliance/nist-sp-800-171: false
+      compliance/owasp-llm-top-10-2025: owasp-llm-top-10-2025-llm01
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a02
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: soc2-control-cc7-1-2
+      compliance/vda-isa-5: vda-isa-5-5-2-3
+    variants:
+      - uid: mondoo-gcp-security-gemini-enterprise-assistant-model-armor-gcp
+        tags:
+          mondoo.com/filter-title: GCP Project
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-gemini-enterprise-assistant-model-armor-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-gemini-enterprise-assistant-model-armor-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-gemini-enterprise-assistant-model-armor-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check verifies that every Gemini Enterprise assistant screens user prompts and model responses through Model Armor.
+
+        An assistant's customer policy carries a Model Armor configuration with two template references: one that screens user prompts and data from connected sources, and one that screens the assistant's responses. The check fails an assistant that sets neither or only one of them. Apps without an assistant, such as plain search apps, have nothing to evaluate and pass.
+
+        **Why this matters**
+
+        A Gemini Enterprise assistant reads from email, documents, tickets, and websites the organization does not control. Any of those can carry instructions written to hijack the assistant, which is prompt injection arriving through the data rather than through the user. Model Armor's prompt template screens that connected-source content as well as what users type.
+
+        The response side matters as much. Without a response template, nothing stops the assistant from returning sensitive data it retrieved, harmful content, or malicious links to the user.
+
+        Model Armor templates exist in this project's other checks, but a template protects nothing until something uses it. This check closes that gap for Gemini Enterprise. Create one template for prompts and one for responses, then reference both from the assistant.
+      audit: |
+        ### Audit via Console
+
+        1. In the Google Cloud console, go to **Gemini Enterprise** and select each app.
+        2. Select **Configurations** > **Assistant**.
+        3. Review whether Model Armor is enabled with a template for user prompts and a template for response outputs.
+
+        A passing assistant has both templates set. A failing assistant has Model Armor turned off or only one template set.
+
+        ### Audit via CLI
+
+        1. Read the Model Armor configuration of the app's default assistant:
+
+        ```bash
+        curl -s \
+          -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+          "https://discoveryengine.googleapis.com/v1/projects/PROJECT_ID/locations/LOCATION/collections/default_collection/engines/APP_ID/assistants/default_assistant" \
+          | jq '.customerPolicy.modelArmorConfig'
+        ```
+
+        A passing assistant returns both `userPromptTemplate` and `responseTemplate`. A failing assistant returns `null` or only one of them.
+      remediation:
+        - id: terraform
+          desc: |
+            Reference a prompt template and a response template in the assistant's `customer_policy`:
+
+            ```hcl
+            resource "google_discovery_engine_assistant" "default" {
+              location      = "global"
+              collection_id = "default_collection"
+              engine_id     = google_discovery_engine_search_engine.assistant.engine_id
+              assistant_id  = "default_assistant"
+              display_name  = "Default assistant"
+
+              customer_policy {
+                model_armor_config {
+                  user_prompt_template = google_model_armor_template.prompts.id
+                  response_template    = google_model_armor_template.responses.id
+                }
+              }
+            }
+            ```
+        - id: console
+          desc: |
+            To enable Model Armor on the assistant:
+
+            1. Create two Model Armor templates in a multi-region that matches the app's location: one for user prompts and one for responses.
+            2. In the Google Cloud console, go to **Gemini Enterprise** and select the app.
+            3. Select **Configurations** > **Assistant** and select **Enable Model Armor**.
+            4. Enter the resource name of each template.
+            5. Select **Save and publish**.
+        - id: cli
+          desc: |
+            Set both templates on the app's default assistant:
+
+            ```bash
+            curl -s -X PATCH \
+              -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+              -H "Content-Type: application/json" \
+              "https://discoveryengine.googleapis.com/v1/projects/PROJECT_ID/locations/LOCATION/collections/default_collection/engines/APP_ID/assistants/default_assistant?update_mask=customerPolicy" \
+              -d '{"customerPolicy": {"modelArmorConfig": {"userPromptTemplate": "PROMPT_TEMPLATE_NAME", "responseTemplate": "RESPONSE_TEMPLATE_NAME", "failureMode": "FAIL_CLOSED"}}}'
+            ```
+    refs:
+      - url: https://docs.cloud.google.com/gemini/enterprise/docs/enable-model-armor
+        title: Enable Model Armor in Gemini Enterprise
+  - uid: mondoo-gcp-security-gemini-enterprise-assistant-model-armor-gcp
+    filters: asset.platform == 'gcp-project'
+    mql: |
+      gcp.project.discoveryEngine.engines.all(
+        assistants.all(
+          modelArmorPromptTemplate != empty &&
+          modelArmorResponseTemplate != empty
+        )
+      )
+  - uid: mondoo-gcp-security-gemini-enterprise-assistant-model-armor-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_discovery_engine_assistant')
+    mql: |
+      terraform.resources('google_discovery_engine_assistant').all(
+        blocks.where(type == 'customer_policy') != empty &&
+        blocks.where(type == 'customer_policy').all(
+          blocks.where(type == 'model_armor_config') != empty &&
+          blocks.where(type == 'model_armor_config').all(
+            arguments['user_prompt_template'] != empty &&
+            arguments['response_template'] != empty
+          )
+        )
+      )
+  - uid: mondoo-gcp-security-gemini-enterprise-assistant-model-armor-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_discovery_engine_assistant')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_discovery_engine_assistant').all(
+        change.after['customer_policy'] != empty &&
+        change.after['customer_policy'].all(
+          _['model_armor_config'] != empty &&
+          _['model_armor_config'].all(
+            _['user_prompt_template'] != empty &&
+            _['response_template'] != empty
+          )
+        )
+      )
+  - uid: mondoo-gcp-security-gemini-enterprise-assistant-model-armor-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_discovery_engine_assistant')
+    mql: |
+      terraform.state.resources.where(type == 'google_discovery_engine_assistant').all(
+        values['customer_policy'] != empty &&
+        values['customer_policy'].all(
+          _['model_armor_config'] != empty &&
+          _['model_armor_config'].all(
+            _['user_prompt_template'] != empty &&
+            _['response_template'] != empty
+          )
+        )
+      )
+  - uid: mondoo-gcp-security-gemini-enterprise-assistant-model-armor-fail-closed
+    title: Ensure Gemini Enterprise assistants fail closed when Model Armor fails
+    impact: 75
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ais-02
+      compliance/dora: false
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-26
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-pt-5
+      compliance/nist-csf-2: nist-csf-2-pr-ds-10
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-17
+      compliance/nist-sp-800-171: false
+      compliance/owasp-llm-top-10-2025: owasp-llm-top-10-2025-llm01
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a02
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: false
+    variants:
+      - uid: mondoo-gcp-security-gemini-enterprise-assistant-model-armor-fail-closed-gcp
+        tags:
+          mondoo.com/filter-title: GCP Project
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-gemini-enterprise-assistant-model-armor-fail-closed-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-gemini-enterprise-assistant-model-armor-fail-closed-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-gemini-enterprise-assistant-model-armor-fail-closed-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check verifies that a Gemini Enterprise assistant stops answering when Model Armor cannot screen a request, instead of letting the request through unscreened.
+
+        An assistant's Model Armor configuration carries a `failureMode` of `FAIL_OPEN` or `FAIL_CLOSED`. The console shows `FAIL_OPEN` as the **Allow user interactions during Model Armor processing failure** toggle turned on. When the field is unset, Gemini Enterprise applies `FAIL_CLOSED`. The check fails only an assistant set to `FAIL_OPEN`.
+
+        **Why this matters**
+
+        In `FAIL_OPEN` mode, any outage, quota exhaustion, or misconfigured cross-project permission on the Model Armor templates silently disables screening. Prompts and connected-source content reach the model without prompt injection detection, and responses reach users without sensitive data or harmful content filtering.
+
+        An attacker who can cause screening to fail, for example by sending content that times out the detectors, turns the protection off for their own requests. The assistant keeps working normally, so nobody notices that the control is gone.
+
+        `FAIL_CLOSED` blocks interactions during a Model Armor failure, which trades availability for the guarantee that nothing unscreened is processed. A companion check in this policy covers whether the assistant uses Model Armor at all.
+      audit: |
+        ### Audit via Console
+
+        1. In the Google Cloud console, go to **Gemini Enterprise** and select each app.
+        2. Select **Configurations** > **Assistant**.
+        3. Review the **Allow user interactions during Model Armor processing failure** toggle.
+
+        A passing assistant has the toggle turned off. A failing assistant has it turned on.
+
+        ### Audit via CLI
+
+        1. Read the failure mode of the app's default assistant:
+
+        ```bash
+        curl -s \
+          -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+          "https://discoveryengine.googleapis.com/v1/projects/PROJECT_ID/locations/LOCATION/collections/default_collection/engines/APP_ID/assistants/default_assistant" \
+          | jq -r '.customerPolicy.modelArmorConfig.failureMode // "unset"'
+        ```
+
+        A passing assistant returns `FAIL_CLOSED` or `unset`. A failing assistant returns `FAIL_OPEN`.
+      remediation:
+        - id: terraform
+          desc: |
+            Set `failure_mode = "FAIL_CLOSED"` in the assistant's `model_armor_config`:
+
+            ```hcl
+            resource "google_discovery_engine_assistant" "default" {
+              location      = "global"
+              collection_id = "default_collection"
+              engine_id     = google_discovery_engine_search_engine.assistant.engine_id
+              assistant_id  = "default_assistant"
+              display_name  = "Default assistant"
+
+              customer_policy {
+                model_armor_config {
+                  user_prompt_template = google_model_armor_template.prompts.id
+                  response_template    = google_model_armor_template.responses.id
+                  failure_mode         = "FAIL_CLOSED"
+                }
+              }
+            }
+            ```
+        - id: console
+          desc: |
+            To block interactions during Model Armor failures:
+
+            1. In the Google Cloud console, go to **Gemini Enterprise** and select the app.
+            2. Select **Configurations** > **Assistant**.
+            3. Turn off **Allow user interactions during Model Armor processing failure**.
+            4. Select **Save and publish**.
+    refs:
+      - url: https://docs.cloud.google.com/gemini/enterprise/docs/enable-model-armor
+        title: Enable Model Armor in Gemini Enterprise
+  - uid: mondoo-gcp-security-gemini-enterprise-assistant-model-armor-fail-closed-gcp
+    filters: asset.platform == 'gcp-project'
+    mql: |
+      gcp.project.discoveryEngine.engines.all(
+        assistants.all(modelArmorFailureMode != "FAIL_OPEN")
+      )
+  - uid: mondoo-gcp-security-gemini-enterprise-assistant-model-armor-fail-closed-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_discovery_engine_assistant')
+    mql: |
+      terraform.resources('google_discovery_engine_assistant').all(
+        blocks.where(type == 'customer_policy').all(
+          blocks.where(type == 'model_armor_config').all(arguments['failure_mode'] != "FAIL_OPEN")
+        )
+      )
+  - uid: mondoo-gcp-security-gemini-enterprise-assistant-model-armor-fail-closed-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_discovery_engine_assistant')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_discovery_engine_assistant').all(
+        change.after['customer_policy'] == empty ||
+        change.after['customer_policy'].all(
+          _['model_armor_config'] == empty ||
+          _['model_armor_config'].all(_['failure_mode'] != "FAIL_OPEN")
+        )
+      )
+  - uid: mondoo-gcp-security-gemini-enterprise-assistant-model-armor-fail-closed-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_discovery_engine_assistant')
+    mql: |
+      terraform.state.resources.where(type == 'google_discovery_engine_assistant').all(
+        values['customer_policy'] == empty ||
+        values['customer_policy'].all(
+          _['model_armor_config'] == empty ||
+          _['model_armor_config'].all(_['failure_mode'] != "FAIL_OPEN")
+        )
+      )
+  - uid: mondoo-gcp-security-agent-identity-auth-provider-not-public
+    title: Ensure Agent Identity auth providers are not publicly accessible
+    impact: 90
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-5-15
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
+      compliance/owasp-llm-top-10-2025: owasp-llm-top-10-2025-llm06
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-7-2-1
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    variants:
+      - uid: mondoo-gcp-security-agent-identity-auth-provider-not-public-gcp
+        tags:
+          mondoo.com/filter-title: GCP Project
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-agent-identity-auth-provider-not-public-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-agent-identity-auth-provider-not-public-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-agent-identity-auth-provider-not-public-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check verifies that no Agent Identity auth provider grants access to a principal that represents the public rather than a known identity.
+
+        An auth provider holds the credential an agent uses to call another service, such as an API key or an OAuth client for a SaaS application. Its IAM policy decides who may use and manage it. The check fails a provider when any binding names `allUsers` or `allAuthenticatedUsers`, and when the scan cannot read the provider's policy. Soft-deleted providers are not evaluated.
+
+        **Why this matters**
+
+        An auth provider is a delegated credential. Whoever may use it can have an agent act against the target service with the access the provider carries, for example reading a team's tickets or sending messages on a user's behalf through three-legged OAuth.
+
+        A public binding lets any Google account, or any caller at all, put that credential to work. The target service sees requests from the organization's own integration, so the misuse looks legitimate there and is hard to detect.
+
+        Remove the public bindings and grant access only to the agents and administrators that need the provider. Agents should reach a provider through their own workload identity, which the provider's `workloadIds` already restrict.
+      audit: |
+        ### Audit via Console
+
+        1. In the Google Cloud console, go to the **Agent Registry** page and select each agent.
+        2. Select **Identity** and note each auth provider listed in the **Auth Providers** section.
+        3. Read each provider's IAM policy as shown in the CLI audit below, because the console does not display it.
+
+        ### Audit via CLI
+
+        1. Read the provider's IAM policy:
+
+        ```bash
+        curl -s \
+          -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+          "https://agentidentity.googleapis.com/v1/projects/PROJECT_ID/locations/LOCATION/authProviders/AUTH_PROVIDER_ID:getIamPolicy" \
+          | jq '.bindings[]? | select(.members[] | test("^allUsers$|^allAuthenticatedUsers$"))'
+        ```
+
+        A passing provider returns no output from the `jq` filter. A failing provider returns one or more bindings that include `allUsers` or `allAuthenticatedUsers`.
+      remediation:
+        - id: terraform
+          desc: |
+            Grant provider access to named principals with `google_agent_identity_auth_provider_iam_member`:
+
+            ```hcl
+            resource "google_agent_identity_auth_provider_iam_member" "admins" {
+              auth_provider_id = google_agent_identity_auth_provider.ticketing.auth_provider_id
+              location         = "us-central1"
+              role             = "roles/agentidentity.editor"
+              member           = "group:agent-platform-admins@example.com"
+            }
+            ```
+        - id: cli
+          desc: |
+            Update the provider's IAM policy through the API:
+
+            1. Save the current policy, which includes the `etag` the update must carry:
+
+            ```bash
+            curl -s \
+              -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+              "https://agentidentity.googleapis.com/v1/projects/PROJECT_ID/locations/LOCATION/authProviders/AUTH_PROVIDER_ID:getIamPolicy" \
+              > policy.json
+            ```
+
+            2. Remove `allUsers` and `allAuthenticatedUsers` from every binding in `policy.json`.
+
+            3. Write the policy back:
+
+            ```bash
+            curl -s -X POST \
+              -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+              -H "Content-Type: application/json" \
+              "https://agentidentity.googleapis.com/v1/projects/PROJECT_ID/locations/LOCATION/authProviders/AUTH_PROVIDER_ID:setIamPolicy" \
+              -d "{\"policy\": $(cat policy.json)}"
+            ```
+    refs:
+      - url: https://docs.cloud.google.com/iam/docs/auth-manager-overview
+        title: Agent Identity auth manager overview
+      - url: https://docs.cloud.google.com/iam/docs/manage-auth-providers-v2
+        title: Manage Agent Identity auth providers
+  - uid: mondoo-gcp-security-agent-identity-auth-provider-not-public-gcp
+    filters: asset.platform == 'gcp-project'
+    mql: |
+      gcp.project.agentIdentity.authProviders.where(deleted != true).all(public == false)
+  - uid: mondoo-gcp-security-agent-identity-auth-provider-not-public-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_agent_identity_auth_provider_iam_member') ||
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_agent_identity_auth_provider_iam_binding')
+    mql: |
+      terraform.resources('google_agent_identity_auth_provider_iam_member').all(
+        arguments['member'] != "allUsers" &&
+        arguments['member'] != "allAuthenticatedUsers"
+      )
+      terraform.resources('google_agent_identity_auth_provider_iam_binding').all(
+        arguments['members'].none(_ == "allUsers" || _ == "allAuthenticatedUsers")
+      )
+  - uid: mondoo-gcp-security-agent-identity-auth-provider-not-public-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_agent_identity_auth_provider_iam_member') ||
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_agent_identity_auth_provider_iam_binding')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_agent_identity_auth_provider_iam_member').all(
+        change.after['member'] != "allUsers" &&
+        change.after['member'] != "allAuthenticatedUsers"
+      )
+      terraform.plan.resourceChanges.where(type == 'google_agent_identity_auth_provider_iam_binding').all(
+        change.after['members'].none(_ == "allUsers" || _ == "allAuthenticatedUsers")
+      )
+  - uid: mondoo-gcp-security-agent-identity-auth-provider-not-public-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_agent_identity_auth_provider_iam_member') ||
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_agent_identity_auth_provider_iam_binding')
+    mql: |
+      terraform.state.resources.where(type == 'google_agent_identity_auth_provider_iam_member').all(
+        values['member'] != "allUsers" &&
+        values['member'] != "allAuthenticatedUsers"
+      )
+      terraform.state.resources.where(type == 'google_agent_identity_auth_provider_iam_binding').all(
+        values['members'].none(_ == "allUsers" || _ == "allAuthenticatedUsers")
+      )
+  - uid: mondoo-gcp-security-model-armor-floor-setting-enforced
+    title: Ensure the organization enforces a Model Armor floor setting
+    impact: 75
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: false
+      compliance/dora: false
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-26
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-pt-4
+      compliance/nist-csf-2: nist-csf-2-pr-ds-10
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-10
+      compliance/nist-sp-800-171: false
+      compliance/owasp-llm-top-10-2025: owasp-llm-top-10-2025-llm01
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a02
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: soc2-control-cc7-1-2
+      compliance/vda-isa-5: vda-isa-5-5-2-3
+    variants:
+      - uid: mondoo-gcp-security-model-armor-floor-setting-enforced-gcp
+        tags:
+          mondoo.com/filter-title: GCP Organization
+          mondoo.com/filter-icon: gcp
+      - uid: mondoo-gcp-security-model-armor-floor-setting-enforced-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-model-armor-floor-setting-enforced-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gcp-security-model-armor-floor-setting-enforced-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check verifies that the organization defines a Model Armor floor setting and enforces it.
+
+        A floor setting is the minimum set of Model Armor filters for its scope. Set on the organization, it applies to every folder and project beneath it, and while `enableFloorSettingEnforcement` is `true`, no Model Armor template in that scope may be configured less strictly than the floor. The check fails an organization that has no floor setting, or whose floor setting has enforcement turned off. In Terraform, it fails any `google_model_armor_floorsetting` without enforcement turned on, whatever its parent.
+
+        **Why this matters**
+
+        Every Model Armor template is configured by the team that owns it. Without a floor, a team can turn off prompt injection detection, raise every confidence threshold to `HIGH`, or switch to inspect-only to cut latency or false positives, and nothing at the organization level prevents it.
+
+        A floor setting turns the security team's baseline into a constraint rather than a recommendation. Templates that fall below it are rejected, so a weakened template cannot be created in the first place, rather than being found by a later audit.
+
+        Define the floor at the organization level with the filters every AI workload must run, such as prompt injection and jailbreak detection and malicious URL detection, and turn on enforcement. Folders and projects can set stricter floors of their own.
+      audit: |
+        ### Audit via Console
+
+        Organization floor settings are visible but configured only through the API.
+
+        1. In the Google Cloud console, open any project in the organization and go to **Security** > **Model Armor**.
+        2. Select the **Floor settings** tab and review the settings inherited from the organization.
+
+        A passing organization shows floor settings with enforcement turned on. A failing organization shows no floor settings, or settings with enforcement turned off.
+
+        ### Audit via CLI
+
+        1. Read the organization's floor setting:
+
+        ```bash
+        gcloud model-armor floorsettings describe \
+          --full-uri=organizations/ORGANIZATION_ID/locations/global/floorSetting
+        ```
+
+        A passing organization returns `enableFloorSettingEnforcement: true`. A failing organization returns `enableFloorSettingEnforcement: false`, omits the field, or returns no floor setting.
+      remediation:
+        - id: terraform
+          desc: |
+            Define the floor setting on the organization and turn on enforcement:
+
+            ```hcl
+            resource "google_model_armor_floorsetting" "organization" {
+              parent   = "organizations/${var.organization_id}"
+              location = "global"
+
+              enable_floor_setting_enforcement = true
+
+              filter_config {
+                pi_and_jailbreak_filter_settings {
+                  filter_enforcement = "ENABLED"
+                  confidence_level   = "MEDIUM_AND_ABOVE"
+                }
+
+                malicious_uri_filter_settings {
+                  filter_enforcement = "ENABLED"
+                }
+              }
+            }
+            ```
+        - id: cli
+          desc: |
+            Set the organization floor setting and turn on enforcement:
+
+            ```bash
+            gcloud model-armor floorsettings update \
+              --full-uri=organizations/ORGANIZATION_ID/locations/global/floorSetting \
+              --enable-floor-setting-enforcement=TRUE \
+              --pi-and-jailbreak-filter-settings-enforcement=enable \
+              --pi-and-jailbreak-filter-settings-confidence-level=medium-and-above
+            ```
+    refs:
+      - url: https://docs.cloud.google.com/model-armor/configure-floor-settings
+        title: Configure floor settings
+  - uid: mondoo-gcp-security-model-armor-floor-setting-enforced-gcp
+    filters: asset.platform == 'gcp-org'
+    mql: |
+      gcp.organization.modelArmorFloorSetting.enableFloorSettingEnforcement == true
+  - uid: mondoo-gcp-security-model-armor-floor-setting-enforced-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_model_armor_floorsetting')
+    mql: |
+      terraform.resources('google_model_armor_floorsetting').all(
+        arguments['enable_floor_setting_enforcement'] == true
+      )
+  - uid: mondoo-gcp-security-model-armor-floor-setting-enforced-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_model_armor_floorsetting')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'google_model_armor_floorsetting').all(
+        change.after['enable_floor_setting_enforcement'] == true
+      )
+  - uid: mondoo-gcp-security-model-armor-floor-setting-enforced-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_model_armor_floorsetting')
+    mql: |
+      terraform.state.resources.where(type == 'google_model_armor_floorsetting').all(
+        values['enable_floor_setting_enforcement'] == true
+      )
