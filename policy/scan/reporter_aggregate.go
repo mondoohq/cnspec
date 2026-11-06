@@ -64,9 +64,7 @@ func (r *AggregateReporter) AddReport(asset *inventory.Asset, results *AssetRepo
 		r.exceptions[asset.Mrn] = results.ExceptionDecisions
 	}
 
-	if r.worstScore == nil || results.Report.Score.Value < r.worstScore.Value {
-		r.worstScore = results.Report.Score
-	}
+	r.worstScore = lowerScore(r.worstScore, results.Report.GetScore())
 }
 
 func (r *AggregateReporter) AddVulnReport(asset *inventory.Asset, vulnReport *gql.VulnReport) {

@@ -206,10 +206,13 @@ var scanCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 	// it can be ctx-aware and only fires for scan, not policy lint).
 	scandump.YAML(ctx, "resolved_mql_bundle.mql", conf.Bundle)
 
-	report, err := RunScan(ctx, conf, scan.WithReportType(conf.ReportType), scan.WithAutoUpdate(AutoUpdateEnabled()))
+	res, err := RunScanResult(ctx, conf, scan.WithReportType(conf.ReportType), scan.WithAutoUpdate(AutoUpdateEnabled()))
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to run scan")
 	}
+	// Only --report-type full carries a report collection to print; error and
+	// none print nothing but still decide the exit status below.
+	report := res.GetFull()
 
 	scandump.JSON(ctx, "report", report)
 	recordResolvedAssets(ctx, report)
@@ -232,21 +235,48 @@ var scanCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 
 	// If we had asset errors or the worst-case score exceeds the threshold,
 	// return non-zero. Flush the support bundle first so the user gets it.
-	if report != nil {
-		if len(report.Errors) > 0 {
-			if support != nil {
-				support.FinalizeAndAnnounce(os.Stderr)
-			}
-			os.Exit(1)
+	if code := scanExitCode(res, conf.RiskThreshold); code != 0 {
+		if support != nil {
+			support.FinalizeAndAnnounce(os.Stderr)
 		}
-
-		if (100 - report.GetWorstScore()) >= uint32(conf.RiskThreshold) {
-			if support != nil {
-				support.FinalizeAndAnnounce(os.Stderr)
-			}
-			os.Exit(1)
-		}
+		os.Exit(code)
 	}
+}
+
+// scanExitCode is the exit status of `cnspec scan`: 1 when any asset failed to
+// scan or the worst score meets the risk threshold, 0 otherwise. The decision
+// is the same for every --report-type. A full result is judged by its report
+// collection, which is the reference behaviour; error and none carry no
+// collection, so they are judged by ScanResult.Ok and ScanResult.WorstScore,
+// which every reporter fills in.
+func scanExitCode(res *scan.ScanResult, riskThreshold int) int {
+	if res == nil {
+		return 0
+	}
+
+	if full := res.GetFull(); full != nil {
+		if len(full.Errors) > 0 {
+			return 1
+		}
+		if (100 - full.GetWorstScore()) >= uint32(riskThreshold) {
+			return 1
+		}
+		return 0
+	}
+
+	if !res.Ok {
+		return 1
+	}
+	// A nil or unrated worst score means no asset was rated, which is the
+	// same as GetWorstScore's result for a collection without rated assets.
+	worst := uint32(100)
+	if s := res.GetWorstScore(); s != nil && s.Rating() != policy.ScoreRating_unrated {
+		worst = s.Value
+	}
+	if (100 - worst) >= uint32(riskThreshold) {
+		return 1
+	}
+	return 0
 }
 
 // isDebugDumpEnabled mirrors the gate the cnspec logger uses to flip into
@@ -686,7 +716,20 @@ func interactiveActivityTrigger() policy.AssetActivityTrigger {
 	return policy.AssetActivityTrigger_ASSET_ACTIVITY_TRIGGER_UNSPECIFIED
 }
 
+// RunScan runs the scan and returns its report collection. The collection is
+// nil for every report type but FULL; callers that need the scan outcome
+// regardless of report type use RunScanResult.
 func RunScan(parentCtx context.Context, config *scanConfig, scannerOpts ...scan.ScannerOption) (*policy.ReportCollection, error) {
+	res, err := RunScanResult(parentCtx, config, scannerOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return res.GetFull(), nil
+}
+
+// RunScanResult runs the scan and returns the whole scan result, whose Ok and
+// WorstScore are set for every report type.
+func RunScanResult(parentCtx context.Context, config *scanConfig, scannerOpts ...scan.ScannerOption) (*scan.ScanResult, error) {
 	// RunScan is the entry point for the interactive CLI scan commands (scan,
 	// vuln, sbom, aibom, ...), so default the scan source to interactive. It is
 	// prepended so callers (e.g. `serve`) can override it via WithScanSource.
@@ -743,7 +786,7 @@ func RunScan(parentCtx context.Context, config *scanConfig, scannerOpts ...scan.
 	if err != nil {
 		return nil, err
 	}
-	return res.GetFull(), nil
+	return res, nil
 }
 
 func dedupe[T string | int](sliceList []T) []T {

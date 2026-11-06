@@ -28,9 +28,7 @@ func NewErrorReporter() Reporter {
 func (r *ErrorReporter) AddReport(asset *inventory.Asset, results *AssetReport) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.worstScore == nil || results.Report.Score.Value < r.worstScore.Value {
-		r.worstScore = results.Report.Score
-	}
+	r.worstScore = lowerScore(r.worstScore, results.Report.GetScore())
 }
 
 func (r *ErrorReporter) AddBundle(bundle *policy.Bundle) {}
