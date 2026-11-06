@@ -26,6 +26,7 @@ policies:
         - Web Application Firewall (WAF) and managed rule enablement
         - Browser integrity checks and bot mitigation
         - Account-level two-factor authentication and access controls
+        - AI Gateway authentication, rate and spend limits, data loss prevention, guardrails, and stored provider keys
 
         Learn more about scanning Cloudflare in the [cnspec Cloudflare documentation](https://mondoo.com/docs/cnspec/saas/cloudflare).
 
@@ -58,6 +59,14 @@ policies:
           - uid: mondoo-cloudflare-security-api-tokens-have-expiration
           - uid: mondoo-cloudflare-security-api-tokens-have-ip-allowlist
           - uid: mondoo-cloudflare-security-api-tokens-not-older-than-365-days
+      - title: AI Gateway
+        checks:
+          - uid: mondoo-cloudflare-security-ai-gateway-authentication-required
+          - uid: mondoo-cloudflare-security-ai-gateway-spend-limits-enabled
+          - uid: mondoo-cloudflare-security-ai-gateway-rate-limiting-configured
+          - uid: mondoo-cloudflare-security-ai-gateway-dlp-enabled
+          - uid: mondoo-cloudflare-security-ai-gateway-guardrails-block
+          - uid: mondoo-cloudflare-security-ai-gateway-provider-keys-not-stale
     scoring_system: highest impact
 queries:
   - uid: mondoo-cloudflare-security-ssl-not-off
@@ -2490,6 +2499,695 @@ queries:
     refs:
       - url: https://developers.cloudflare.com/fundamentals/api/get-started/create-token/
         title: Create API token
+  - uid: mondoo-cloudflare-security-ai-gateway-authentication-required
+    title: Ensure AI Gateways require authenticated requests
+    impact: 85
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-14
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-d-person-or-entity-authentication
+      compliance/iso-27001-2022: iso-27001-2022-a-8-5
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-7
+      compliance/nist-csf-2: nist-csf-2-pr-aa-03
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-2
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-1
+      compliance/owasp-llm-top-10-2025: owasp-llm-top-10-2025-llm10
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a07
+      compliance/pci-dss-4: pcidss-requirement-8-3-1
+      compliance/soc2-2017: soc2-control-cc6-1-4
+      compliance/vda-isa-5: vda-isa-5-4-1-2
+    variants:
+      - uid: mondoo-cloudflare-security-ai-gateway-authentication-required-cloudflare
+        tags:
+          mondoo.com/filter-title: Cloudflare Account
+          mondoo.com/filter-icon: cloudflare
+      - uid: mondoo-cloudflare-security-ai-gateway-authentication-required-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-cloudflare-security-ai-gateway-authentication-required-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-cloudflare-security-ai-gateway-authentication-required-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check verifies that every AI Gateway in the Cloudflare account accepts requests only from callers that present a valid gateway token.
+
+        AI Gateway proxies an application's calls to model providers such as OpenAI, Anthropic, and Workers AI. With **Authenticated Gateway** turned on, every request must present a Cloudflare API token that holds the AI Gateway **Run** permission, and requests without one are rejected. Cloudflare requires authentication on newly created gateways and does not allow it to be turned off once enabled, so a gateway that fails this check was created before that requirement and has never been switched over.
+
+        **Why this matters**
+
+        An unauthenticated gateway serves anyone who knows its URL. The URL is built from the account ID and the gateway name, and both travel in client code, browser traffic, and application logs, so the address is not a secret in any practical sense.
+
+        Requests through the gateway are paid for by the account. They run on the provider keys stored in the gateway or on Cloudflare Unified Billing, so an outsider who finds the URL gets model access, and the account gets the bill. A stolen provider key can at least be revoked at the provider; an open gateway keeps handing out the same access until someone notices the spend.
+
+        Authentication also gives the gateway's other controls something to stand on. Rate limits, spend limits, and logs all describe traffic, and without authentication there is no way to tell the application's traffic apart from anyone else's.
+
+        **Limits of this result**
+
+        The scanning token needs the **AI Gateway Read** permission. Without it, Cloudflare refuses the request and the gateway list reads as empty, so this check passes without having examined any gateway. Grant the scanning token **AI Gateway Read** before relying on a passing result.
+      audit: |
+        ### Audit via Dashboard
+
+        1. Log in to the Cloudflare dashboard and select the account.
+        2. Navigate to **AI** > **AI Gateway**.
+        3. For each gateway, open **Settings** and inspect **Authenticated Gateway**.
+
+        A passing gateway has **Authenticated Gateway** turned on. A failing gateway has it turned off.
+
+        ### Audit via API
+
+        1. List the account's gateways with a token that has the **AI Gateway Read** permission:
+
+        ```bash
+        curl -s -X GET "https://api.cloudflare.com/client/v4/accounts/<account-id>/ai-gateway/gateways" \
+          -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"
+        ```
+
+        A passing result shows `"authentication": true` on every gateway. A failing result contains at least one gateway with `"authentication": false`.
+      remediation:
+        - id: console
+          desc: |
+            Before turning on authentication, issue the applications that call the gateway a Cloudflare API token with the AI Gateway **Run** permission and update them to send it with each request. Requests without a token are rejected as soon as the setting is on, and the setting cannot be turned off again.
+
+            1. Log in to the Cloudflare dashboard and select the account.
+            2. Navigate to **AI** > **AI Gateway** and select the gateway.
+            3. Open **Settings** and turn on **Authenticated Gateway**.
+        - id: cli
+          desc: |
+            The gateway update endpoint replaces the full gateway configuration, so read the current configuration, set `authentication`, drop the fields the endpoint does not accept, and send the result back:
+
+            ```bash
+            curl -s -X GET "https://api.cloudflare.com/client/v4/accounts/<account-id>/ai-gateway/gateways/<gateway-id>" \
+              -H "Authorization: Bearer <api-token>" \
+              | jq '.result | del(.id, .created_at, .modified_at, .is_default, .fedramp_level, .fedramp_mode) | .authentication = true' \
+              > gateway.json
+
+            curl -X PUT "https://api.cloudflare.com/client/v4/accounts/<account-id>/ai-gateway/gateways/<gateway-id>" \
+              -H "Authorization: Bearer <api-token>" \
+              -H "Content-Type: application/json" \
+              --data @gateway.json
+            ```
+        - id: terraform
+          desc: |
+            Set `authentication` to `true` on the `cloudflare_ai_gateway` resource:
+
+            ```hcl
+            resource "cloudflare_ai_gateway" "example" {
+              account_id                 = "0123456789abcdef0123456789abcdef"
+              id                         = "production"
+              authentication             = true
+              cache_invalidate_on_update = true
+              cache_ttl                  = 0
+              collect_logs               = true
+              rate_limiting_interval     = 60
+              rate_limiting_limit        = 100
+            }
+            ```
+    refs:
+      - url: https://developers.cloudflare.com/ai-gateway/configuration/authentication/
+        title: Authenticated Gateway
+  - uid: mondoo-cloudflare-security-ai-gateway-spend-limits-enabled
+    title: Ensure AI Gateways enforce spend limits
+    impact: 60
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-02
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-6
+      compliance/nis-2: nis-2-21-2-c
+      compliance/nist-csf-1: nist-csf-1-pr-ds-4
+      compliance/nist-csf-2: nist-csf-2-pr-ir-04
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-6
+      compliance/nist-sp-800-171: false
+      compliance/owasp-llm-top-10-2025: owasp-llm-top-10-2025-llm10
+      compliance/owasp-top-10-2025: false
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: soc2-control-cc9-1-1
+      compliance/vda-isa-5: vda-isa-5-3-1-2
+    variants:
+      - uid: mondoo-cloudflare-security-ai-gateway-spend-limits-enabled-cloudflare
+        tags:
+          mondoo.com/filter-title: Cloudflare Account
+          mondoo.com/filter-icon: cloudflare
+      - uid: mondoo-cloudflare-security-ai-gateway-spend-limits-enabled-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-cloudflare-security-ai-gateway-spend-limits-enabled-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-cloudflare-security-ai-gateway-spend-limits-enabled-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check verifies that every AI Gateway in the Cloudflare account caps how much model usage it will pass through in a given time window.
+
+        A gateway's spend limits are a set of rules, each with a budget in dollars and a time window in seconds. AI Gateway prices each request from its token usage, and once the cumulative cost covered by a rule reaches its budget, the gateway rejects further requests with a 429 response until the window resets. This check passes when spend limits are turned on and at least one enabled rule sets a limit above zero.
+
+        **Why this matters**
+
+        Model usage is billed per token, and nothing in the request path stops a caller from sending as many tokens as it likes. A leaked gateway token, a compromised client, a scripted abuse of a public chat feature, or an agent stuck in a retry loop can each run up charges at machine speed, and the first sign is often the invoice. OWASP lists this as unbounded consumption, and the cost form of it is known as denial of wallet.
+
+        A spend limit turns an open-ended cost into a bounded one. It does not stop the abuse, but it caps the damage at a figure the organization chose in advance, and the requests it refuses are a signal that something has changed.
+
+        Enforcement is eventually consistent: the cost of a request is recorded after it completes, so a burst of concurrent requests can briefly exceed a budget before the gateway starts rejecting.
+
+        Limits at the model provider are a separate control and are not visible to this check. An organization that caps spend at every provider can treat a failure here as a gap in defense in depth rather than an open exposure.
+
+        **Limits of this result**
+
+        The scanning token needs the **AI Gateway Read** permission. Without it, Cloudflare refuses the request and the gateway list reads as empty, so this check passes without having examined any gateway. Grant the scanning token **AI Gateway Read** before relying on a passing result.
+      audit: |
+        ### Audit via Dashboard
+
+        1. Log in to the Cloudflare dashboard and select the account.
+        2. Navigate to **AI** > **AI Gateway**.
+        3. For each gateway, go to **Settings** > **Spend limits** and inspect the rules.
+
+        A passing gateway has spend limits turned on with at least one enabled rule that sets a limit. A failing gateway has spend limits turned off or has no enabled rule.
+
+        ### Audit via API
+
+        1. List the account's gateways with a token that has the **AI Gateway Read** permission:
+
+        ```bash
+        curl -s -X GET "https://api.cloudflare.com/client/v4/accounts/<account-id>/ai-gateway/gateways" \
+          -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"
+        ```
+
+        A passing gateway shows `"spend_limits"` with `"enabled": true` and at least one entry in `"rules"` whose `"enabled"` is `true` and whose `"limit"` is greater than zero. A failing gateway has no `"spend_limits"`, has `"enabled": false`, or has no such rule.
+      remediation:
+        - id: console
+          desc: |
+            1. Log in to the Cloudflare dashboard and select the account.
+            2. Navigate to **AI** > **AI Gateway** and select the gateway.
+            3. Go to **Settings** > **Spend limits** and add a rule with a budget amount and time window that matches the expected usage of the application.
+            4. Save the rule.
+        - id: cli
+          desc: |
+            The gateway update endpoint replaces the full gateway configuration, so read the current configuration, set `spend_limits`, drop the fields the endpoint does not accept, and send the result back. This example caps spend at 100 dollars per day across every model and provider:
+
+            ```bash
+            curl -s -X GET "https://api.cloudflare.com/client/v4/accounts/<account-id>/ai-gateway/gateways/<gateway-id>" \
+              -H "Authorization: Bearer <api-token>" \
+              | jq '.result | del(.id, .created_at, .modified_at, .is_default, .fedramp_level, .fedramp_mode)
+                  | .spend_limits = {enabled: true, rules: [{enabled: true, limit: 100, limitType: "cost", window: 86400}]}' \
+              > gateway.json
+
+            curl -X PUT "https://api.cloudflare.com/client/v4/accounts/<account-id>/ai-gateway/gateways/<gateway-id>" \
+              -H "Authorization: Bearer <api-token>" \
+              -H "Content-Type: application/json" \
+              --data @gateway.json
+            ```
+        - id: terraform
+          desc: |
+            Configure `spend_limits` on the `cloudflare_ai_gateway` resource with at least one enabled rule:
+
+            ```hcl
+            resource "cloudflare_ai_gateway" "example" {
+              account_id                 = "0123456789abcdef0123456789abcdef"
+              id                         = "production"
+              authentication             = true
+              cache_invalidate_on_update = true
+              cache_ttl                  = 0
+              collect_logs               = true
+              rate_limiting_interval     = 60
+              rate_limiting_limit        = 100
+
+              spend_limits = {
+                enabled = true
+                rules = [{
+                  enabled    = true
+                  limit      = 100
+                  limit_type = "cost"
+                  window     = 86400
+                }]
+              }
+            }
+            ```
+    refs:
+      - url: https://developers.cloudflare.com/ai-gateway/features/spend-limits/
+        title: Spend limits
+  - uid: mondoo-cloudflare-security-ai-gateway-rate-limiting-configured
+    title: Ensure AI Gateways apply rate limiting
+    impact: 55
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-02
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-6
+      compliance/nis-2: nis-2-21-2-c
+      compliance/nist-csf-1: nist-csf-1-pr-ds-4
+      compliance/nist-csf-2: nist-csf-2-pr-ir-04
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-5
+      compliance/nist-sp-800-171: false
+      compliance/owasp-llm-top-10-2025: owasp-llm-top-10-2025-llm10
+      compliance/owasp-top-10-2025: false
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: soc2-control-cc9-1-1
+      compliance/vda-isa-5: vda-isa-5-3-1-2
+    variants:
+      - uid: mondoo-cloudflare-security-ai-gateway-rate-limiting-configured-cloudflare
+        tags:
+          mondoo.com/filter-title: Cloudflare Account
+          mondoo.com/filter-icon: cloudflare
+      - uid: mondoo-cloudflare-security-ai-gateway-rate-limiting-configured-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-cloudflare-security-ai-gateway-rate-limiting-configured-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-cloudflare-security-ai-gateway-rate-limiting-configured-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check verifies that every AI Gateway in the Cloudflare account limits how many requests it forwards in each time interval.
+
+        Gateway rate limiting is set by two values: the number of requests allowed and the interval in seconds they are counted over. Requests beyond the limit within an interval are rejected before they reach the model provider. This check passes when both values are set and greater than zero.
+
+        **Why this matters**
+
+        Request volume is the lever behind most abuse of a model endpoint. Scraping model output at scale, probing a system prompt with thousands of variations, extracting a model's behavior to train a copy, and simply exhausting a provider quota so that legitimate users get errors all depend on sending far more requests than any real client would.
+
+        A rate limit sets the ceiling a caller can reach regardless of how it obtained access. It complements authentication rather than replacing it: a valid token in the wrong hands, or a client stuck in a loop, is still bound by the limit.
+
+        Rate limits also protect availability. Provider quotas are shared across every application that uses the same key, and one runaway client can exhaust a quota for all of them.
+
+        **Limits of this result**
+
+        The scanning token needs the **AI Gateway Read** permission. Without it, Cloudflare refuses the request and the gateway list reads as empty, so this check passes without having examined any gateway. Grant the scanning token **AI Gateway Read** before relying on a passing result.
+      audit: |
+        ### Audit via Dashboard
+
+        1. Log in to the Cloudflare dashboard and select the account.
+        2. Navigate to **AI** > **AI Gateway**.
+        3. For each gateway, open **Settings** and inspect **Rate limiting**.
+
+        A passing gateway has rate limiting turned on with a request limit and an interval. A failing gateway has rate limiting turned off.
+
+        ### Audit via API
+
+        1. List the account's gateways with a token that has the **AI Gateway Read** permission:
+
+        ```bash
+        curl -s -X GET "https://api.cloudflare.com/client/v4/accounts/<account-id>/ai-gateway/gateways" \
+          -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"
+        ```
+
+        A passing gateway shows `"rate_limiting_limit"` and `"rate_limiting_interval"` both greater than zero. A failing gateway shows either value as `null` or `0`.
+      remediation:
+        - id: console
+          desc: |
+            1. Log in to the Cloudflare dashboard and select the account.
+            2. Navigate to **AI** > **AI Gateway** and select the gateway.
+            3. Open **Settings** and turn on **Rate limiting**.
+            4. Set the number of requests and the interval to a ceiling above the application's normal peak, then save.
+        - id: cli
+          desc: |
+            The gateway update endpoint replaces the full gateway configuration, so read the current configuration, set the rate limit, drop the fields the endpoint does not accept, and send the result back. This example allows 100 requests per minute:
+
+            ```bash
+            curl -s -X GET "https://api.cloudflare.com/client/v4/accounts/<account-id>/ai-gateway/gateways/<gateway-id>" \
+              -H "Authorization: Bearer <api-token>" \
+              | jq '.result | del(.id, .created_at, .modified_at, .is_default, .fedramp_level, .fedramp_mode)
+                  | .rate_limiting_limit = 100 | .rate_limiting_interval = 60' \
+              > gateway.json
+
+            curl -X PUT "https://api.cloudflare.com/client/v4/accounts/<account-id>/ai-gateway/gateways/<gateway-id>" \
+              -H "Authorization: Bearer <api-token>" \
+              -H "Content-Type: application/json" \
+              --data @gateway.json
+            ```
+        - id: terraform
+          desc: |
+            Set `rate_limiting_limit` and `rate_limiting_interval` to values greater than zero on the `cloudflare_ai_gateway` resource:
+
+            ```hcl
+            resource "cloudflare_ai_gateway" "example" {
+              account_id                 = "0123456789abcdef0123456789abcdef"
+              id                         = "production"
+              authentication             = true
+              cache_invalidate_on_update = true
+              cache_ttl                  = 0
+              collect_logs               = true
+              rate_limiting_interval     = 60
+              rate_limiting_limit        = 100
+              rate_limiting_technique    = "sliding"
+            }
+            ```
+    refs:
+      - url: https://developers.cloudflare.com/ai-gateway/features/rate-limiting/
+        title: Rate limiting
+  - uid: mondoo-cloudflare-security-ai-gateway-dlp-enabled
+    title: Ensure AI Gateways scan prompts and responses with data loss prevention
+    impact: 60
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: false
+      compliance/dora: false
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-12
+      compliance/nis-2: false
+      compliance/nist-ai-100-1: nist-ai-100-1-measure-2-10
+      compliance/nist-csf-1: false
+      compliance/nist-csf-2: false
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-4
+      compliance/nist-sp-800-171: false
+      compliance/owasp-llm-top-10-2025: owasp-llm-top-10-2025-llm02
+      compliance/owasp-top-10-2025: false
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: false
+    variants:
+      - uid: mondoo-cloudflare-security-ai-gateway-dlp-enabled-cloudflare
+        tags:
+          mondoo.com/filter-title: Cloudflare Account
+          mondoo.com/filter-icon: cloudflare
+      - uid: mondoo-cloudflare-security-ai-gateway-dlp-enabled-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-cloudflare-security-ai-gateway-dlp-enabled-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-cloudflare-security-ai-gateway-dlp-enabled-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check verifies that every AI Gateway in the Cloudflare account inspects the traffic it forwards with Cloudflare data loss prevention.
+
+        AI Gateway can run requests and responses through DLP profiles that detect content such as credentials, financial data, and personal information, then either flag or block a match. A gateway is configured in one of two ways: a single action applied to a set of profiles, or a list of policies, each with its own profiles and action. This check passes when DLP is turned on and either a gateway-wide action is set or at least one policy is enabled.
+
+        **Why this matters**
+
+        Prompts carry whatever users and applications put in them. Support transcripts, pasted log files, source code, and customer records all end up in prompts, and with them the API keys, passwords, card numbers, and personal data they contain. Once a prompt reaches a third-party model provider, that data is outside the organization's control and subject to the provider's retention and handling.
+
+        The gateway is the one point every request passes through on the way out, which makes it the natural place to catch sensitive content before it leaves. Inspecting responses as well catches the reverse case, where a model returns sensitive data drawn from its context or from a retrieval source it should not have exposed.
+
+        DLP in AI Gateway relies on Cloudflare Zero Trust DLP profiles, so accounts without that entitlement cannot pass this check and should weigh it against the data they send to models.
+
+        **Limits of this result**
+
+        The scanning token needs the **AI Gateway Read** permission. Without it, Cloudflare refuses the request and the gateway list reads as empty, so this check passes without having examined any gateway. Grant the scanning token **AI Gateway Read** before relying on a passing result.
+      audit: |
+        ### Audit via Dashboard
+
+        1. Log in to the Cloudflare dashboard and select the account.
+        2. Navigate to **AI** > **AI Gateway**.
+        3. For each gateway, open the **Firewall** tab and inspect **Data Loss Prevention**.
+
+        A passing gateway has DLP turned on with at least one active policy or profile. A failing gateway has DLP turned off or has no active policy.
+
+        ### Audit via API
+
+        1. List the account's gateways with a token that has the **AI Gateway Read** permission:
+
+        ```bash
+        curl -s -X GET "https://api.cloudflare.com/client/v4/accounts/<account-id>/ai-gateway/gateways" \
+          -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"
+        ```
+
+        A passing gateway shows `"dlp"` with `"enabled": true` and either an `"action"` value or at least one entry in `"policies"` with `"enabled": true`. A failing gateway has no `"dlp"`, has `"enabled": false`, or has no enabled policy.
+      remediation:
+        - id: console
+          desc: |
+            1. Create or select DLP profiles under **Zero Trust** > **DLP** > **DLP Profiles** that match the data the organization must not send to model providers.
+            2. In the Cloudflare dashboard, navigate to **AI** > **AI Gateway** and select the gateway.
+            3. Open the **Firewall** tab and turn on **Data Loss Prevention**.
+            4. Under the DLP section, select **Add Policy**, choose the profiles, apply the policy to requests and responses, and set the action to **Block** for data that must never leave or **Flag** while tuning.
+            5. Save the configuration.
+        - id: cli
+          desc: |
+            The gateway update endpoint replaces the full gateway configuration, so read the current configuration, set `dlp`, drop the fields the endpoint does not accept, and send the result back. Replace `<dlp-profile-id>` with the ID of a Zero Trust DLP profile:
+
+            ```bash
+            curl -s -X GET "https://api.cloudflare.com/client/v4/accounts/<account-id>/ai-gateway/gateways/<gateway-id>" \
+              -H "Authorization: Bearer <api-token>" \
+              | jq '.result | del(.id, .created_at, .modified_at, .is_default, .fedramp_level, .fedramp_mode)
+                  | .dlp = {enabled: true, policies: [{id: "block-sensitive", enabled: true, action: "BLOCK", check: ["REQUEST", "RESPONSE"], profiles: ["<dlp-profile-id>"]}]}' \
+              > gateway.json
+
+            curl -X PUT "https://api.cloudflare.com/client/v4/accounts/<account-id>/ai-gateway/gateways/<gateway-id>" \
+              -H "Authorization: Bearer <api-token>" \
+              -H "Content-Type: application/json" \
+              --data @gateway.json
+            ```
+        - id: terraform
+          desc: |
+            Configure `dlp` on the `cloudflare_ai_gateway` resource with at least one enabled policy:
+
+            ```hcl
+            resource "cloudflare_ai_gateway" "example" {
+              account_id                 = "0123456789abcdef0123456789abcdef"
+              id                         = "production"
+              authentication             = true
+              cache_invalidate_on_update = true
+              cache_ttl                  = 0
+              collect_logs               = true
+              rate_limiting_interval     = 60
+              rate_limiting_limit        = 100
+
+              dlp = {
+                enabled = true
+                policies = [{
+                  id       = "block-sensitive"
+                  enabled  = true
+                  action   = "BLOCK"
+                  check    = ["REQUEST", "RESPONSE"]
+                  profiles = ["00000000-0000-0000-0000-000000000000"]
+                }]
+              }
+            }
+            ```
+    refs:
+      - url: https://developers.cloudflare.com/ai-gateway/features/dlp/set-up-dlp/
+        title: Set up Data Loss Prevention (DLP)
+  - uid: mondoo-cloudflare-security-ai-gateway-guardrails-block
+    title: Ensure AI Gateway guardrails block unsafe prompts and responses
+    impact: 55
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: false
+      compliance/dora: false
+      compliance/hipaa: false
+      compliance/iso-27001-2022: false
+      compliance/nis-2: false
+      compliance/nist-ai-100-1: nist-ai-100-1-measure-2-6
+      compliance/nist-csf-1: false
+      compliance/nist-csf-2: false
+      compliance/nist-sp-800-53-rev5: false
+      compliance/nist-sp-800-171: false
+      compliance/owasp-llm-top-10-2025: owasp-llm-top-10-2025-llm05
+      compliance/owasp-top-10-2025: false
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: false
+    variants:
+      - uid: mondoo-cloudflare-security-ai-gateway-guardrails-block-cloudflare
+        tags:
+          mondoo.com/filter-title: Cloudflare Account
+          mondoo.com/filter-icon: cloudflare
+      - uid: mondoo-cloudflare-security-ai-gateway-guardrails-block-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-cloudflare-security-ai-gateway-guardrails-block-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-cloudflare-security-ai-gateway-guardrails-block-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check verifies that every AI Gateway in the Cloudflare account blocks at least one category of unsafe content in prompts and at least one in model responses.
+
+        AI Gateway guardrails evaluate each prompt and each response against a set of hazard categories, such as violent crime, hate, self-harm, and sexual content. For every category, a gateway can **Flag** a match, which records it, or **Block** it, which stops the request or response. A category left unset is not evaluated. This check passes when the prompt settings and the response settings each block at least one category.
+
+        **Why this matters**
+
+        A model returns whatever its inputs lead it to. Users and attackers steer models toward harmful output on purpose, and retrieved documents or tool results can do it without anyone intending to. When that output reaches end users, the organization that operates the application owns the result, whether it is abusive content in a customer chat or instructions the organization would never publish.
+
+        Flagging alone records the problem after the content has already been delivered. Blocking is what keeps it from reaching the user, and applying it to both directions covers harmful requests on the way in and harmful output on the way out.
+
+        Which categories to block depends on the application, and guardrails add per-request evaluation cost. This check asks only that the gateway blocks something in each direction, so a team can start with the categories that matter most and widen the set later.
+
+        **Limits of this result**
+
+        The scanning token needs the **AI Gateway Read** permission. Without it, Cloudflare refuses the request and the gateway list reads as empty, so this check passes without having examined any gateway. Grant the scanning token **AI Gateway Read** before relying on a passing result.
+      audit: |
+        ### Audit via Dashboard
+
+        1. Log in to the Cloudflare dashboard and select the account.
+        2. Navigate to **AI** > **AI Gateway**.
+        3. For each gateway, go to **Guardrails** and inspect the actions set for prompts and for responses.
+
+        A passing gateway has guardrails turned on with at least one category set to **Block** for prompts and at least one set to **Block** for responses. A failing gateway has guardrails turned off, or only flags matches in one or both directions.
+
+        ### Audit via API
+
+        1. List the account's gateways with a token that has the **AI Gateway Read** permission:
+
+        ```bash
+        curl -s -X GET "https://api.cloudflare.com/client/v4/accounts/<account-id>/ai-gateway/gateways" \
+          -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"
+        ```
+
+        A passing gateway shows `"guardrails"` where both `"prompt"` and `"response"` contain at least one category with the value `"BLOCK"`. A failing gateway has no `"guardrails"`, or has a `"prompt"` or `"response"` object with no `"BLOCK"` value.
+      remediation:
+        - id: console
+          desc: |
+            1. Log in to the Cloudflare dashboard and select the account.
+            2. Navigate to **AI** > **AI Gateway** and select the gateway.
+            3. Go to **Guardrails** and switch the toggle to **On**.
+            4. Select **Change** > **Configure specific categories**, and for prompts and for responses set the categories the application must never accept or return to **Block**.
+            5. Save the configuration.
+        - id: cli
+          desc: |
+            The gateway update endpoint replaces the full gateway configuration, so read the current configuration, set `guardrails`, drop the fields the endpoint does not accept, and send the result back. This example blocks the violent crime and hate categories in both directions:
+
+            ```bash
+            curl -s -X GET "https://api.cloudflare.com/client/v4/accounts/<account-id>/ai-gateway/gateways/<gateway-id>" \
+              -H "Authorization: Bearer <api-token>" \
+              | jq '.result | del(.id, .created_at, .modified_at, .is_default, .fedramp_level, .fedramp_mode)
+                  | .guardrails = {prompt: {S1: "BLOCK", S10: "BLOCK"}, response: {S1: "BLOCK", S10: "BLOCK"}}' \
+              > gateway.json
+
+            curl -X PUT "https://api.cloudflare.com/client/v4/accounts/<account-id>/ai-gateway/gateways/<gateway-id>" \
+              -H "Authorization: Bearer <api-token>" \
+              -H "Content-Type: application/json" \
+              --data @gateway.json
+            ```
+        - id: terraform
+          desc: |
+            Configure `guardrails` on the `cloudflare_ai_gateway` resource with at least one blocked category for prompts and one for responses:
+
+            ```hcl
+            resource "cloudflare_ai_gateway" "example" {
+              account_id                 = "0123456789abcdef0123456789abcdef"
+              id                         = "production"
+              authentication             = true
+              cache_invalidate_on_update = true
+              cache_ttl                  = 0
+              collect_logs               = true
+              rate_limiting_interval     = 60
+              rate_limiting_limit        = 100
+
+              guardrails = {
+                prompt = {
+                  s1  = "BLOCK"
+                  s10 = "BLOCK"
+                }
+                response = {
+                  s1  = "BLOCK"
+                  s10 = "BLOCK"
+                }
+              }
+            }
+            ```
+    refs:
+      - url: https://developers.cloudflare.com/ai-gateway/features/guardrails/set-up-guardrail/
+        title: Set up Guardrails
+  - uid: mondoo-cloudflare-security-ai-gateway-provider-keys-not-stale
+    filters: asset.platform == "cloudflare-account"
+    title: Ensure AI Gateway provider keys are not stale
+    impact: 60
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-07
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-308-a-5-ii-d-security-awareness-training-and-tools-password-management
+      compliance/iso-27001-2022: iso-27001-2022-a-5-17
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a07
+      compliance/pci-dss-4: pcidss-requirement-8-6-3
+      compliance/soc2-2017: soc2-control-cc6-2-2
+      compliance/vda-isa-5: vda-isa-5-4-1-3
+    # No Terraform variants: whether a stored key has been used is runtime state that Cloudflare records per key; nothing in cloudflare_ai_gateway HCL, plan, or state carries it.
+    mql: |
+      cloudflare.account.aiGateways.all(
+        providerConfigs.all(
+          lastUsedAt != empty && lastUsedAt > time.now - 90 * time.day || lastUsedAt == empty && modifiedAt > time.now - 90 * time.day
+        )
+      )
+    docs:
+      desc: |
+        This check verifies that every model provider key stored in an AI Gateway has been used within the last 90 days.
+
+        AI Gateway can hold the API keys for providers such as OpenAI and Anthropic, so that applications call the gateway without carrying a provider key themselves. Cloudflare records the date each stored key was last used. This check passes when every stored key was used within the past 90 days, or, for a key that has never been used, was added or changed within that time.
+
+        **Why this matters**
+
+        A stored provider key is a live credential with the full reach of the provider account it belongs to. While it is in use, its traffic is visible and somebody would notice it failing. Once nothing uses it, it becomes a credential that nobody watches, that nobody would miss if it were revoked, and that still works for anyone who can reach it through the gateway.
+
+        Unused keys accumulate for ordinary reasons. An application moves to a different provider, a proof of concept ends, a key is replaced and the old one is left in place. Each leftover key extends what an attacker with gateway access can do and widens the impact of a gateway misconfiguration.
+
+        Removing a stale key from the gateway, and revoking it at the provider, closes that access without affecting any working application.
+
+        **Limits of this result**
+
+        Cloudflare records the last-use date once per day, so a key used in the past day can read as one day older than it is. The scanning token needs the **AI Gateway Read** permission. Without it, Cloudflare refuses the request and the gateway list reads as empty, so this check passes without having examined any key. Grant the scanning token **AI Gateway Read** before relying on a passing result.
+      audit: |
+        ### Audit via Dashboard
+
+        1. Log in to the Cloudflare dashboard and select the account.
+        2. Navigate to **AI** > **AI Gateway** and select a gateway.
+        3. Go to the **Provider Keys** section and inspect when each key was last used.
+
+        A passing gateway has no stored key that has gone unused for more than 90 days. A failing gateway has at least one such key.
+
+        ### Audit via API
+
+        1. List the provider keys stored in a gateway with a token that has the **AI Gateway Read** permission:
+
+        ```bash
+        curl -s -X GET "https://api.cloudflare.com/client/v4/accounts/<account-id>/ai-gateway/gateways/<gateway-id>/provider_configs" \
+          -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"
+        ```
+
+        A passing result shows every key with a `"last_used_at"` date within the past 90 days, or with a `null` `"last_used_at"` and a `"modified_at"` within the past 90 days. A failing result contains a key outside both.
+      remediation:
+        - id: console
+          desc: |
+            1. Confirm with the owning team that no application still depends on the stale key.
+            2. In the Cloudflare dashboard, navigate to **AI** > **AI Gateway** and select the gateway.
+            3. Go to the **Provider Keys** section and delete the stale key.
+            4. Revoke the same key in the model provider's console so that copies held anywhere else stop working.
+        - id: cli
+          desc: |
+            Delete the stale key from the gateway, then revoke it in the model provider's console:
+
+            ```bash
+            curl -X DELETE "https://api.cloudflare.com/client/v4/accounts/<account-id>/ai-gateway/gateways/<gateway-id>/provider_configs/<provider-config-id>" \
+              -H "Authorization: Bearer <api-token>"
+            ```
+    refs:
+      - url: https://developers.cloudflare.com/ai-gateway/configuration/bring-your-own-keys/
+        title: BYOK (Store Keys)
   - uid: mondoo-cloudflare-security-ssl-not-off-cloudflare
     filters: |
       asset.platform == "cloudflare-zone"
@@ -3035,4 +3733,142 @@ queries:
     mql: |
       terraform.state.resources.where(type == 'cloudflare_api_token').where(values['status'] != 'disabled').all(
         values['condition'] != null && values['condition']['request_ip'] != null && values['condition']['request_ip']['in'] != null && values['condition']['request_ip']['in'].length > 0
+      )
+  - uid: mondoo-cloudflare-security-ai-gateway-authentication-required-cloudflare
+    filters: |
+      asset.platform == "cloudflare-account"
+    mql: |
+      cloudflare.account.aiGateways.all(authentication == true)
+  - uid: mondoo-cloudflare-security-ai-gateway-authentication-required-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'cloudflare_ai_gateway')
+    mql: |
+      terraform.resources('cloudflare_ai_gateway').all(
+        arguments['authentication'] != false
+      )
+  - uid: mondoo-cloudflare-security-ai-gateway-authentication-required-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'cloudflare_ai_gateway')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'cloudflare_ai_gateway').all(
+        change.after['authentication'] != false
+      )
+  - uid: mondoo-cloudflare-security-ai-gateway-authentication-required-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'cloudflare_ai_gateway')
+    mql: |
+      terraform.state.resources.where(type == 'cloudflare_ai_gateway').all(
+        values['authentication'] != false
+      )
+  - uid: mondoo-cloudflare-security-ai-gateway-spend-limits-enabled-cloudflare
+    filters: |
+      asset.platform == "cloudflare-account"
+    mql: |
+      cloudflare.account.aiGateways.all(
+        spendLimitsEnabled == true && spendLimitRules.any(enabled == true && limit > 0)
+      )
+  - uid: mondoo-cloudflare-security-ai-gateway-spend-limits-enabled-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'cloudflare_ai_gateway')
+    mql: |
+      terraform.resources('cloudflare_ai_gateway').all(
+        arguments['spend_limits'] != empty && arguments['spend_limits']['enabled'] == true && arguments['spend_limits']['rules'] != empty && arguments['spend_limits']['rules'].any(_['enabled'] != false && _['limit'] > 0)
+      )
+  - uid: mondoo-cloudflare-security-ai-gateway-spend-limits-enabled-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'cloudflare_ai_gateway')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'cloudflare_ai_gateway').all(
+        change.after['spend_limits'] != empty && change.after['spend_limits']['enabled'] == true && change.after['spend_limits']['rules'] != empty && change.after['spend_limits']['rules'].any(_['enabled'] != false && _['limit'] > 0)
+      )
+  - uid: mondoo-cloudflare-security-ai-gateway-spend-limits-enabled-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'cloudflare_ai_gateway')
+    mql: |
+      terraform.state.resources.where(type == 'cloudflare_ai_gateway').all(
+        values['spend_limits'] != empty && values['spend_limits']['enabled'] == true && values['spend_limits']['rules'] != empty && values['spend_limits']['rules'].any(_['enabled'] != false && _['limit'] > 0)
+      )
+  - uid: mondoo-cloudflare-security-ai-gateway-rate-limiting-configured-cloudflare
+    filters: |
+      asset.platform == "cloudflare-account"
+    mql: |
+      cloudflare.account.aiGateways.all(
+        rateLimitingLimit != empty && rateLimitingLimit > 0 && rateLimitingInterval != empty && rateLimitingInterval > 0
+      )
+  - uid: mondoo-cloudflare-security-ai-gateway-rate-limiting-configured-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'cloudflare_ai_gateway')
+    mql: |
+      terraform.resources('cloudflare_ai_gateway').all(
+        arguments['rate_limiting_limit'] > 0 && arguments['rate_limiting_interval'] > 0
+      )
+  - uid: mondoo-cloudflare-security-ai-gateway-rate-limiting-configured-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'cloudflare_ai_gateway')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'cloudflare_ai_gateway').all(
+        change.after['rate_limiting_limit'] > 0 && change.after['rate_limiting_interval'] > 0
+      )
+  - uid: mondoo-cloudflare-security-ai-gateway-rate-limiting-configured-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'cloudflare_ai_gateway')
+    mql: |
+      terraform.state.resources.where(type == 'cloudflare_ai_gateway').all(
+        values['rate_limiting_limit'] > 0 && values['rate_limiting_interval'] > 0
+      )
+  - uid: mondoo-cloudflare-security-ai-gateway-dlp-enabled-cloudflare
+    filters: |
+      asset.platform == "cloudflare-account"
+    mql: |
+      cloudflare.account.aiGateways.all(
+        dlpEnabled == true && dlpAction != empty || dlpEnabled == true && dlpPolicies.any(enabled == true)
+      )
+  - uid: mondoo-cloudflare-security-ai-gateway-dlp-enabled-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'cloudflare_ai_gateway')
+    mql: |
+      terraform.resources('cloudflare_ai_gateway').all(
+        arguments['dlp'] != empty && arguments['dlp']['enabled'] == true && arguments['dlp']['action'] != empty || arguments['dlp'] != empty && arguments['dlp']['enabled'] == true && arguments['dlp']['policies'] != empty && arguments['dlp']['policies'].any(_['enabled'] == true)
+      )
+  - uid: mondoo-cloudflare-security-ai-gateway-dlp-enabled-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'cloudflare_ai_gateway')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'cloudflare_ai_gateway').all(
+        change.after['dlp'] != empty && change.after['dlp']['enabled'] == true && change.after['dlp']['action'] != empty || change.after['dlp'] != empty && change.after['dlp']['enabled'] == true && change.after['dlp']['policies'] != empty && change.after['dlp']['policies'].any(_['enabled'] == true)
+      )
+  - uid: mondoo-cloudflare-security-ai-gateway-dlp-enabled-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'cloudflare_ai_gateway')
+    mql: |
+      terraform.state.resources.where(type == 'cloudflare_ai_gateway').all(
+        values['dlp'] != empty && values['dlp']['enabled'] == true && values['dlp']['action'] != empty || values['dlp'] != empty && values['dlp']['enabled'] == true && values['dlp']['policies'] != empty && values['dlp']['policies'].any(_['enabled'] == true)
+      )
+  - uid: mondoo-cloudflare-security-ai-gateway-guardrails-block-cloudflare
+    filters: |
+      asset.platform == "cloudflare-account"
+    mql: |
+      cloudflare.account.aiGateways.all(
+        promptGuardrails != empty && promptGuardrails.values.contains("BLOCK") && responseGuardrails != empty && responseGuardrails.values.contains("BLOCK")
+      )
+  - uid: mondoo-cloudflare-security-ai-gateway-guardrails-block-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'cloudflare_ai_gateway')
+    mql: |
+      terraform.resources('cloudflare_ai_gateway').all(
+        arguments['guardrails'] != empty && arguments['guardrails']['prompt'] != empty && arguments['guardrails']['prompt'].values.contains('BLOCK') && arguments['guardrails']['response'] != empty && arguments['guardrails']['response'].values.contains('BLOCK')
+      )
+  - uid: mondoo-cloudflare-security-ai-gateway-guardrails-block-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'cloudflare_ai_gateway')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'cloudflare_ai_gateway').all(
+        change.after['guardrails'] != empty && change.after['guardrails']['prompt'] != empty && change.after['guardrails']['prompt'].values.contains('BLOCK') && change.after['guardrails']['response'] != empty && change.after['guardrails']['response'].values.contains('BLOCK')
+      )
+  - uid: mondoo-cloudflare-security-ai-gateway-guardrails-block-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'cloudflare_ai_gateway')
+    mql: |
+      terraform.state.resources.where(type == 'cloudflare_ai_gateway').all(
+        values['guardrails'] != empty && values['guardrails']['prompt'] != empty && values['guardrails']['prompt'].values.contains('BLOCK') && values['guardrails']['response'] != empty && values['guardrails']['response'].values.contains('BLOCK')
       )
