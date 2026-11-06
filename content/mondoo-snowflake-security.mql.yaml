@@ -28,6 +28,7 @@ policies:
         - Privileged role management for ACCOUNTADMIN, SECURITYADMIN, and SYSADMIN
         - Session management and single sign-on integrity
         - Data egress controls for stages, integrations, and functions
+        - Cortex AI access, inference data residency, agent and MCP server tools, and AI spend limits
 
         Learn more about scanning Snowflake in the [cnspec Snowflake documentation](https://mondoo.com/docs/cnspec/databases/snowflake).
 
@@ -80,6 +81,14 @@ policies:
       - title: Data Protection
         checks:
           - uid: mondoo-snowflake-security-databases-retention-configured
+      - title: Cortex AI
+        checks:
+          - uid: mondoo-snowflake-security-cortex-user-not-granted-to-public
+          - uid: mondoo-snowflake-security-mcp-server-no-execute-sql-tool
+          - uid: mondoo-snowflake-security-cortex-cross-region-restricted
+          - uid: mondoo-snowflake-security-cortex-agent-budget-configured
+          - uid: mondoo-snowflake-security-cortex-code-credit-limits-set
+          - uid: mondoo-snowflake-security-cortex-objects-not-owned-by-privileged-role
     scoring_system: highest impact
 queries:
   # No Terraform variants: the runtime check inspects each user's observed Duo enrollment flag (ext_authn_duo), which the snowflake_user resource exposes only as read-only show_output and never as a configurable argument. Per-user MFA enrollment is runtime identity state with no faithful Terraform analog.
@@ -4013,6 +4022,576 @@ queries:
     refs:
       - url: https://docs.snowflake.com/en/user-guide/tasks-intro
         title: Introduction to tasks
+  # No Terraform variants: Snowflake grants SNOWFLAKE.CORTEX_USER to PUBLIC when the account is created, so the grant never appears in Terraform configuration. HCL can only show grants it declares, and an absent snowflake_grant_database_role resource says nothing about the default grant.
+  - uid: mondoo-snowflake-security-cortex-user-not-granted-to-public
+    title: Ensure the SNOWFLAKE.CORTEX_USER database role is not granted to PUBLIC
+    impact: 75
+    filters: asset.platform == 'snowflake'
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-3
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-7-2-2
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    mql: |
+      snowflake.account.cortexUserRole.grantees.none(grantedTo == "ROLE" && granteeName == "PUBLIC")
+    docs:
+      desc: |
+        This check verifies that only roles chosen by an administrator can use Snowflake Cortex AI.
+
+        The `SNOWFLAKE.CORTEX_USER` database role holds the privileges to call Cortex AI functions such as `AI_COMPLETE` and to use Cortex services including Cortex Agents, Cortex Analyst, and Cortex Search. Snowflake grants it to the PUBLIC role by default, and every user and role inherits PUBLIC. This check requires that `SHOW GRANTS OF DATABASE ROLE SNOWFLAKE.CORTEX_USER` lists no grant to PUBLIC.
+
+        **Why this matters**
+
+        With the default grant, any user can pass any data their role can read to a large language model. That includes regulated columns, free-text fields holding customer data, and tables nobody reviewed for AI use. When cross-region inference is enabled, the same request can be processed outside the account's home region.
+
+        The default also takes the decision away from the people accountable for it. Granting Cortex to specific roles makes AI use an explicit, reviewable entitlement that can be tied to approved use cases, audited through grants, and revoked from one place.
+
+        Cost is the third concern. Cortex calls consume credits, and the default grant lets every user, including service accounts and dormant users whose credentials may be compromised, run inference at the account's expense.
+
+        Access to Cortex AI functions also requires the `USE AI FUNCTIONS` account privilege, which Snowflake grants to PUBLIC by default as well. Revoking both from PUBLIC and granting them to the roles that need Cortex gives full control over who can call it.
+      audit: |
+        ### Audit via Snowsight
+
+        1. Sign in to Snowsight as a user with the ACCOUNTADMIN role.
+        2. Open a worksheet and run the SQL below.
+        3. Review the `granted_to` and `grantee_name` columns.
+
+        A passing result shows no row where `granted_to` is `ROLE` and `grantee_name` is `PUBLIC`; a failing result shows that row.
+
+        ### Audit via SQL
+
+        Run the query in a Snowsight worksheet or with SnowSQL:
+
+        ```sql
+        SHOW GRANTS OF DATABASE ROLE SNOWFLAKE.CORTEX_USER;
+        ```
+
+        A passing result lists only the roles you granted Cortex access to; a failing result includes `PUBLIC`.
+      remediation:
+        - id: console
+          desc: |
+            **Using Snowsight**
+
+            Database role grants are changed with SQL, so update them from a worksheet:
+
+            1. Sign in to Snowsight as a user with the ACCOUNTADMIN role.
+            2. Open a new worksheet.
+            3. Run the statements from the SQL remediation below.
+        - id: sql
+          desc: |
+            Run as `ACCOUNTADMIN` in a Snowsight worksheet, via SnowSQL, or with the Snowflake CLI.
+
+            1. Grant Cortex access to the roles that need it before removing the default grant, so approved workloads keep working:
+
+                ```sql
+                GRANT DATABASE ROLE SNOWFLAKE.CORTEX_USER TO ROLE <cortex_role>;
+                GRANT USE AI FUNCTIONS ON ACCOUNT TO ROLE <cortex_role>;
+                ```
+
+            2. Revoke the default grants from PUBLIC:
+
+                ```sql
+                REVOKE DATABASE ROLE SNOWFLAKE.CORTEX_USER FROM ROLE PUBLIC;
+                REVOKE USE AI FUNCTIONS ON ACCOUNT FROM ROLE PUBLIC;
+                ```
+
+            3. Confirm that PUBLIC no longer holds the role:
+
+                ```sql
+                SHOW GRANTS OF DATABASE ROLE SNOWFLAKE.CORTEX_USER;
+                ```
+
+            **Warning:** Users who call Cortex through a role that was relying on PUBLIC lose access until their role is granted `CORTEX_USER` and `USE AI FUNCTIONS`.
+        - id: terraform
+          desc: |
+            The default grant to PUBLIC cannot be revoked by declaring a resource, so run the SQL remediation once. Then grant Cortex access to the approved roles with the `snowflakedb/snowflake` provider:
+
+            ```hcl
+            resource "snowflake_grant_database_role" "cortex_user" {
+              database_role_name = "\"SNOWFLAKE\".\"CORTEX_USER\""
+              parent_role_name   = "CORTEX_ANALYST_ROLE"
+            }
+            ```
+    refs:
+      - url: https://docs.snowflake.com/en/user-guide/snowflake-cortex/aisql-privileges-and-access
+        title: Privileges and model access for Cortex AI Functions
+  # No Terraform variants: the snowflakedb/snowflake provider has no resource for Snowflake-managed MCP servers, so their tool specifications never appear in Terraform configuration.
+  - uid: mondoo-snowflake-security-mcp-server-no-execute-sql-tool
+    title: Ensure MCP servers do not expose the SYSTEM_EXECUTE_SQL tool
+    impact: 75
+    filters: asset.platform == 'snowflake'
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: false
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-9
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ip-1
+      compliance/nist-csf-2: nist-csf-2-pr-ps-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-4-6
+      compliance/owasp-llm-top-10-2025: owasp-llm-top-10-2025-llm06
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a02
+      compliance/pci-dss-4: pcidss-requirement-2-2-4
+      compliance/soc2-2017: soc2-control-cc6-6-1
+      compliance/vda-isa-5: false
+    mql: |
+      snowflake.account.mcpServers.all(tools.none(type == /^system_execute_sql$/i))
+    docs:
+      desc: |
+        This check verifies that Snowflake-managed MCP servers give AI clients specific tools rather than a general SQL console.
+
+        A Snowflake-managed MCP server publishes Snowflake objects as tools to outside Model Context Protocol clients and agents. Most tool types expose one reviewed object: a Cortex Search service, a semantic view, a Cortex Agent, or a function. The `SYSTEM_EXECUTE_SQL` tool type is different. It lets the client run any SQL statement the calling role is allowed to run. This check requires that no tool on any MCP server in the account has the `SYSTEM_EXECUTE_SQL` type.
+
+        **Why this matters**
+
+        An AI agent decides what to do from text it reads, and that text can come from documents, tickets, web pages, or query results an attacker controls. A prompt injection that reaches an agent holding a SQL tool can make it run statements the user never intended: reading tables outside the task, creating stages, unloading data with `COPY INTO`, or changing objects the calling role owns.
+
+        Purpose-built tools limit what a manipulated agent can do to the operations each tool performs. A general SQL tool removes that limit, so the role's full privilege set becomes the agent's capability. Most human users hold broader roles than any single AI task needs.
+
+        The tool also defeats review. A search service or a stored procedure can be inspected before it is exposed, but arbitrary SQL cannot.
+
+        Expose specific Cortex Search services, semantic views, agents, or stored procedures that implement the operations clients need, and remove the SQL execution tool.
+      audit: |
+        ### Audit via Snowsight
+
+        1. Sign in to Snowsight with a role that can see the account's MCP servers.
+        2. Open a worksheet and run the SQL below.
+        3. For each MCP server, review the `server_spec` returned by `DESCRIBE MCP SERVER`.
+
+        A passing result shows no tool whose `type` is `SYSTEM_EXECUTE_SQL`; a failing result shows at least one.
+
+        ### Audit via SQL
+
+        List the MCP servers, then describe each one:
+
+        ```sql
+        SHOW MCP SERVERS IN ACCOUNT;
+        DESCRIBE MCP SERVER <database>.<schema>.<server_name>;
+        ```
+
+        Search each specification for `type: "SYSTEM_EXECUTE_SQL"`. `SHOW MCP SERVERS` returns only servers the current role can see, so run the audit with a role that has visibility of every schema.
+      remediation:
+        - id: console
+          desc: |
+            **Using Snowsight**
+
+            MCP server specifications are changed with SQL, so update them from a worksheet:
+
+            1. Sign in to Snowsight with the role that owns the MCP server.
+            2. Open a new worksheet.
+            3. Run the statements from the SQL remediation below.
+        - id: sql
+          desc: |
+            Run with the role that owns the MCP server.
+
+            1. Record the grants on the server, because replacing it does not keep them:
+
+                ```sql
+                SHOW GRANTS ON MCP SERVER <database>.<schema>.<server_name>;
+                ```
+
+            2. Recreate the server with a specification that lists only purpose-built tools and omits the `SYSTEM_EXECUTE_SQL` tool:
+
+                ```sql
+                CREATE OR REPLACE MCP SERVER <database>.<schema>.<server_name>
+                  FROM SPECIFICATION $$
+                    tools:
+                      - name: "support_docs_search"
+                        title: "Support documentation search"
+                        type: "CORTEX_SEARCH_SERVICE_QUERY"
+                        identifier: "<database>.<schema>.<search_service>"
+                        description: "Searches the support documentation."
+                  $$;
+                ```
+
+            3. Re-apply the grants recorded in step 1:
+
+                ```sql
+                GRANT USAGE ON MCP SERVER <database>.<schema>.<server_name> TO ROLE <client_role>;
+                ```
+    refs:
+      - url: https://docs.snowflake.com/en/sql-reference/sql/create-mcp-server
+        title: CREATE MCP SERVER
+      - url: https://docs.snowflake.com/en/user-guide/snowflake-cortex/cortex-agents-mcp
+        title: Snowflake-managed MCP server
+  - uid: mondoo-snowflake-security-cortex-cross-region-restricted
+    title: Ensure Cortex cross-region inference is restricted to a defined geography
+    impact: 65
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-dsp-19
+      compliance/dora: false
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-5-31
+      compliance/nis-2: false
+      compliance/nist-csf-1: nist-csf-1-id-gv-3
+      compliance/nist-csf-2: nist-csf-2-gv-oc-03
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-12
+      compliance/nist-sp-800-171: false
+      compliance/owasp-top-10-2025: false
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: false
+    variants:
+      - uid: mondoo-snowflake-security-cortex-cross-region-restricted-snowflake
+        tags:
+          mondoo.com/filter-title: Snowflake
+          mondoo.com/filter-icon: snowflake
+      - uid: mondoo-snowflake-security-cortex-cross-region-restricted-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-snowflake-security-cortex-cross-region-restricted-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-snowflake-security-cortex-cross-region-restricted-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check verifies that Cortex AI requests stay within a geography the organization has chosen.
+
+        The `CORTEX_ENABLED_CROSS_REGION` account parameter controls where Snowflake may process a Cortex request when the model is not available in the account's own region. `DISABLED` keeps processing in the home region. Regional values such as `AWS_EU`, `AWS_US`, or `AZURE_EU` keep it within one cloud geography. `ANY_REGION` lets Snowflake route the request to any supported region on any cloud, and the `AWS_GLOBAL`, `AZURE_GLOBAL`, and `GCP_GLOBAL` values allow any region of that cloud worldwide. This check requires the parameter to be set and to be neither `ANY_REGION` nor a global value.
+
+        **Why this matters**
+
+        A Cortex request carries the prompt and whatever table data the query passes to the model. Routing it to another region means that data is processed in another jurisdiction, which can breach data residency commitments under the GDPR, sector regulations, or customer contracts, and the transfer happens without any visible change to the query.
+
+        The broad values are also the defaults for some accounts. Snowflake documents `ANY_REGION` as the default for new organizations created after March 9, 2026, so an account can route data globally without anyone having made that decision.
+
+        Choosing `DISABLED` or a regional value makes the residency boundary explicit. The cost is that some models are unavailable when they are not deployed in the allowed regions, which is the trade-off the organization should make deliberately.
+      audit: |
+        ### Audit via Snowsight
+
+        1. Sign in to Snowsight as a user with the ACCOUNTADMIN role.
+        2. Open a worksheet and run the SQL below.
+        3. Review the returned `value` for the parameter.
+
+        A passing result shows `DISABLED` or one or more regional values such as `AWS_EU`; a failing result shows `ANY_REGION` or a value ending in `_GLOBAL`.
+
+        ### Audit via SQL
+
+        Run the query in a Snowsight worksheet or with SnowSQL:
+
+        ```sql
+        SHOW PARAMETERS LIKE 'CORTEX_ENABLED_CROSS_REGION' IN ACCOUNT;
+        ```
+
+        The `value` column shows the setting in effect, including an inherited default.
+      remediation:
+        - id: console
+          desc: |
+            **Using Snowsight**
+
+            Snowsight has no dedicated toggle for this account parameter, so set it from a worksheet:
+
+            1. In Snowsight, open a new worksheet while using the ACCOUNTADMIN role.
+            2. Run `ALTER ACCOUNT SET CORTEX_ENABLED_CROSS_REGION = 'DISABLED';`, or a regional value that matches your residency requirements.
+            3. Confirm the change with `SHOW PARAMETERS LIKE 'CORTEX_ENABLED_CROSS_REGION' IN ACCOUNT;`.
+        - id: sql
+          desc: |
+            Run as `ACCOUNTADMIN` in a Snowsight worksheet, via SnowSQL, or with the Snowflake CLI. Keep processing in the home region:
+
+            ```sql
+            ALTER ACCOUNT SET CORTEX_ENABLED_CROSS_REGION = 'DISABLED';
+            ```
+
+            Or allow one cloud geography, for example the AWS European regions:
+
+            ```sql
+            ALTER ACCOUNT SET CORTEX_ENABLED_CROSS_REGION = 'AWS_EU';
+            ```
+
+            Cortex calls that name a model not deployed in the allowed regions fail after the change, so check which models your workloads use first.
+        - id: terraform
+          desc: |
+            With the `snowflakedb/snowflake` provider, set the account parameter with `snowflake_account_parameter`:
+
+            ```hcl
+            resource "snowflake_account_parameter" "cortex_enabled_cross_region" {
+              key   = "CORTEX_ENABLED_CROSS_REGION"
+              value = "DISABLED"
+            }
+            ```
+    refs:
+      - url: https://docs.snowflake.com/en/user-guide/snowflake-cortex/cross-region-inference
+        title: Cross-region inference
+      - url: https://docs.snowflake.com/en/sql-reference/parameters
+        title: Parameters
+  # No Terraform variants: the snowflakedb/snowflake provider has no resource for Cortex Agents, so agent specifications and their budgets never appear in Terraform configuration.
+  - uid: mondoo-snowflake-security-cortex-agent-budget-configured
+    title: Ensure Cortex Agents set an orchestration time or token budget
+    impact: 50
+    filters: asset.platform == 'snowflake'
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-02
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-6
+      compliance/nis-2: false
+      compliance/nist-csf-1: nist-csf-1-pr-ds-4
+      compliance/nist-csf-2: nist-csf-2-pr-ir-04
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-6
+      compliance/nist-sp-800-171: false
+      compliance/owasp-llm-top-10-2025: owasp-llm-top-10-2025-llm10
+      compliance/owasp-top-10-2025: false
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: false
+    mql: |
+      snowflake.account.cortexAgents.all(budgetSeconds != null || budgetTokens != null)
+    docs:
+      desc: |
+        This check verifies that every Cortex Agent has a limit on how much work one request can trigger.
+
+        A Cortex Agent answers a request by running an orchestration loop: the model plans, calls tools such as Cortex Analyst or Cortex Search, reads the results, and repeats until it has an answer. The `orchestration.budget` section of the agent specification caps that loop by elapsed `seconds`, by `tokens`, or both. Without it, the loop runs until the model decides to stop. This check requires each agent to set at least one budget.
+
+        **Why this matters**
+
+        Every step of the loop consumes model tokens and warehouse time, and both are billed to the account. A request that sends the agent into a long or repeating loop, whether by accident or through a crafted prompt, keeps consuming credits with nothing to stop it. Because agents are often published to many users or to applications, one pattern of input can be repeated at scale.
+
+        A budget turns that open-ended cost into a bounded one. It also limits how many tool calls a manipulated agent can make in one request, which reduces how much data it can read or how many actions it can take before the request ends.
+      audit: |
+        ### Audit via Snowsight
+
+        1. Sign in to Snowsight with a role that can see the account's agents.
+        2. Open a worksheet and list the agents with the SQL below.
+        3. Describe each agent and review the `agent_spec` column.
+
+        A passing result shows an `orchestration.budget` section with `seconds`, `tokens`, or both; a failing result shows no budget.
+
+        ### Audit via SQL
+
+        List the agents, then describe each one:
+
+        ```sql
+        SHOW AGENTS IN ACCOUNT;
+        DESCRIBE AGENT <database>.<schema>.<agent_name>;
+        ```
+
+        `SHOW AGENTS` returns only agents the current role can see, so run the audit with a role that has visibility of every schema.
+      remediation:
+        - id: console
+          desc: |
+            **Using Snowsight**
+
+            The agent specification can be updated from a worksheet:
+
+            1. Sign in to Snowsight with the role that owns the agent.
+            2. Open a new worksheet.
+            3. Run the statements from the SQL remediation below.
+        - id: sql
+          desc: |
+            Run with the role that owns the agent. `ALTER AGENT ... MODIFY LIVE VERSION SET SPECIFICATION` replaces the whole specification, so start from the current `agent_spec` returned by `DESCRIBE AGENT` and add the budget to it:
+
+            ```sql
+            ALTER AGENT <database>.<schema>.<agent_name>
+              MODIFY LIVE VERSION SET SPECIFICATION = $$
+                models:
+                  orchestration: <model_name>
+                orchestration:
+                  budget:
+                    seconds: 60
+                    tokens: 16000
+                <remaining sections of the current agent_spec>
+              $$;
+            ```
+
+            Choose limits from the longest legitimate request the agent serves.
+    refs:
+      - url: https://docs.snowflake.com/en/sql-reference/sql/create-agent
+        title: CREATE AGENT
+      - url: https://docs.snowflake.com/en/sql-reference/sql/alter-agent
+        title: ALTER AGENT
+  # No Terraform variants: snowflake_account_parameter in the snowflakedb/snowflake provider rejects the CORTEX_CODE_*_DAILY_EST_CREDIT_LIMIT_PER_USER keys, so these limits cannot be declared in Terraform.
+  - uid: mondoo-snowflake-security-cortex-code-credit-limits-set
+    title: Ensure Cortex Code has a daily credit limit per user
+    impact: 45
+    filters: asset.platform == 'snowflake'
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-02
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-6
+      compliance/nis-2: false
+      compliance/nist-csf-1: nist-csf-1-pr-ds-4
+      compliance/nist-csf-2: nist-csf-2-pr-ir-04
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-6
+      compliance/nist-sp-800-171: false
+      compliance/owasp-llm-top-10-2025: owasp-llm-top-10-2025-llm10
+      compliance/owasp-top-10-2025: false
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: false
+    mql: |
+      snowflake.account.cortexCodeCliDailyEstCreditLimitPerUser == null || snowflake.account.cortexCodeCliDailyEstCreditLimitPerUser >= 0
+      snowflake.account.cortexCodeDesktopDailyEstCreditLimitPerUser == null || snowflake.account.cortexCodeDesktopDailyEstCreditLimitPerUser >= 0
+      snowflake.account.cortexCodeSnowsightDailyEstCreditLimitPerUser == null || snowflake.account.cortexCodeSnowsightDailyEstCreditLimitPerUser >= 0
+    docs:
+      desc: |
+        This check verifies that the Cortex Code coding assistant cannot spend credits without limit for any user.
+
+        Three account parameters cap the estimated credits a single user can spend in Cortex Code over a rolling 24 hours: `CORTEX_CODE_CLI_DAILY_EST_CREDIT_LIMIT_PER_USER`, `CORTEX_CODE_DESKTOP_DAILY_EST_CREDIT_LIMIT_PER_USER`, and `CORTEX_CODE_SNOWSIGHT_DAILY_EST_CREDIT_LIMIT_PER_USER`. A value of `-1`, the default, means no limit. `0` blocks the surface, and a positive number blocks the user once their usage passes it. This check requires each parameter the account reports to be `0` or higher.
+
+        **Why this matters**
+
+        A coding assistant runs model calls and queries on the user's behalf, and an agentic session can issue many of them without a person approving each one. With no limit, one runaway session, a misconfigured automation, or a compromised user account can consume a large share of the account's credits in a day.
+
+        A per-user daily limit bounds that exposure for each person individually, so a single user cannot exhaust a shared budget. Setting the account default to `0` and granting positive limits only to named users also restricts which people can use Cortex Code at all.
+
+        A user-level setting overrides the account value for that user, so review user overrides after setting an account limit.
+      audit: |
+        ### Audit via Snowsight
+
+        1. Sign in to Snowsight as a user with the ACCOUNTADMIN role.
+        2. Open a worksheet and run the SQL below.
+        3. Review the returned `value` for each parameter.
+
+        A passing result shows `0` or a positive number for each parameter; a failing result shows `-1`.
+
+        ### Audit via SQL
+
+        Run the query in a Snowsight worksheet or with SnowSQL:
+
+        ```sql
+        SHOW PARAMETERS LIKE 'CORTEX_CODE_%_DAILY_EST_CREDIT_LIMIT_PER_USER' IN ACCOUNT;
+        ```
+      remediation:
+        - id: console
+          desc: |
+            **Using Snowsight**
+
+            Snowsight has no dedicated toggle for these account parameters, so set them from a worksheet:
+
+            1. In Snowsight, open a new worksheet while using the ACCOUNTADMIN role.
+            2. Run the statements from the SQL remediation below.
+            3. Confirm the change with `SHOW PARAMETERS LIKE 'CORTEX_CODE_%_DAILY_EST_CREDIT_LIMIT_PER_USER' IN ACCOUNT;`.
+        - id: sql
+          desc: |
+            Run as `ACCOUNTADMIN` in a Snowsight worksheet, via SnowSQL, or with the Snowflake CLI. Set a daily limit for every surface:
+
+            ```sql
+            ALTER ACCOUNT SET CORTEX_CODE_CLI_DAILY_EST_CREDIT_LIMIT_PER_USER = 20;
+            ALTER ACCOUNT SET CORTEX_CODE_DESKTOP_DAILY_EST_CREDIT_LIMIT_PER_USER = 20;
+            ALTER ACCOUNT SET CORTEX_CODE_SNOWSIGHT_DAILY_EST_CREDIT_LIMIT_PER_USER = 20;
+            ```
+
+            To allow Cortex Code only for named users, set the account value to `0` and give those users a positive limit:
+
+            ```sql
+            ALTER ACCOUNT SET CORTEX_CODE_CLI_DAILY_EST_CREDIT_LIMIT_PER_USER = 0;
+            ALTER USER <user_name> SET CORTEX_CODE_CLI_DAILY_EST_CREDIT_LIMIT_PER_USER = 20;
+            ```
+    refs:
+      - url: https://docs.snowflake.com/en/user-guide/cortex-code/credit-usage-limit
+        title: Daily credit usage limits for CoCo
+      - url: https://docs.snowflake.com/en/sql-reference/parameters
+        title: Parameters
+  # No Terraform variants: the snowflakedb/snowflake provider has no resource for Cortex Agents or Snowflake-managed MCP servers, and ownership is transferred with GRANT OWNERSHIP rather than an argument, so there is no faithful Terraform analog.
+  - uid: mondoo-snowflake-security-cortex-objects-not-owned-by-privileged-role
+    title: Ensure Cortex AI objects are not owned by ACCOUNTADMIN or SECURITYADMIN
+    impact: 50
+    filters: asset.platform == 'snowflake'
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-2
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-7-2-2
+      compliance/soc2-2017: soc2-control-cc6-3-3
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    mql: |
+      snowflake.account.cortexAgents.all(ownerRole == null || ownerRole.name != "ACCOUNTADMIN" && ownerRole.name != "SECURITYADMIN")
+      snowflake.account.mcpServers.all(ownerRole == null || ownerRole.name != "ACCOUNTADMIN" && ownerRole.name != "SECURITYADMIN")
+    docs:
+      desc: |
+        This check verifies that the objects defining what AI agents can do are managed outside the account's top administrative roles.
+
+        A Cortex Agent's specification decides which tools, search services, and warehouses it uses, and an MCP server's specification decides which objects outside clients can reach. The owner of each object controls that specification and its grants. Ownership defaults to the role that created the object and is moved with `GRANT OWNERSHIP`. This check requires that no Cortex Agent or MCP server is owned by ACCOUNTADMIN or SECURITYADMIN.
+
+        **Why this matters**
+
+        Objects created under ACCOUNTADMIN usually reflect a shortcut taken during setup, and they leave AI configuration governed by the role that also controls everything else. Every change to an agent's tools or an MCP server's exposure then requires the most privileged role in the account, which pushes routine AI work into sessions that can do anything.
+
+        Separate ownership keeps the blast radius of AI administration small. A purpose-built role that owns the agents and MCP servers for one team can change them without holding account-wide privileges, and its grants show exactly who can alter what an agent is allowed to do.
+
+        Agents and MCP tools run with the calling user's role rather than the owner's, so this check concerns who controls the configuration, not what the agent can access at run time.
+      audit: |
+        ### Audit via Snowsight
+
+        1. Sign in to Snowsight as a user with the ACCOUNTADMIN role.
+        2. Open a worksheet and run the SQL below.
+        3. Review the `owner` column for every agent and MCP server.
+
+        A passing result shows no object owned by `ACCOUNTADMIN` or `SECURITYADMIN`; a failing result shows at least one.
+
+        ### Audit via SQL
+
+        Run the queries in a Snowsight worksheet or with SnowSQL:
+
+        ```sql
+        SHOW AGENTS IN ACCOUNT;
+        SHOW MCP SERVERS IN ACCOUNT;
+        ```
+      remediation:
+        - id: console
+          desc: |
+            **Using Snowsight**
+
+            Ownership is changed with a grant statement, so update it from a worksheet:
+
+            1. Sign in to Snowsight as a user with the ACCOUNTADMIN role.
+            2. Open a new worksheet.
+            3. Run the statements from the SQL remediation below to transfer each object to a scoped role.
+        - id: sql
+          desc: |
+            Run as `ACCOUNTADMIN` in a Snowsight worksheet, via SnowSQL, or with the Snowflake CLI.
+
+            1. Identify agents and MCP servers owned by a privileged role:
+
+                ```sql
+                SHOW AGENTS IN ACCOUNT;
+                SHOW MCP SERVERS IN ACCOUNT;
+                ```
+
+            2. Transfer ownership to a scoped role that manages AI objects:
+
+                ```sql
+                GRANT OWNERSHIP ON AGENT <database>.<schema>.<agent_name>
+                  TO ROLE <ai_admin_role> COPY CURRENT GRANTS;
+                GRANT OWNERSHIP ON MCP SERVER <database>.<schema>.<server_name>
+                  TO ROLE <ai_admin_role> COPY CURRENT GRANTS;
+                ```
+
+            3. Confirm the new owners by running the `SHOW` statements again.
+    refs:
+      - url: https://docs.snowflake.com/en/sql-reference/sql/grant-ownership
+        title: GRANT OWNERSHIP
+      - url: https://docs.snowflake.com/en/user-guide/snowflake-cortex/cortex-agents
+        title: Cortex Agents
   - uid: mondoo-snowflake-security-session-policy-idle-timeout-snowflake
     filters: asset.platform == 'snowflake'
     mql: |
@@ -4114,4 +4693,30 @@ queries:
     mql: |
       terraform.state.resources.where(type == 'snowflake_saml2_integration').where(values['enabled'] != false).all(
         values['saml2_sign_request'] == true
+      )
+  - uid: mondoo-snowflake-security-cortex-cross-region-restricted-snowflake
+    filters: asset.platform == 'snowflake'
+    mql: |
+      snowflake.account.cortexEnabledCrossRegion != empty
+      snowflake.account.cortexEnabledCrossRegion != /ANY_REGION|_GLOBAL/i
+  - uid: mondoo-snowflake-security-cortex-cross-region-restricted-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'snowflake_account_parameter')
+    mql: |
+      terraform.resources('snowflake_account_parameter').where(arguments['key'] == "CORTEX_ENABLED_CROSS_REGION").all(
+        arguments['value'] != /ANY_REGION|_GLOBAL/i
+      )
+  - uid: mondoo-snowflake-security-cortex-cross-region-restricted-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'snowflake_account_parameter')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'snowflake_account_parameter').where(change.after['key'] == "CORTEX_ENABLED_CROSS_REGION").all(
+        change.after['value'] != /ANY_REGION|_GLOBAL/i
+      )
+  - uid: mondoo-snowflake-security-cortex-cross-region-restricted-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'snowflake_account_parameter')
+    mql: |
+      terraform.state.resources.where(type == 'snowflake_account_parameter').where(values['key'] == "CORTEX_ENABLED_CROSS_REGION").all(
+        values['value'] != /ANY_REGION|_GLOBAL/i
       )
