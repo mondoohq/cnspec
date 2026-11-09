@@ -33,3 +33,17 @@ type Reporter interface {
 	// Reports returns the scan results
 	Reports() *ScanResult
 }
+
+// lowerScore returns the lower of the two scores for ScanResult.WorstScore.
+// Unrated scores are skipped: their Value is 0, which would otherwise read as
+// the worst possible score. This mirrors ReportCollection.GetWorstScore, so a
+// scan exits the same way whichever report type it ran with.
+func lowerScore(current, next *policy.Score) *policy.Score {
+	if next == nil || next.Rating() == policy.ScoreRating_unrated {
+		return current
+	}
+	if current == nil || next.Value < current.Value {
+		return next
+	}
+	return current
+}
