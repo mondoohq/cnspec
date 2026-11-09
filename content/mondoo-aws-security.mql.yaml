@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-aws-security
     name: Mondoo AWS Security
-    version: 12.14.3
+    version: 13.0.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -134,6 +134,7 @@ policies:
           - uid: mondoo-aws-security-iam-user-hardware-mfa
           - uid: mondoo-aws-security-iam-admin-access-requires-mfa
           - uid: mondoo-aws-security-iam-securityaudit-role-exists
+          - uid: mondoo-aws-security-iam-bedrock-api-key-expires
       - title: AWS Lambda Function
         checks:
           - uid: mondoo-aws-security-lambda-concurrency-check
@@ -395,6 +396,8 @@ policies:
           - uid: mondoo-aws-security-sagemaker-domain-shared-notebook-cmk-encrypted
           - uid: mondoo-aws-security-sagemaker-model-artifact-bucket-not-public
           - uid: mondoo-aws-security-sagemaker-endpoint-data-capture-cmk-encryption
+          - uid: mondoo-aws-security-sagemaker-endpoint-config-kms-key-configured
+          - uid: mondoo-aws-security-sagemaker-partner-app-cmk-encryption
       - title: Amazon SageMaker Notebook Instance
         checks:
           - uid: mondoo-aws-security-sagemaker-notebook-instance-kms-key-configured
@@ -521,6 +524,8 @@ policies:
       - title: Amazon Q Business
         checks:
           - uid: mondoo-aws-security-qbusiness-application-no-anonymous-access
+          - uid: mondoo-aws-security-qbusiness-application-not-public
+          - uid: mondoo-aws-security-qbusiness-application-cmk-encryption
       - title: AWS Lake Formation
         checks:
           - uid: mondoo-aws-security-lakeformation-no-iam-allowed-principals
@@ -767,6 +772,26 @@ policies:
           - uid: mondoo-aws-security-bedrock-guardrail-cmk-encryption
           - uid: mondoo-aws-security-bedrock-agent-cmk-encryption
           - uid: mondoo-aws-security-bedrock-flow-cmk-encryption
+          - uid: mondoo-aws-security-bedrock-agentcore-gateway-not-public
+          - uid: mondoo-aws-security-bedrock-agentcore-runtime-not-public
+          - uid: mondoo-aws-security-bedrock-agentcore-role-not-admin
+          - uid: mondoo-aws-security-bedrock-agentcore-code-interpreter-network-restricted
+          - uid: mondoo-aws-security-bedrock-agentcore-jwt-authorizer-restricted
+          - uid: mondoo-aws-security-bedrock-agentcore-gateway-policy-engine-enforced
+          - uid: mondoo-aws-security-bedrock-agentcore-gateway-no-debug-exceptions
+          - uid: mondoo-aws-security-bedrock-agentcore-gateway-waf-fail-closed
+          - uid: mondoo-aws-security-bedrock-agent-role-not-admin
+          - uid: mondoo-aws-security-bedrock-agent-guardrail-attached
+          - uid: mondoo-aws-security-bedrock-data-retention-no-provider-sharing
+          - uid: mondoo-aws-security-bedrock-model-invocation-logging-enabled
+          - uid: mondoo-aws-security-bedrock-agentcore-token-vault-cmk-encryption
+          - uid: mondoo-aws-security-bedrock-agentcore-memory-cmk-encryption
+          - uid: mondoo-aws-security-bedrock-agentcore-policy-engine-cmk-encryption
+          - uid: mondoo-aws-security-bedrock-automated-reasoning-policy-cmk-encryption
+      - title: Amazon S3 Vectors
+        checks:
+          - uid: mondoo-aws-security-s3vectors-vector-bucket-not-public
+          - uid: mondoo-aws-security-s3vectors-vector-bucket-cmk-encryption
       - title: AWS WAF
         checks:
           - uid: mondoo-aws-security-waf-managed-rule-groups
@@ -91481,6 +91506,2926 @@ queries:
     refs:
       - url: https://docs.aws.amazon.com/bedrock/latest/userguide/flows.html
         title: Build an end-to-end workflow with Amazon Bedrock Flows
+  # No Terraform variants: aws_bedrockagentcore_resource_policy carries the policy as a JSON string that is usually built with jsonencode or a data source, which the HCL parser cannot resolve, and whether a statement is public depends on its conditions. The runtime check evaluates the parsed policy instead.
+  # No CloudFormation variant: AWS::BedrockAgentCore::ResourcePolicy holds the policy document as JSON with intrinsic functions, so its effective principals are not known until deployment.
+  - uid: mondoo-aws-security-bedrock-agentcore-gateway-not-public
+    title: Ensure Bedrock AgentCore gateways are not publicly accessible
+    impact: 90
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-5-15
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
+      compliance/owasp-llm-top-10-2025: owasp-llm-top-10-2025-llm06
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-7-2-1
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    variants:
+      - uid: mondoo-aws-security-bedrock-agentcore-gateway-not-public-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check verifies that no Amazon Bedrock AgentCore gateway has a resource-based policy that lets any AWS principal invoke it. A gateway exposes MCP tools to agents and calls the Lambda functions, APIs, and MCP servers behind it with its own IAM role and stored credentials.
+
+        A gateway fails when its resource-based policy contains a statement that allows a wildcard principal without a condition that scopes the caller, such as `aws:SourceAccount`, `aws:PrincipalOrgID`, or `aws:SourceArn`. A gateway with no resource-based policy passes, because only principals in the owning account with IAM permissions can invoke it.
+
+        **Why this matters**
+
+        A gateway that uses IAM authorization trusts its resource-based policy to decide which accounts may call it. A wildcard principal opens it to every AWS account, so anyone with an AWS account can list the tools and invoke them.
+
+        Each tool call runs with the gateway's role and with the OAuth tokens and API keys its targets hold, so an outside caller reaches internal APIs and third-party services through the gateway without holding any of those credentials.
+
+        Scope cross-account access with a named account principal or an organization condition instead of a wildcard.
+      audit: |
+        ### Audit via Console
+
+        1. Open the [Amazon Bedrock AgentCore console](https://console.aws.amazon.com/bedrock-agentcore/) and choose **Gateways**.
+        2. Select each gateway and open its **Resource-based policy**.
+        3. Confirm that no statement with `"Effect": "Allow"` names `"Principal": "*"` or `"Principal": {"AWS": "*"}` without a condition that limits the caller.
+
+        A passing gateway has no resource-based policy, or every statement names specific principals or carries a scoping condition. A failing gateway allows a wildcard principal without such a condition.
+
+        ### Audit via CLI
+
+        1. Retrieve the gateway ARN and its resource-based policy:
+
+        ```bash
+        aws bedrock-agentcore-control get-gateway --gateway-identifier <gateway-id> --query 'gatewayArn' --output text
+        aws bedrock-agentcore-control get-resource-policy --resource-arn <gateway-arn> --query 'policy' --output text
+        ```
+
+        2. Review each `Allow` statement for a wildcard principal.
+
+        A passing gateway returns no policy or a policy whose `Allow` statements name specific principals or carry a scoping condition. A failing gateway returns a policy that allows `*` without one.
+      remediation:
+        - id: console
+          desc: |
+            To restrict who can invoke a Bedrock AgentCore gateway using the AWS Console:
+
+            1. Open the Amazon Bedrock AgentCore console and choose **Gateways**.
+            2. Select the gateway and edit its **Resource-based policy**.
+            3. Replace the wildcard principal with the specific account or role ARNs that need access, or add an `aws:PrincipalOrgID` condition.
+            4. Save the policy, or delete it if no cross-account access is needed.
+        - id: cli
+          desc: |
+            To replace a public gateway policy using the AWS CLI:
+
+            1. Write a policy that names the principals allowed to invoke the gateway:
+
+            ```json
+            {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Principal": { "AWS": "arn:aws:iam::<account-id>:root" },
+                  "Action": "bedrock-agentcore:InvokeGateway",
+                  "Resource": "<gateway-arn>"
+                }
+              ]
+            }
+            ```
+
+            2. Apply it:
+
+            ```bash
+            aws bedrock-agentcore-control put-resource-policy \
+              --resource-arn <gateway-arn> \
+              --policy file://gateway-policy.json
+            ```
+
+            3. If the gateway needs no cross-account access, delete the policy instead:
+
+            ```bash
+            aws bedrock-agentcore-control delete-resource-policy --resource-arn <gateway-arn>
+            ```
+        - id: terraform
+          desc: |
+            To restrict the gateway's resource-based policy in Terraform, name the allowed principal on `aws_bedrockagentcore_resource_policy`:
+
+            ```hcl
+            resource "aws_bedrockagentcore_resource_policy" "gateway" {
+              resource_arn = aws_bedrockagentcore_gateway.example.gateway_arn
+              policy = jsonencode({
+                Version = "2012-10-17"
+                Statement = [{
+                  Effect    = "Allow"
+                  Principal = { AWS = "arn:aws:iam::123456789012:root" }
+                  Action    = "bedrock-agentcore:InvokeGateway"
+                  Resource  = aws_bedrockagentcore_gateway.example.gateway_arn
+                }]
+              })
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            To restrict the gateway's resource-based policy in CloudFormation, name the allowed principal on `AWS::BedrockAgentCore::ResourcePolicy`:
+
+            ```yaml
+            Resources:
+              GatewayPolicy:
+                Type: AWS::BedrockAgentCore::ResourcePolicy
+                Properties:
+                  ResourceArn: !GetAtt ExampleGateway.GatewayArn
+                  Policy: !Sub |
+                    {
+                      "Version": "2012-10-17",
+                      "Statement": [
+                        {
+                          "Effect": "Allow",
+                          "Principal": { "AWS": "arn:aws:iam::${AWS::AccountId}:root" },
+                          "Action": "bedrock-agentcore:InvokeGateway",
+                          "Resource": "*"
+                        }
+                      ]
+                    }
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/resource-based-policies.html
+        title: Resource-based policies for Amazon Bedrock AgentCore
+  - uid: mondoo-aws-security-bedrock-agentcore-gateway-not-public-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.bedrock.agentCore.gateways.all(isPublic == false)
+  # No Terraform variants: aws_bedrockagentcore_resource_policy carries the policy as a JSON string that is usually built with jsonencode or a data source, which the HCL parser cannot resolve, and whether a statement is public depends on its conditions. The runtime check evaluates the parsed policy instead.
+  # No CloudFormation variant: AWS::BedrockAgentCore::ResourcePolicy holds the policy document as JSON with intrinsic functions, so its effective principals are not known until deployment.
+  - uid: mondoo-aws-security-bedrock-agentcore-runtime-not-public
+    title: Ensure Bedrock AgentCore runtimes are not publicly accessible
+    impact: 90
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-5-15
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
+      compliance/owasp-llm-top-10-2025: owasp-llm-top-10-2025-llm06
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-7-2-1
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    variants:
+      - uid: mondoo-aws-security-bedrock-agentcore-runtime-not-public-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check verifies that no Amazon Bedrock AgentCore runtime has a resource-based policy that lets any AWS principal invoke it. A runtime hosts agent code and runs each session with the runtime's IAM role, its workload identity, and the tools the agent is built to call.
+
+        A runtime fails when its resource-based policy contains a statement that allows a wildcard principal without a condition that scopes the caller, such as `aws:SourceAccount`, `aws:PrincipalOrgID`, or `aws:SourceArn`. A runtime with no resource-based policy passes.
+
+        **Why this matters**
+
+        Invoking a runtime starts the agent with whatever prompt the caller supplies. With a wildcard principal, any AWS account can drive the agent, which lets an outsider issue prompt injections directly and steer the agent's tool use against the systems it can reach.
+
+        Every session also runs with the runtime's role and consumes model capacity billed to the owning account, so an open runtime is both an access path and a cost path.
+
+        Scope cross-account access with a named account principal or an organization condition instead of a wildcard.
+      audit: |
+        ### Audit via Console
+
+        1. Open the [Amazon Bedrock AgentCore console](https://console.aws.amazon.com/bedrock-agentcore/) and choose **Agent runtime**.
+        2. Select each runtime and open its **Resource-based policy**.
+        3. Confirm that no statement with `"Effect": "Allow"` names a wildcard principal without a condition that limits the caller.
+
+        A passing runtime has no resource-based policy, or every statement names specific principals or carries a scoping condition. A failing runtime allows a wildcard principal without such a condition.
+
+        ### Audit via CLI
+
+        1. Retrieve the runtime ARN and its resource-based policy:
+
+        ```bash
+        aws bedrock-agentcore-control get-agent-runtime --agent-runtime-id <runtime-id> --query 'agentRuntimeArn' --output text
+        aws bedrock-agentcore-control get-resource-policy --resource-arn <runtime-arn> --query 'policy' --output text
+        ```
+
+        2. Review each `Allow` statement for a wildcard principal.
+
+        A passing runtime returns no policy or a policy whose `Allow` statements name specific principals or carry a scoping condition. A failing runtime returns a policy that allows `*` without one.
+      remediation:
+        - id: console
+          desc: |
+            To restrict who can invoke a Bedrock AgentCore runtime using the AWS Console:
+
+            1. Open the Amazon Bedrock AgentCore console and choose **Agent runtime**.
+            2. Select the runtime and edit its **Resource-based policy**.
+            3. Replace the wildcard principal with the specific account or role ARNs that need access, or add an `aws:PrincipalOrgID` condition.
+            4. Save the policy, or delete it if no cross-account access is needed.
+        - id: cli
+          desc: |
+            To replace a public runtime policy using the AWS CLI:
+
+            1. Write a policy that names the principals allowed to invoke the runtime:
+
+            ```json
+            {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Principal": { "AWS": "arn:aws:iam::<account-id>:root" },
+                  "Action": "bedrock-agentcore:InvokeAgentRuntime",
+                  "Resource": "<runtime-arn>"
+                }
+              ]
+            }
+            ```
+
+            2. Apply it:
+
+            ```bash
+            aws bedrock-agentcore-control put-resource-policy \
+              --resource-arn <runtime-arn> \
+              --policy file://runtime-policy.json
+            ```
+
+            3. If the runtime needs no cross-account access, delete the policy instead:
+
+            ```bash
+            aws bedrock-agentcore-control delete-resource-policy --resource-arn <runtime-arn>
+            ```
+        - id: terraform
+          desc: |
+            To restrict the runtime's resource-based policy in Terraform, name the allowed principal on `aws_bedrockagentcore_resource_policy`:
+
+            ```hcl
+            resource "aws_bedrockagentcore_resource_policy" "runtime" {
+              resource_arn = aws_bedrockagentcore_agent_runtime.example.agent_runtime_arn
+              policy = jsonencode({
+                Version = "2012-10-17"
+                Statement = [{
+                  Effect    = "Allow"
+                  Principal = { AWS = "arn:aws:iam::123456789012:root" }
+                  Action    = "bedrock-agentcore:InvokeAgentRuntime"
+                  Resource  = aws_bedrockagentcore_agent_runtime.example.agent_runtime_arn
+                }]
+              })
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            To restrict the runtime's resource-based policy in CloudFormation, name the allowed principal on `AWS::BedrockAgentCore::ResourcePolicy`:
+
+            ```yaml
+            Resources:
+              RuntimePolicy:
+                Type: AWS::BedrockAgentCore::ResourcePolicy
+                Properties:
+                  ResourceArn: !GetAtt ExampleRuntime.AgentRuntimeArn
+                  Policy: !Sub |
+                    {
+                      "Version": "2012-10-17",
+                      "Statement": [
+                        {
+                          "Effect": "Allow",
+                          "Principal": { "AWS": "arn:aws:iam::${AWS::AccountId}:root" },
+                          "Action": "bedrock-agentcore:InvokeAgentRuntime",
+                          "Resource": "*"
+                        }
+                      ]
+                    }
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/resource-based-policies.html
+        title: Resource-based policies for Amazon Bedrock AgentCore
+  - uid: mondoo-aws-security-bedrock-agentcore-runtime-not-public-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.bedrock.agentCore.runtimes.all(isPublic == false)
+  # No Terraform variants: the check resolves each role ARN to the policies attached to it, which is cross-resource correlation the HCL, plan, and state assets do not perform.
+  - uid: mondoo-aws-security-bedrock-agentcore-role-not-admin
+    title: Ensure Bedrock AgentCore execution roles do not have AdministratorAccess
+    impact: 90
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-2
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
+      compliance/owasp-llm-top-10-2025: owasp-llm-top-10-2025-llm06
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-7-2-2
+      compliance/soc2-2017: soc2-control-cc6-3-3
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    variants:
+      - uid: mondoo-aws-security-bedrock-agentcore-role-not-admin-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check verifies that no Amazon Bedrock AgentCore runtime, gateway, or code interpreter runs with an IAM role that has the AWS managed `AdministratorAccess` policy attached. These roles are what an agent's actions execute as: the runtime role for agent code, the gateway role for tool calls, and the code interpreter role for code the model writes.
+
+        Resources without an execution role are not evaluated.
+
+        **Why this matters**
+
+        An agent decides at run time which tools to call and with which arguments, based on text that can come from users, documents, and web pages it retrieves. A prompt injection in any of those inputs can steer those decisions, and whatever the role permits, the injected instruction can do.
+
+        With `AdministratorAccess`, a single manipulated tool call can create IAM users, read every secret, or delete resources across the account. A role scoped to the specific buckets, functions, and APIs the agent needs turns the same injection into a contained failure.
+      audit: |
+        ### Audit via CLI
+
+        1. Read the role ARN of each runtime, gateway, and code interpreter:
+
+        ```bash
+        aws bedrock-agentcore-control get-agent-runtime --agent-runtime-id <runtime-id> --query 'roleArn' --output text
+        aws bedrock-agentcore-control get-gateway --gateway-identifier <gateway-id> --query 'roleArn' --output text
+        aws bedrock-agentcore-control get-code-interpreter --code-interpreter-id <code-interpreter-id> --query 'executionRoleArn' --output text
+        ```
+
+        2. List the managed policies attached to each role:
+
+        ```bash
+        aws iam list-attached-role-policies --role-name <role-name> \
+          --query "AttachedPolicies[?PolicyName=='AdministratorAccess']"
+        ```
+
+        A passing role returns an empty list. A failing role returns an entry for `AdministratorAccess`.
+      remediation:
+        - id: console
+          desc: |
+            To remove administrator access from an AgentCore execution role using the AWS Console:
+
+            1. Open the **IAM Console**, choose **Roles**, and select the role used by the runtime, gateway, or code interpreter.
+            2. On the **Permissions** tab, detach `AdministratorAccess`.
+            3. Attach a policy that grants only the actions and resources the agent's tools need.
+        - id: cli
+          desc: |
+            To remove administrator access from an AgentCore execution role using the AWS CLI:
+
+            ```bash
+            aws iam detach-role-policy \
+              --role-name <agentcore-role-name> \
+              --policy-arn arn:aws:iam::aws:policy/AdministratorAccess
+            ```
+
+            Then attach a policy scoped to the resources the agent uses with `aws iam put-role-policy` or `aws iam attach-role-policy`.
+        # No Terraform remediation: the fix is to the IAM role's attached policies, which belong to the role's own Terraform resources rather than to the AgentCore resource.
+    refs:
+      - url: https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-permissions.html
+        title: IAM Permissions for AgentCore Runtime
+      - url: https://docs.aws.amazon.com/IAM/latest/UserGuide/best-practices.html#grant-least-privilege
+        title: AWS IAM - Apply Least-Privilege Permissions
+  - uid: mondoo-aws-security-bedrock-agentcore-role-not-admin-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.bedrock.agentCore.runtimes.all(iamRole == empty || iamRole.attachedPolicies.none(name == "AdministratorAccess"))
+      aws.bedrock.agentCore.gateways.all(iamRole == empty || iamRole.attachedPolicies.none(name == "AdministratorAccess"))
+      aws.bedrock.agentCore.codeInterpreters.all(iamRole == empty || iamRole.attachedPolicies.none(name == "AdministratorAccess"))
+  - uid: mondoo-aws-security-bedrock-agentcore-code-interpreter-network-restricted
+    title: Ensure Bedrock AgentCore code interpreters do not use public network mode
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: false
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/owasp-llm-top-10-2025: owasp-llm-top-10-2025-llm06
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-1-3-2
+      compliance/soc2-2017: soc2-control-cc6-6-1
+      compliance/vda-isa-5: vda-isa-5-5-2-7
+    variants:
+      - uid: mondoo-aws-security-bedrock-agentcore-code-interpreter-network-restricted-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+      - uid: mondoo-aws-security-bedrock-agentcore-code-interpreter-network-restricted-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-bedrock-agentcore-code-interpreter-network-restricted-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-bedrock-agentcore-code-interpreter-network-restricted-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-bedrock-agentcore-code-interpreter-network-restricted-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
+    docs:
+      desc: |
+        This check verifies that Amazon Bedrock AgentCore code interpreters run their sessions in `SANDBOX` or `VPC` network mode rather than `PUBLIC`. A code interpreter executes code that a model writes, and the network mode decides what that code can reach: `PUBLIC` sessions reach the internet directly, `SANDBOX` sessions have restricted network access, and `VPC` sessions reach only what their subnets and security groups allow.
+
+        The network mode is chosen when the code interpreter is created and cannot be changed afterwards.
+
+        **Why this matters**
+
+        The code a code interpreter runs is generated from the conversation, so whoever controls the prompt controls the code. A prompt injection planted in a document or web page can make the agent write code that posts files, query results, or the session's credentials to an attacker's server.
+
+        In `PUBLIC` mode nothing stands between that code and the internet. `SANDBOX` mode removes the outbound path, and `VPC` mode routes it through security groups, network firewalls, and VPC endpoints you control and can log.
+      audit: |
+        ### Audit via Console
+
+        1. Open the [Amazon Bedrock AgentCore console](https://console.aws.amazon.com/bedrock-agentcore/) and choose **Built-in tools**, then **Code Interpreter**.
+        2. Select each custom code interpreter and review its **Network mode**.
+
+        A passing code interpreter shows `Sandbox` or `VPC`. A failing code interpreter shows `Public`.
+
+        ### Audit via CLI
+
+        1. Retrieve the network mode of each code interpreter:
+
+        ```bash
+        aws bedrock-agentcore-control get-code-interpreter --code-interpreter-id <code-interpreter-id> \
+          --query 'networkConfiguration.networkMode' --output text
+        ```
+
+        A passing code interpreter returns `SANDBOX` or `VPC`. A failing code interpreter returns `PUBLIC`.
+      remediation:
+        - id: console
+          desc: |
+            To replace a public code interpreter using the AWS Console:
+
+            1. Open the Amazon Bedrock AgentCore console and choose **Built-in tools**, then **Code Interpreter**.
+            2. Create a code interpreter with **Network mode** set to **Sandbox**, or to **VPC** with private subnets and restrictive security groups.
+            3. Point agents at the new code interpreter and delete the public one.
+        - id: cli
+          desc: |
+            To replace a public code interpreter using the AWS CLI:
+
+            1. Create a code interpreter in sandbox mode:
+
+            ```bash
+            aws bedrock-agentcore-control create-code-interpreter \
+              --name example-interpreter \
+              --network-configuration '{"networkMode":"SANDBOX"}'
+            ```
+
+            2. Point agents at the new code interpreter, then delete the public one:
+
+            ```bash
+            aws bedrock-agentcore-control delete-code-interpreter --code-interpreter-id <old-code-interpreter-id>
+            ```
+        - id: terraform
+          desc: |
+            To run a code interpreter without direct internet access in Terraform, set `network_mode` in the `network_configuration` block of `aws_bedrockagentcore_code_interpreter`:
+
+            ```hcl
+            resource "aws_bedrockagentcore_code_interpreter" "example" {
+              name = "example_interpreter"
+
+              network_configuration {
+                network_mode = "SANDBOX"
+              }
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            To run a code interpreter without direct internet access in CloudFormation, set `NetworkMode` on `AWS::BedrockAgentCore::CodeInterpreterCustom`:
+
+            ```yaml
+            Resources:
+              ExampleInterpreter:
+                Type: AWS::BedrockAgentCore::CodeInterpreterCustom
+                Properties:
+                  Name: example_interpreter
+                  NetworkConfiguration:
+                    NetworkMode: SANDBOX
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/code-interpreter-tool.html
+        title: Execute code and analyze data using Amazon Bedrock AgentCore Code Interpreter
+  - uid: mondoo-aws-security-bedrock-agentcore-code-interpreter-network-restricted-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.bedrock.agentCore.codeInterpreters.all(networkMode != empty && networkMode != "PUBLIC")
+  - uid: mondoo-aws-security-bedrock-agentcore-code-interpreter-network-restricted-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_bedrockagentcore_code_interpreter")
+    mql: |
+      terraform.resources("aws_bedrockagentcore_code_interpreter").all(
+        blocks.where(type == "network_configuration") != empty
+      )
+      terraform.resources("aws_bedrockagentcore_code_interpreter").all(
+        blocks.where(type == "network_configuration").all(arguments.network_mode != "PUBLIC")
+      )
+  - uid: mondoo-aws-security-bedrock-agentcore-code-interpreter-network-restricted-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_bedrockagentcore_code_interpreter")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_bedrockagentcore_code_interpreter").all(
+        change.after.network_configuration != empty &&
+        change.after.network_configuration.all(_['network_mode'] != "PUBLIC")
+      )
+  - uid: mondoo-aws-security-bedrock-agentcore-code-interpreter-network-restricted-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_bedrockagentcore_code_interpreter")
+    mql: |
+      terraform.state.resources.where(type == "aws_bedrockagentcore_code_interpreter").all(
+        values.network_configuration != empty &&
+        values.network_configuration.all(_['network_mode'] != "PUBLIC")
+      )
+  - uid: mondoo-aws-security-bedrock-agentcore-code-interpreter-network-restricted-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::BedrockAgentCore::CodeInterpreterCustom")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::BedrockAgentCore::CodeInterpreterCustom").all(
+        properties['NetworkConfiguration']['NetworkMode'] != empty &&
+        properties['NetworkConfiguration']['NetworkMode'] != "PUBLIC"
+      )
+  - uid: mondoo-aws-security-bedrock-agentcore-jwt-authorizer-restricted
+    title: Ensure AgentCore JWT authorizers restrict allowed clients or audiences
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-14
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-d-person-or-entity-authentication
+      compliance/iso-27001-2022: iso-27001-2022-a-8-5
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-7
+      compliance/nist-csf-2: nist-csf-2-pr-aa-03
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-2
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-2
+      compliance/owasp-llm-top-10-2025: owasp-llm-top-10-2025-llm06
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a07
+      compliance/pci-dss-4: pcidss-requirement-8-3-1
+      compliance/soc2-2017: soc2-control-cc6-1-4
+      compliance/vda-isa-5: vda-isa-5-4-1-2
+    variants:
+      - uid: mondoo-aws-security-bedrock-agentcore-jwt-authorizer-restricted-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+      - uid: mondoo-aws-security-bedrock-agentcore-jwt-authorizer-restricted-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-bedrock-agentcore-jwt-authorizer-restricted-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-bedrock-agentcore-jwt-authorizer-restricted-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-bedrock-agentcore-jwt-authorizer-restricted-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
+    docs:
+      desc: |
+        This check verifies that Amazon Bedrock AgentCore gateways and runtimes that authenticate callers with a custom JWT authorizer also restrict which tokens they accept, by listing allowed client IDs, allowed audiences, or both. Gateways and runtimes that use IAM authorization are not evaluated.
+
+        A custom JWT authorizer validates a caller's token against the discovery URL of an identity provider. The only required setting is that URL, so an authorizer with no allowed clients and no allowed audiences accepts any token the identity provider signs.
+
+        **Why this matters**
+
+        Identity providers such as Amazon Cognito user pools, Okta, and Microsoft Entra ID usually issue tokens for many applications at once. Without a client or audience restriction, a token issued to an unrelated application, or to any user who can sign in to the shared tenant, is accepted as a valid caller of the agent or its tools.
+
+        The `allowedClients` and `allowedAudience` settings bind the authorizer to tokens issued for this agent. Restrictions expressed only through custom claim rules are not recognized here, so an authorizer that relies on them alone fails; list the client IDs or audiences as well.
+      audit: |
+        ### Audit via CLI
+
+        1. For each gateway and runtime, read the custom JWT authorizer configuration:
+
+        ```bash
+        aws bedrock-agentcore-control get-gateway --gateway-identifier <gateway-id> \
+          --query 'authorizerConfiguration.customJWTAuthorizer'
+        aws bedrock-agentcore-control get-agent-runtime --agent-runtime-id <runtime-id> \
+          --query 'authorizerConfiguration.customJWTAuthorizer'
+        ```
+
+        A passing resource returns no custom JWT authorizer, or one with a non-empty `allowedClients` or `allowedAudience` list. A failing resource returns a custom JWT authorizer with neither.
+      remediation:
+        - id: console
+          desc: |
+            To restrict a custom JWT authorizer using the AWS Console:
+
+            1. Open the Amazon Bedrock AgentCore console and choose **Gateways** or **Agent runtime**.
+            2. Edit the resource's inbound authorization settings.
+            3. Under the JWT authorizer, add the client IDs of the applications allowed to call it, the audience values its tokens must carry, or both.
+            4. Save the changes.
+        - id: cli
+          desc: |
+            To restrict the custom JWT authorizer on a gateway using the AWS CLI, update it with allowed clients:
+
+            ```bash
+            aws bedrock-agentcore-control update-gateway \
+              --gateway-identifier <gateway-id> \
+              --name <gateway-name> \
+              --role-arn <gateway-role-arn> \
+              --authorizer-type CUSTOM_JWT \
+              --authorizer-configuration '{"customJWTAuthorizer":{"discoveryUrl":"<discovery-url>","allowedClients":["<client-id>"]}}'
+            ```
+
+            `update-gateway` replaces the gateway configuration, so read the current settings with `aws bedrock-agentcore-control get-gateway --gateway-identifier <gateway-id>` and pass along the ones you need to keep. For a runtime, pass the same `--authorizer-configuration` to `aws bedrock-agentcore-control update-agent-runtime`.
+        - id: terraform
+          desc: |
+            To restrict a custom JWT authorizer in Terraform, set `allowed_clients` or `allowed_audience` in the `custom_jwt_authorizer` block of `aws_bedrockagentcore_gateway` or `aws_bedrockagentcore_agent_runtime`:
+
+            ```hcl
+            resource "aws_bedrockagentcore_gateway" "example" {
+              name            = "example-gateway"
+              role_arn        = aws_iam_role.gateway.arn
+              authorizer_type = "CUSTOM_JWT"
+
+              authorizer_configuration {
+                custom_jwt_authorizer {
+                  discovery_url   = "https://cognito-idp.us-east-1.amazonaws.com/us-east-1_example/.well-known/openid-configuration"
+                  allowed_clients = ["example-client-id"]
+                }
+              }
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            To restrict a custom JWT authorizer in CloudFormation, set `AllowedClients` or `AllowedAudience` on `AWS::BedrockAgentCore::Gateway` or `AWS::BedrockAgentCore::Runtime`:
+
+            ```yaml
+            Resources:
+              ExampleGateway:
+                Type: AWS::BedrockAgentCore::Gateway
+                Properties:
+                  Name: example-gateway
+                  RoleArn: !GetAtt GatewayRole.Arn
+                  AuthorizerType: CUSTOM_JWT
+                  AuthorizerConfiguration:
+                    CustomJWTAuthorizer:
+                      DiscoveryUrl: https://cognito-idp.us-east-1.amazonaws.com/us-east-1_example/.well-known/openid-configuration
+                      AllowedClients:
+                        - example-client-id
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/gateway-inbound-auth.html
+        title: Set up inbound authorization for your gateway
+  - uid: mondoo-aws-security-bedrock-agentcore-jwt-authorizer-restricted-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.bedrock.agentCore.gateways.all(authorizerType != "CUSTOM_JWT" || allowedClients != empty || allowedAudiences != empty)
+      aws.bedrock.agentCore.runtimes.all(authorizerType != "CUSTOM_JWT" || allowedClients != empty || allowedAudiences != empty)
+  - uid: mondoo-aws-security-bedrock-agentcore-jwt-authorizer-restricted-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_bedrockagentcore_gateway" || nameLabel == "aws_bedrockagentcore_agent_runtime")
+    mql: |
+      terraform.resources("aws_bedrockagentcore_gateway").all(
+        blocks.where(type == "authorizer_configuration").all(
+          blocks.where(type == "custom_jwt_authorizer").all(
+            arguments.allowed_clients != empty || arguments.allowed_audience != empty
+          )
+        )
+      )
+      terraform.resources("aws_bedrockagentcore_agent_runtime").all(
+        blocks.where(type == "authorizer_configuration").all(
+          blocks.where(type == "custom_jwt_authorizer").all(
+            arguments.allowed_clients != empty || arguments.allowed_audience != empty
+          )
+        )
+      )
+  - uid: mondoo-aws-security-bedrock-agentcore-jwt-authorizer-restricted-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_bedrockagentcore_gateway" || type == "aws_bedrockagentcore_agent_runtime")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_bedrockagentcore_gateway" || type == "aws_bedrockagentcore_agent_runtime").all(
+        change.after.authorizer_configuration == empty ||
+        change.after.authorizer_configuration.all(
+          _['custom_jwt_authorizer'] == empty ||
+          _['custom_jwt_authorizer'].all(_['allowed_clients'] != empty || _['allowed_audience'] != empty)
+        )
+      )
+  - uid: mondoo-aws-security-bedrock-agentcore-jwt-authorizer-restricted-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_bedrockagentcore_gateway" || type == "aws_bedrockagentcore_agent_runtime")
+    mql: |
+      terraform.state.resources.where(type == "aws_bedrockagentcore_gateway" || type == "aws_bedrockagentcore_agent_runtime").all(
+        values.authorizer_configuration == empty ||
+        values.authorizer_configuration.all(
+          _['custom_jwt_authorizer'] == empty ||
+          _['custom_jwt_authorizer'].all(_['allowed_clients'] != empty || _['allowed_audience'] != empty)
+        )
+      )
+  - uid: mondoo-aws-security-bedrock-agentcore-jwt-authorizer-restricted-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::BedrockAgentCore::Gateway" || type == "AWS::BedrockAgentCore::Runtime")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::BedrockAgentCore::Gateway" || type == "AWS::BedrockAgentCore::Runtime").all(
+        properties['AuthorizerConfiguration']['CustomJWTAuthorizer'] == empty ||
+        properties['AuthorizerConfiguration']['CustomJWTAuthorizer']['AllowedClients'] != empty ||
+        properties['AuthorizerConfiguration']['CustomJWTAuthorizer']['AllowedAudience'] != empty
+      )
+  # The Terraform versions cover the gateway's policy engine mode only: aws_bedrockagentcore_policy has no argument for a policy's enforcement mode.
+  - uid: mondoo-aws-security-bedrock-agentcore-gateway-policy-engine-enforced
+    title: Ensure Bedrock AgentCore policy engines enforce their decisions
+    impact: 75
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-5-15
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
+      compliance/owasp-llm-top-10-2025: owasp-llm-top-10-2025-llm06
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-7-2-1
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    variants:
+      - uid: mondoo-aws-security-bedrock-agentcore-gateway-policy-engine-enforced-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+      - uid: mondoo-aws-security-bedrock-agentcore-gateway-policy-engine-enforced-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-bedrock-agentcore-gateway-policy-engine-enforced-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-bedrock-agentcore-gateway-policy-engine-enforced-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-bedrock-agentcore-gateway-policy-engine-enforced-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
+    docs:
+      desc: |
+        This check verifies that Amazon Bedrock AgentCore policy engines block the tool calls their policies forbid, rather than only recording them. A policy engine evaluates every tool call made through the gateways attached to it against Cedar policies that permit or forbid it.
+
+        Enforcement is set in two places. A gateway attaches its policy engine in `ENFORCE` or `LOG_ONLY` mode, and each active policy in the engine has an enforcement mode of `ACTIVE` or `LOG_ONLY`. The check requires `ENFORCE` on every gateway that has a policy engine and `ACTIVE` on every active policy. Gateways without a policy engine are not evaluated.
+
+        **Why this matters**
+
+        Policy engines are the control that limits what an agent may do with its tools, such as which accounts a payment tool may transfer to or which records a database tool may delete. In `LOG_ONLY` mode every forbidden call still goes through, so a prompt-injected agent faces no limit while the configuration appears to have one.
+
+        `LOG_ONLY` is useful while a new policy is being tested against real traffic. Switch to enforcement once the decisions it logs are the ones you intend.
+      audit: |
+        ### Audit via CLI
+
+        1. For each gateway, read the policy engine mode:
+
+        ```bash
+        aws bedrock-agentcore-control get-gateway --gateway-identifier <gateway-id> \
+          --query 'policyEngineConfiguration'
+        ```
+
+        2. For each policy engine, list the enforcement mode of its policies:
+
+        ```bash
+        aws bedrock-agentcore-control list-policies --policy-engine-id <policy-engine-id> \
+          --query 'policies[*].{Name:name,Status:status,Mode:enforcementMode}' --output table
+        ```
+
+        A passing configuration shows `ENFORCE` for every gateway with a policy engine and `ACTIVE` for every active policy. A failing configuration shows `LOG_ONLY` in either place.
+      remediation:
+        - id: console
+          desc: |
+            To enforce policy engine decisions using the AWS Console:
+
+            1. Open the Amazon Bedrock AgentCore console and choose **Gateways**.
+            2. Edit each gateway with a policy engine and set its mode to **Enforce**.
+            3. Choose **Policy**, open each policy engine, and set every active policy's enforcement mode to **Active**.
+        - id: cli
+          desc: |
+            To enforce policy engine decisions using the AWS CLI:
+
+            1. Set each policy to enforce its decisions:
+
+            ```bash
+            aws bedrock-agentcore-control update-policy \
+              --policy-engine-id <policy-engine-id> \
+              --policy-id <policy-id> \
+              --enforcement-mode ACTIVE
+            ```
+
+            2. Attach the policy engine to the gateway in enforce mode:
+
+            ```bash
+            aws bedrock-agentcore-control update-gateway \
+              --gateway-identifier <gateway-id> \
+              --name <gateway-name> \
+              --role-arn <gateway-role-arn> \
+              --authorizer-type <authorizer-type> \
+              --policy-engine-configuration '{"arn":"<policy-engine-arn>","mode":"ENFORCE"}'
+            ```
+
+            `update-gateway` replaces the gateway configuration, so read the current settings with `aws bedrock-agentcore-control get-gateway --gateway-identifier <gateway-id>` and pass along the ones you need to keep.
+        - id: terraform
+          desc: |
+            To enforce policy engine decisions in Terraform, set `mode` to `ENFORCE` in the `policy_engine_configuration` block of `aws_bedrockagentcore_gateway`:
+
+            ```hcl
+            resource "aws_bedrockagentcore_gateway" "example" {
+              name            = "example-gateway"
+              role_arn        = aws_iam_role.gateway.arn
+              authorizer_type = "AWS_IAM"
+
+              policy_engine_configuration {
+                arn  = aws_bedrockagentcore_policy_engine.example.policy_engine_arn
+                mode = "ENFORCE"
+              }
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            To enforce policy engine decisions in CloudFormation, set `Mode` to `ENFORCE` on the gateway and `EnforcementMode` to `ACTIVE` on each policy:
+
+            ```yaml
+            Resources:
+              ExampleGateway:
+                Type: AWS::BedrockAgentCore::Gateway
+                Properties:
+                  Name: example-gateway
+                  RoleArn: !GetAtt GatewayRole.Arn
+                  AuthorizerType: AWS_IAM
+                  PolicyEngineConfiguration:
+                    Arn: !GetAtt ExamplePolicyEngine.PolicyEngineArn
+                    Mode: ENFORCE
+              ExamplePolicy:
+                Type: AWS::BedrockAgentCore::Policy
+                Properties:
+                  Name: example_policy
+                  PolicyEngineId: !GetAtt ExamplePolicyEngine.PolicyEngineId
+                  EnforcementMode: ACTIVE
+                  Definition:
+                    Cedar:
+                      Statement: permit(principal, action, resource);
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/policy.html
+        title: "Policy in Amazon Bedrock AgentCore: Control Agent Interactions"
+  - uid: mondoo-aws-security-bedrock-agentcore-gateway-policy-engine-enforced-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.bedrock.agentCore.gateways.all(policyEngine == empty || policyEngineMode == "ENFORCE")
+      aws.bedrock.agentCore.policyEngines.all(policies.where(status == "ACTIVE").all(enforcementMode == "ACTIVE"))
+  - uid: mondoo-aws-security-bedrock-agentcore-gateway-policy-engine-enforced-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_bedrockagentcore_gateway")
+    mql: |
+      terraform.resources("aws_bedrockagentcore_gateway").all(
+        blocks.where(type == "policy_engine_configuration").all(arguments.mode == "ENFORCE")
+      )
+  - uid: mondoo-aws-security-bedrock-agentcore-gateway-policy-engine-enforced-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_bedrockagentcore_gateway")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_bedrockagentcore_gateway").all(
+        change.after.policy_engine_configuration == empty ||
+        change.after.policy_engine_configuration.all(_['mode'] == "ENFORCE")
+      )
+  - uid: mondoo-aws-security-bedrock-agentcore-gateway-policy-engine-enforced-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_bedrockagentcore_gateway")
+    mql: |
+      terraform.state.resources.where(type == "aws_bedrockagentcore_gateway").all(
+        values.policy_engine_configuration == empty ||
+        values.policy_engine_configuration.all(_['mode'] == "ENFORCE")
+      )
+  - uid: mondoo-aws-security-bedrock-agentcore-gateway-policy-engine-enforced-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::BedrockAgentCore::Gateway" || type == "AWS::BedrockAgentCore::Policy")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::BedrockAgentCore::Gateway").all(
+        properties['PolicyEngineConfiguration'] == empty ||
+        properties['PolicyEngineConfiguration']['Mode'] == "ENFORCE"
+      )
+      cloudformation.template.resources.where(type == "AWS::BedrockAgentCore::Policy").all(
+        properties['EnforcementMode'] != "LOG_ONLY"
+      )
+  - uid: mondoo-aws-security-bedrock-agentcore-gateway-no-debug-exceptions
+    title: Ensure Bedrock AgentCore gateways do not return debug error details
+    impact: 60
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: false
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-9
+      compliance/nis-2: false
+      compliance/nist-csf-1: nist-csf-1-pr-ip-1
+      compliance/nist-csf-2: nist-csf-2-pr-ps-01
+      compliance/nist-sp-800-171: nist-sp-800-171--3-4-2
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-11
+      compliance/owasp-llm-top-10-2025: owasp-llm-top-10-2025-llm02
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a02
+      compliance/pci-dss-4: pcidss-requirement-2-2-1
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: false
+    variants:
+      - uid: mondoo-aws-security-bedrock-agentcore-gateway-no-debug-exceptions-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+      - uid: mondoo-aws-security-bedrock-agentcore-gateway-no-debug-exceptions-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-bedrock-agentcore-gateway-no-debug-exceptions-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-bedrock-agentcore-gateway-no-debug-exceptions-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-bedrock-agentcore-gateway-no-debug-exceptions-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
+    docs:
+      desc: |
+        This check verifies that Amazon Bedrock AgentCore gateways return generic error messages to callers rather than debug-level detail. A gateway's exception level is either unset, which returns generic errors, or `DEBUG`, which returns the granular exception raised while calling a target.
+
+        **Why this matters**
+
+        Debug errors from a gateway can carry target endpoints, Lambda function names, request validation details, and the messages downstream services return. That detail tells a caller how the tools behind the gateway are built and how to shape a request that reaches them, which is the reconnaissance a prompt-injection or tool-abuse attempt needs.
+
+        Debug errors also reach the model as tool output, where they can end up in a response to an end user. Use `DEBUG` only on a development gateway and read the detail from CloudWatch logs instead.
+      audit: |
+        ### Audit via CLI
+
+        1. Read the exception level of each gateway:
+
+        ```bash
+        aws bedrock-agentcore-control get-gateway --gateway-identifier <gateway-id> \
+          --query 'exceptionLevel' --output text
+        ```
+
+        A passing gateway returns `None`. A failing gateway returns `DEBUG`.
+      remediation:
+        - id: console
+          desc: |
+            To stop a gateway returning debug errors using the AWS Console:
+
+            1. Open the Amazon Bedrock AgentCore console and choose **Gateways**.
+            2. Edit the gateway and turn off debug exception details.
+            3. Save the gateway.
+        - id: cli
+          desc: |
+            To stop a gateway returning debug errors using the AWS CLI, update it without `--exception-level`:
+
+            ```bash
+            aws bedrock-agentcore-control update-gateway \
+              --gateway-identifier <gateway-id> \
+              --name <gateway-name> \
+              --role-arn <gateway-role-arn> \
+              --authorizer-type <authorizer-type>
+            ```
+
+            `update-gateway` replaces the gateway configuration, so read the current settings with `aws bedrock-agentcore-control get-gateway --gateway-identifier <gateway-id>` and pass along the ones you need to keep, leaving out the exception level.
+        - id: terraform
+          desc: |
+            To stop a gateway returning debug errors in Terraform, remove `exception_level` from `aws_bedrockagentcore_gateway`:
+
+            ```hcl
+            resource "aws_bedrockagentcore_gateway" "example" {
+              name            = "example-gateway"
+              role_arn        = aws_iam_role.gateway.arn
+              authorizer_type = "AWS_IAM"
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            To stop a gateway returning debug errors in CloudFormation, remove `ExceptionLevel` from `AWS::BedrockAgentCore::Gateway`:
+
+            ```yaml
+            Resources:
+              ExampleGateway:
+                Type: AWS::BedrockAgentCore::Gateway
+                Properties:
+                  Name: example-gateway
+                  RoleArn: !GetAtt GatewayRole.Arn
+                  AuthorizerType: AWS_IAM
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/bedrock-agentcore-control/latest/APIReference/API_CreateGateway.html
+        title: CreateGateway - Amazon Bedrock AgentCore Control Plane
+  - uid: mondoo-aws-security-bedrock-agentcore-gateway-no-debug-exceptions-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.bedrock.agentCore.gateways.all(exceptionLevel != "DEBUG")
+  - uid: mondoo-aws-security-bedrock-agentcore-gateway-no-debug-exceptions-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_bedrockagentcore_gateway")
+    mql: |
+      terraform.resources("aws_bedrockagentcore_gateway").all(
+        arguments.exception_level != "DEBUG"
+      )
+  - uid: mondoo-aws-security-bedrock-agentcore-gateway-no-debug-exceptions-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_bedrockagentcore_gateway")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_bedrockagentcore_gateway").all(
+        change.after.exception_level != "DEBUG"
+      )
+  - uid: mondoo-aws-security-bedrock-agentcore-gateway-no-debug-exceptions-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_bedrockagentcore_gateway")
+    mql: |
+      terraform.state.resources.where(type == "aws_bedrockagentcore_gateway").all(
+        values.exception_level != "DEBUG"
+      )
+  - uid: mondoo-aws-security-bedrock-agentcore-gateway-no-debug-exceptions-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::BedrockAgentCore::Gateway")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::BedrockAgentCore::Gateway").all(
+        properties['ExceptionLevel'] != "DEBUG"
+      )
+  # No Terraform variants: aws_bedrockagentcore_gateway has no argument for the AWS WAF failure mode.
+  - uid: mondoo-aws-security-bedrock-agentcore-gateway-waf-fail-closed
+    title: Ensure Bedrock AgentCore gateways block requests AWS WAF cannot evaluate
+    impact: 60
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: false
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a02
+      compliance/pci-dss-4: pcidss-requirement-1-3-1
+      compliance/soc2-2017: soc2-control-cc6-6-4
+      compliance/vda-isa-5: vda-isa-5-5-2-7
+    variants:
+      - uid: mondoo-aws-security-bedrock-agentcore-gateway-waf-fail-closed-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+      - uid: mondoo-aws-security-bedrock-agentcore-gateway-waf-fail-closed-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
+    docs:
+      desc: |
+        This check verifies that Amazon Bedrock AgentCore gateways protected by AWS WAF block a request when WAF cannot evaluate it. The gateway's WAF failure mode is either `FAIL_CLOSE`, which blocks such requests, or `FAIL_OPEN`, which lets them through. Gateways without AWS WAF are not evaluated.
+
+        **Why this matters**
+
+        AWS WAF in front of a gateway applies rate limits, IP restrictions, and managed rules against malicious payloads. In `FAIL_OPEN` mode any request WAF does not evaluate, whether because of a timeout or a request that exceeds its inspection limits, reaches the tools unfiltered.
+
+        An attacker who learns that oversized or slow requests bypass inspection can use exactly those requests to get past the rules the gateway relies on.
+      audit: |
+        ### Audit via CLI
+
+        1. Read the WAF failure mode of each gateway:
+
+        ```bash
+        aws bedrock-agentcore-control get-gateway --gateway-identifier <gateway-id> \
+          --query 'wafConfiguration.failureMode' --output text
+        ```
+
+        A passing gateway returns `FAIL_CLOSE` or `None`. A failing gateway returns `FAIL_OPEN`.
+      remediation:
+        - id: console
+          desc: |
+            To make a gateway block requests WAF cannot evaluate using the AWS Console:
+
+            1. Open the Amazon Bedrock AgentCore console and choose **Gateways**.
+            2. Edit the gateway's AWS WAF settings and set the failure mode to block requests.
+            3. Save the gateway.
+        - id: cli
+          desc: |
+            To make a gateway block requests WAF cannot evaluate using the AWS CLI:
+
+            ```bash
+            aws bedrock-agentcore-control update-gateway \
+              --gateway-identifier <gateway-id> \
+              --name <gateway-name> \
+              --role-arn <gateway-role-arn> \
+              --authorizer-type <authorizer-type> \
+              --waf-configuration '{"failureMode":"FAIL_CLOSE"}'
+            ```
+
+            `update-gateway` replaces the gateway configuration, so read the current settings with `aws bedrock-agentcore-control get-gateway --gateway-identifier <gateway-id>` and pass along the ones you need to keep.
+        - id: cloudformation
+          desc: |
+            To make a gateway block requests WAF cannot evaluate in CloudFormation, set `FailureMode` to `FAIL_CLOSE` on `AWS::BedrockAgentCore::Gateway`:
+
+            ```yaml
+            Resources:
+              ExampleGateway:
+                Type: AWS::BedrockAgentCore::Gateway
+                Properties:
+                  Name: example-gateway
+                  RoleArn: !GetAtt GatewayRole.Arn
+                  AuthorizerType: AWS_IAM
+                  WafConfiguration:
+                    FailureMode: FAIL_CLOSE
+            ```
+        # No Terraform remediation: aws_bedrockagentcore_gateway has no argument for the AWS WAF failure mode.
+    refs:
+      - url: https://docs.aws.amazon.com/bedrock-agentcore-control/latest/APIReference/API_UpdateGateway.html
+        title: UpdateGateway - Amazon Bedrock AgentCore Control Plane
+  - uid: mondoo-aws-security-bedrock-agentcore-gateway-waf-fail-closed-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.bedrock.agentCore.gateways.all(wafFailureMode != "FAIL_OPEN")
+  - uid: mondoo-aws-security-bedrock-agentcore-gateway-waf-fail-closed-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::BedrockAgentCore::Gateway")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::BedrockAgentCore::Gateway").all(
+        properties['WafConfiguration']['FailureMode'] != "FAIL_OPEN"
+      )
+  # No Terraform variants: the check resolves the agent's role ARN to the policies attached to it, which is cross-resource correlation the HCL, plan, and state assets do not perform.
+  - uid: mondoo-aws-security-bedrock-agent-role-not-admin
+    title: Ensure Bedrock agent service roles do not have AdministratorAccess
+    impact: 90
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-2
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
+      compliance/owasp-llm-top-10-2025: owasp-llm-top-10-2025-llm06
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-7-2-2
+      compliance/soc2-2017: soc2-control-cc6-3-3
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    variants:
+      - uid: mondoo-aws-security-bedrock-agent-role-not-admin-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check verifies that no Amazon Bedrock agent uses a service role that has the AWS managed `AdministratorAccess` policy attached. The agent's service role is what Bedrock assumes to invoke the model, read the agent's knowledge bases, and call the action groups the agent can use.
+
+        Agents without a service role are not evaluated.
+
+        **Why this matters**
+
+        A Bedrock agent chooses which actions to take from text that users, retrieved documents, and tool output supply. A prompt injection in any of that text can steer those choices, and the service role sets the limit of what a steered agent can do.
+
+        With `AdministratorAccess`, that limit is the whole account. A role scoped to the agent's model, knowledge bases, and action group functions keeps a manipulated agent inside the job it was built for.
+      audit: |
+        ### Audit via CLI
+
+        1. Read the service role of each agent:
+
+        ```bash
+        aws bedrock-agent get-agent --agent-id <agent-id> --query 'agent.agentResourceRoleArn' --output text
+        ```
+
+        2. List the managed policies attached to that role:
+
+        ```bash
+        aws iam list-attached-role-policies --role-name <role-name> \
+          --query "AttachedPolicies[?PolicyName=='AdministratorAccess']"
+        ```
+
+        A passing agent's role returns an empty list. A failing agent's role returns an entry for `AdministratorAccess`.
+      remediation:
+        - id: console
+          desc: |
+            To remove administrator access from a Bedrock agent's service role using the AWS Console:
+
+            1. Open the **IAM Console**, choose **Roles**, and select the agent's service role.
+            2. On the **Permissions** tab, detach `AdministratorAccess`.
+            3. Attach a policy that allows only `bedrock:InvokeModel` on the agent's model and the knowledge base and Lambda actions the agent uses.
+        - id: cli
+          desc: |
+            To remove administrator access from a Bedrock agent's service role using the AWS CLI:
+
+            ```bash
+            aws iam detach-role-policy \
+              --role-name <agent-service-role-name> \
+              --policy-arn arn:aws:iam::aws:policy/AdministratorAccess
+            ```
+
+            Then attach a policy scoped to the agent's model, knowledge bases, and action groups.
+        # No Terraform remediation: the fix is to the IAM role's attached policies, which belong to the role's own Terraform resources rather than to the agent.
+    refs:
+      - url: https://docs.aws.amazon.com/bedrock/latest/userguide/agents-permissions.html
+        title: Create a service role for Amazon Bedrock Agents
+  - uid: mondoo-aws-security-bedrock-agent-role-not-admin-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.bedrock.agents.all(iamRole == empty || iamRole.attachedPolicies.none(name == "AdministratorAccess"))
+  - uid: mondoo-aws-security-bedrock-agent-guardrail-attached
+    title: Ensure Bedrock agents have a guardrail attached
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-dsp-17
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-12
+      compliance/nis-2: false
+      compliance/nist-csf-1: nist-csf-1-pr-ds-5
+      compliance/nist-csf-2: nist-csf-2-pr-ds-10
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-3
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-4
+      compliance/owasp-llm-top-10-2025: owasp-llm-top-10-2025-llm01
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a02
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: soc2-control-cc6-7-1
+      compliance/vda-isa-5: false
+    variants:
+      - uid: mondoo-aws-security-bedrock-agent-guardrail-attached-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+      - uid: mondoo-aws-security-bedrock-agent-guardrail-attached-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-bedrock-agent-guardrail-attached-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-bedrock-agent-guardrail-attached-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-bedrock-agent-guardrail-attached-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
+    docs:
+      desc: |
+        This check verifies that every Amazon Bedrock agent has a guardrail attached. A guardrail screens the agent's prompts and responses against denied topics, harmful-content filters, prompt attack detection, and sensitive information filters before they reach the model or the user.
+
+        An agent without a guardrail is filtered only by whatever the foundation model enforces on its own. Account-wide guardrail enforcement is not taken into account, so an agent that relies on it alone fails.
+
+        **Why this matters**
+
+        Agents take input from users and from documents and tool output they retrieve, which is where indirect prompt injection arrives. The prompt attack filter in a guardrail is the control Bedrock provides to detect and block those instructions before the agent acts on them.
+
+        The sensitive information filters also stop an agent from returning personal data or credentials it found in a knowledge base. Having a guardrail somewhere in the account protects nothing unless the agent names it.
+      audit: |
+        ### Audit via Console
+
+        1. Open the [Amazon Bedrock console](https://console.aws.amazon.com/bedrock/) and choose **Agents**.
+        2. Select each agent and review **Guardrail details** in the agent builder.
+
+        A passing agent names a guardrail and version. A failing agent shows no guardrail.
+
+        ### Audit via CLI
+
+        1. Read the guardrail configuration of each agent:
+
+        ```bash
+        aws bedrock-agent get-agent --agent-id <agent-id> --query 'agent.guardrailConfiguration'
+        ```
+
+        A passing agent returns a `guardrailIdentifier`. A failing agent returns `null`.
+      remediation:
+        - id: console
+          desc: |
+            To attach a guardrail to a Bedrock agent using the AWS Console:
+
+            1. Open the Amazon Bedrock console and choose **Agents**.
+            2. Select the agent and choose **Edit in Agent Builder**.
+            3. Under **Guardrail details**, choose a guardrail and version.
+            4. Save and prepare the agent.
+        - id: cli
+          desc: |
+            To attach a guardrail to a Bedrock agent using the AWS CLI:
+
+            ```bash
+            aws bedrock-agent update-agent \
+              --agent-id <agent-id> \
+              --agent-name <agent-name> \
+              --agent-resource-role-arn <role-arn> \
+              --foundation-model <model-id> \
+              --guardrail-configuration guardrailIdentifier=<guardrail-id>,guardrailVersion=<version>
+            aws bedrock-agent prepare-agent --agent-id <agent-id>
+            ```
+
+            `update-agent` requires the name, role, and model even when only the guardrail changes, so read them, along with the instruction and other settings you need to keep, from `aws bedrock-agent get-agent --agent-id <agent-id>`.
+        - id: terraform
+          desc: |
+            To attach a guardrail to a Bedrock agent in Terraform, set `guardrail_configuration` on `aws_bedrockagent_agent`:
+
+            ```hcl
+            resource "aws_bedrockagent_agent" "example" {
+              agent_name              = "example-agent"
+              agent_resource_role_arn = aws_iam_role.bedrock.arn
+              foundation_model        = "anthropic.claude-v2"
+
+              guardrail_configuration {
+                guardrail_identifier = aws_bedrock_guardrail.example.guardrail_id
+                guardrail_version    = aws_bedrock_guardrail_version.example.version
+              }
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            To attach a guardrail to a Bedrock agent in CloudFormation, set `GuardrailConfiguration` on `AWS::Bedrock::Agent`:
+
+            ```yaml
+            Resources:
+              ExampleAgent:
+                Type: AWS::Bedrock::Agent
+                Properties:
+                  AgentName: example-agent
+                  AgentResourceRoleArn: !GetAtt BedrockRole.Arn
+                  FoundationModel: anthropic.claude-v2
+                  GuardrailConfiguration:
+                    GuardrailIdentifier: !GetAtt ExampleGuardrail.GuardrailId
+                    GuardrailVersion: !GetAtt ExampleGuardrailVersion.Version
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/bedrock/latest/userguide/agents-guardrail.html
+        title: Implement safeguards for your application by associating a guardrail with your agent
+  - uid: mondoo-aws-security-bedrock-agent-guardrail-attached-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.bedrock.agents.all(guardrail != empty)
+  - uid: mondoo-aws-security-bedrock-agent-guardrail-attached-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_bedrockagent_agent")
+    mql: |
+      terraform.resources("aws_bedrockagent_agent").all(
+        arguments.guardrail_configuration != empty || blocks.where(type == "guardrail_configuration") != empty
+      )
+  - uid: mondoo-aws-security-bedrock-agent-guardrail-attached-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_bedrockagent_agent")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_bedrockagent_agent").all(
+        change.after.guardrail_configuration != empty
+      )
+  - uid: mondoo-aws-security-bedrock-agent-guardrail-attached-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_bedrockagent_agent")
+    mql: |
+      terraform.state.resources.where(type == "aws_bedrockagent_agent").all(
+        values.guardrail_configuration != empty
+      )
+  - uid: mondoo-aws-security-bedrock-agent-guardrail-attached-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::Bedrock::Agent")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::Bedrock::Agent").all(
+        properties['GuardrailConfiguration']['GuardrailIdentifier'] != empty
+      )
+  # No Terraform variants: the hashicorp/aws provider has no resource for the Bedrock account data retention setting, and CloudFormation has no resource type for it.
+  - uid: mondoo-aws-security-bedrock-data-retention-no-provider-sharing
+    title: Ensure Bedrock does not share invocation data with model providers
+    impact: 75
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-dsp-10
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-5-14
+      compliance/nis-2: nis-2-21-2-d
+      compliance/nist-csf-1: nist-csf-1-pr-ds-5
+      compliance/nist-csf-2: false
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-3
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-21
+      compliance/owasp-llm-top-10-2025: owasp-llm-top-10-2025-llm02
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a02
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: soc2-control-cc6-7-1
+      compliance/vda-isa-5: false
+    variants:
+      - uid: mondoo-aws-security-bedrock-data-retention-no-provider-sharing-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check verifies that no region of the account lets Amazon Bedrock share model invocation data with the model provider. Bedrock's account data retention setting is chosen per region and decides what happens to prompts and responses after an invocation: `none` keeps nothing, `default` applies Bedrock's standard retention, `aws_review` lets AWS retain data for human review, and `provider_data_share` lets the data be shared with the provider of the model.
+
+        Regions where the setting cannot be read, or where it inherits the organization's setting, are not evaluated against the provider's terms.
+
+        **Why this matters**
+
+        Prompts carry whatever users and agents put into them: customer records, source code, contract text, and the documents a retrieval step pulled in. Sharing that data with a model provider moves it outside AWS to a third party under that provider's terms, which can conflict with data processing agreements, residency commitments, and the data protection terms the account's own customers rely on.
+
+        The setting is easy to miss because it is account level and regional, so one region switched to sharing exposes every workload that invokes models there.
+      audit: |
+        ### Audit via CLI
+
+        1. Read the data retention mode in each region where Bedrock is used:
+
+        ```bash
+        aws bedrock get-account-data-retention --region <region>
+        ```
+
+        A passing region returns a mode other than `provider_data_share`. A failing region returns `provider_data_share`.
+      remediation:
+        - id: console
+          desc: |
+            To stop Bedrock sharing invocation data with model providers using the AWS Console:
+
+            1. Open the [Amazon Bedrock console](https://console.aws.amazon.com/bedrock/) in the affected region.
+            2. Open the account's data retention settings.
+            3. Choose a retention mode that does not share data with the model provider, and save.
+        - id: cli
+          desc: |
+            To stop Bedrock sharing invocation data with model providers using the AWS CLI, set a different retention mode in each affected region:
+
+            ```bash
+            aws bedrock put-account-data-retention --mode none --region <region>
+            ```
+        # No Terraform remediation: the hashicorp/aws provider has no resource for the Bedrock account data retention setting.
+    refs:
+      - url: https://docs.aws.amazon.com/bedrock/latest/APIReference/API_PutAccountDataRetention.html
+        title: PutAccountDataRetention - Amazon Bedrock
+  - uid: mondoo-aws-security-bedrock-data-retention-no-provider-sharing-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.bedrock.dataRetentionConfigurations.none(mode == "provider_data_share")
+  # The Terraform versions check that a declared logging configuration delivers text data. Whether every region that runs agents or knowledge bases has one is only known at runtime.
+  - uid: mondoo-aws-security-bedrock-model-invocation-logging-enabled
+    title: Ensure Bedrock model invocation logging captures prompts and responses
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-log-08
+      compliance/dora: dora-art-10
+      compliance/hipaa: hipaa-security-ss164-312-b-audit-controls
+      compliance/iso-27001-2022: iso-27001-2022-a-8-15
+      compliance/nis-2: nis-2-21-2-b
+      compliance/nist-csf-1: nist-csf-1-pr-pt-1
+      compliance/nist-csf-2: nist-csf-2-pr-ps-04
+      compliance/nist-sp-800-171: nist-sp-800-171--3-3-1
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-au-12
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a09
+      compliance/pci-dss-4: pcidss-requirement-10-2-1
+      compliance/soc2-2017: soc2-control-cc7-2-1
+      compliance/vda-isa-5: vda-isa-5-5-2-4
+    variants:
+      - uid: mondoo-aws-security-bedrock-model-invocation-logging-enabled-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+      - uid: mondoo-aws-security-bedrock-model-invocation-logging-enabled-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-bedrock-model-invocation-logging-enabled-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-bedrock-model-invocation-logging-enabled-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check verifies that Amazon Bedrock model invocation logging records prompts and responses in every region where the account runs Bedrock agents or knowledge bases. Invocation logging is configured per region and delivers each request and response to a CloudWatch Logs group, an S3 bucket, or both.
+
+        Each configured region must deliver text data, and every region that hosts an agent or a knowledge base must have a configuration. Accounts that invoke models directly without agents or knowledge bases are only evaluated on the regions they have configured.
+
+        **Why this matters**
+
+        CloudTrail records that a model was invoked, but not what was asked or answered. Investigating a prompt injection, a data leak through an agent's response, or misuse of a stolen credential to run models needs the prompt and the completion, and only invocation logging captures them.
+
+        The logs hold the same sensitive data the prompts do, so send them to a destination encrypted with a customer managed key and restrict who can read it.
+      audit: |
+        ### Audit via CLI
+
+        1. In each region with Bedrock agents or knowledge bases, read the logging configuration:
+
+        ```bash
+        aws bedrock get-model-invocation-logging-configuration --region <region>
+        ```
+
+        A passing region returns a `loggingConfig` with `textDataDeliveryEnabled` set to `true` and a CloudWatch or S3 destination. A failing region returns no configuration, or one with text delivery turned off.
+      remediation:
+        - id: console
+          desc: |
+            To turn on model invocation logging using the AWS Console:
+
+            1. Open the [Amazon Bedrock console](https://console.aws.amazon.com/bedrock/) in the region and choose **Settings**.
+            2. Turn on **Model invocation logging** and select **Text** among the data types.
+            3. Choose a CloudWatch Logs group, an S3 bucket, or both as the destination, and save.
+        - id: cli
+          desc: |
+            To turn on model invocation logging using the AWS CLI, run this in each region that needs it:
+
+            ```bash
+            aws bedrock put-model-invocation-logging-configuration --region <region> \
+              --logging-config '{"cloudWatchConfig":{"logGroupName":"<log-group>","roleArn":"<role-arn>"},"textDataDeliveryEnabled":true}'
+            ```
+        - id: terraform
+          desc: |
+            To turn on model invocation logging in Terraform, set `text_data_delivery_enabled` in the `logging_config` block of `aws_bedrock_model_invocation_logging_configuration`:
+
+            ```hcl
+            resource "aws_bedrock_model_invocation_logging_configuration" "example" {
+              logging_config {
+                text_data_delivery_enabled = true
+
+                cloudwatch_config {
+                  log_group_name = aws_cloudwatch_log_group.bedrock.name
+                  role_arn       = aws_iam_role.bedrock_logging.arn
+                }
+              }
+            }
+            ```
+        # No CloudFormation remediation: CloudFormation has no resource type for the Bedrock model invocation logging configuration.
+    refs:
+      - url: https://docs.aws.amazon.com/bedrock/latest/userguide/model-invocation-logging.html
+        title: Monitor model invocation using CloudWatch Logs and Amazon S3
+  - uid: mondoo-aws-security-bedrock-model-invocation-logging-enabled-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.bedrock.modelInvocationLoggingConfigurations.all(textDataDeliveryEnabled == true)
+      aws.bedrock.agents.all(region.in(aws.bedrock.modelInvocationLoggingConfigurations.map(region)))
+      aws.bedrock.knowledgeBases.all(region.in(aws.bedrock.modelInvocationLoggingConfigurations.map(region)))
+  - uid: mondoo-aws-security-bedrock-model-invocation-logging-enabled-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_bedrock_model_invocation_logging_configuration")
+    mql: |
+      terraform.resources("aws_bedrock_model_invocation_logging_configuration").all(
+        blocks.where(type == "logging_config") != empty
+      )
+      terraform.resources("aws_bedrock_model_invocation_logging_configuration").all(
+        blocks.where(type == "logging_config").all(arguments.text_data_delivery_enabled == true)
+      )
+  - uid: mondoo-aws-security-bedrock-model-invocation-logging-enabled-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_bedrock_model_invocation_logging_configuration")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_bedrock_model_invocation_logging_configuration").all(
+        change.after.logging_config != empty &&
+        change.after.logging_config.all(_['text_data_delivery_enabled'] == true)
+      )
+  - uid: mondoo-aws-security-bedrock-model-invocation-logging-enabled-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_bedrock_model_invocation_logging_configuration")
+    mql: |
+      terraform.state.resources.where(type == "aws_bedrock_model_invocation_logging_configuration").all(
+        values.logging_config != empty &&
+        values.logging_config.all(_['text_data_delivery_enabled'] == true)
+      )
+  # No CloudFormation variant: CloudFormation has no resource type for the AgentCore token vault.
+  - uid: mondoo-aws-security-bedrock-agentcore-token-vault-cmk-encryption
+    title: Ensure Bedrock AgentCore token vaults use a customer-managed KMS key
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-2-iv-access-control-encryption-and-decryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-1
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-28
+      compliance/owasp-llm-top-10-2025: owasp-llm-top-10-2025-llm02
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a04
+      compliance/pci-dss-4: pcidss-requirement-3-5-1
+      compliance/soc2-2017: soc2-control-cc6-1-11
+      compliance/vda-isa-5: vda-isa-5-5-1-1
+    variants:
+      - uid: mondoo-aws-security-bedrock-agentcore-token-vault-cmk-encryption-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+      - uid: mondoo-aws-security-bedrock-agentcore-token-vault-cmk-encryption-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-bedrock-agentcore-token-vault-cmk-encryption-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-bedrock-agentcore-token-vault-cmk-encryption-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check verifies that Amazon Bedrock AgentCore token vaults are encrypted under a customer managed AWS KMS key. AgentCore Identity keeps one token vault per region, and it stores the OAuth access and refresh tokens and the API keys that agents obtain from credential providers to call third-party services on a user's behalf. By default the vault uses a service-managed key, which the account cannot audit, rotate on its own schedule, or revoke.
+
+        **Why this matters**
+
+        The token vault holds live credentials for every external system the account's agents act in, such as source control, ticketing, and productivity suites. Those tokens are worth more to an attacker than most data at rest because they work directly against the third-party service.
+
+        With a customer managed key, disabling the key or revoking a grant cuts off decryption of every stored token at once, and CloudTrail records each decryption so token use can be attributed to a principal and a time.
+      audit: |
+        ### Audit via CLI
+
+        1. Read the key configuration of the token vault in each region:
+
+        ```bash
+        aws bedrock-agentcore-control get-token-vault --region <region> --query 'kmsConfiguration'
+        ```
+
+        A passing vault returns `keyType` `CustomerManagedKey` with a `kmsKeyArn`. A failing vault returns `ServiceManagedKey`.
+      remediation:
+        - id: console
+          desc: |
+            To encrypt the token vault with a customer managed key using the AWS Console:
+
+            1. Open the Amazon Bedrock AgentCore console in the region and choose **Identity**.
+            2. Open the token vault settings and choose a customer managed KMS key.
+            3. Save the setting.
+        - id: cli
+          desc: |
+            To encrypt the token vault with a customer managed key using the AWS CLI:
+
+            ```bash
+            aws bedrock-agentcore-control set-token-vault-cmk --region <region> \
+              --kms-configuration keyType=CustomerManagedKey,kmsKeyArn=<cmk-arn>
+            ```
+
+            The key policy must allow AgentCore Identity to use the key.
+        - id: terraform
+          desc: |
+            To encrypt the token vault with a customer managed key in Terraform, declare `aws_bedrockagentcore_token_vault_cmk`:
+
+            ```hcl
+            resource "aws_bedrockagentcore_token_vault_cmk" "example" {
+              kms_configuration {
+                key_type    = "CustomerManagedKey"
+                kms_key_arn = aws_kms_key.token_vault.arn
+              }
+            }
+            ```
+        # No CloudFormation remediation: CloudFormation has no resource type for the AgentCore token vault.
+    refs:
+      - url: https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/data-encryption.html
+        title: Data encryption - Amazon Bedrock AgentCore
+  - uid: mondoo-aws-security-bedrock-agentcore-token-vault-cmk-encryption-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.bedrock.agentCore.tokenVaults.all(keyType == "CustomerManagedKey" && kmsKey != empty)
+  - uid: mondoo-aws-security-bedrock-agentcore-token-vault-cmk-encryption-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_bedrockagentcore_token_vault_cmk")
+    mql: |
+      terraform.resources("aws_bedrockagentcore_token_vault_cmk").all(
+        blocks.where(type == "kms_configuration") != empty
+      )
+      terraform.resources("aws_bedrockagentcore_token_vault_cmk").all(
+        blocks.where(type == "kms_configuration").all(arguments.key_type == "CustomerManagedKey" && arguments.kms_key_arn != empty)
+      )
+  - uid: mondoo-aws-security-bedrock-agentcore-token-vault-cmk-encryption-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_bedrockagentcore_token_vault_cmk")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_bedrockagentcore_token_vault_cmk").all(
+        change.after.kms_configuration != empty &&
+        change.after.kms_configuration.all(_['key_type'] == "CustomerManagedKey" && _['kms_key_arn'] != empty)
+      )
+  - uid: mondoo-aws-security-bedrock-agentcore-token-vault-cmk-encryption-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_bedrockagentcore_token_vault_cmk")
+    mql: |
+      terraform.state.resources.where(type == "aws_bedrockagentcore_token_vault_cmk").all(
+        values.kms_configuration != empty &&
+        values.kms_configuration.all(_['key_type'] == "CustomerManagedKey" && _['kms_key_arn'] != empty)
+      )
+  - uid: mondoo-aws-security-bedrock-agentcore-memory-cmk-encryption
+    title: Ensure Bedrock AgentCore memory stores use a customer-managed KMS key
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-2-iv-access-control-encryption-and-decryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-1
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-28
+      compliance/owasp-llm-top-10-2025: owasp-llm-top-10-2025-llm02
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a04
+      compliance/pci-dss-4: pcidss-requirement-3-5-1
+      compliance/soc2-2017: soc2-control-cc6-1-11
+      compliance/vda-isa-5: vda-isa-5-5-1-1
+    variants:
+      - uid: mondoo-aws-security-bedrock-agentcore-memory-cmk-encryption-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+      - uid: mondoo-aws-security-bedrock-agentcore-memory-cmk-encryption-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-bedrock-agentcore-memory-cmk-encryption-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-bedrock-agentcore-memory-cmk-encryption-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-bedrock-agentcore-memory-cmk-encryption-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
+    docs:
+      desc: |
+        This check verifies that each Amazon Bedrock AgentCore memory store is encrypted under a customer managed AWS KMS key. A memory store keeps the conversation events agents write and the long-term memories extracted from them, such as user preferences, facts, and session summaries. By default the data is encrypted with an AWS owned key, which the account cannot audit, rotate on its own schedule, or revoke. The key is chosen when the resource is created and cannot be changed afterwards, so moving to a customer managed key means creating a replacement.
+
+        **Why this matters**
+
+        A customer managed key puts access to the data under a key policy you control. Disabling the key or revoking a grant cuts off access to the encrypted data immediately, which is the one containment step available when a role with read access is compromised.
+
+        Every use of a customer managed key is recorded in CloudTrail, so reads of the data can be attributed to a principal and a time rather than inferred.
+
+        Frameworks that require control of encryption keys for regulated data, such as bring-your-own-key requirements for AI workloads, are satisfied only by a key the account owns.
+      audit: |
+        ### Audit via CLI
+
+        1. Read the encryption key of each memory store:
+
+        ```bash
+        aws bedrock-agentcore-control get-memory --memory-id <memory-id> --query 'memory.encryptionKeyArn' --output text
+        aws kms describe-key --key-id <kms-key-arn> --query 'KeyMetadata.KeyManager'
+        ```
+
+        A passing memory store returns a key whose `KeyManager` is `CUSTOMER`. A failing memory store returns `None`.
+      remediation:
+        - id: console
+          desc: |
+            To use a customer managed key for an AgentCore memory store using the AWS Console:
+
+            1. Open the Amazon Bedrock AgentCore console and choose **Memory**.
+            2. Create a memory store and choose a customer managed KMS key under the encryption settings.
+            3. Point agents at the new memory store and delete the old one once its events have expired or are no longer needed.
+        - id: cli
+          desc: |
+            To use a customer managed key for an AgentCore memory store using the AWS CLI, create a replacement with `--encryption-key-arn`:
+
+            ```bash
+            aws bedrock-agentcore-control create-memory \
+              --name example_memory \
+              --event-expiry-duration 30 \
+              --encryption-key-arn <cmk-arn>
+            ```
+        - id: terraform
+          desc: |
+            To use a customer managed key for an AgentCore memory store in Terraform, set `encryption_key_arn` on `aws_bedrockagentcore_memory`:
+
+            ```hcl
+            resource "aws_bedrockagentcore_memory" "example" {
+              name                  = "example_memory"
+              event_expiry_duration = 30
+              encryption_key_arn    = aws_kms_key.memory.arn
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            To use a customer managed key for an AgentCore memory store in CloudFormation, set `EncryptionKeyArn` on `AWS::BedrockAgentCore::Memory`:
+
+            ```yaml
+            Resources:
+              ExampleMemory:
+                Type: AWS::BedrockAgentCore::Memory
+                Properties:
+                  Name: example_memory
+                  EventExpiryDuration: 30
+                  EncryptionKeyArn: !GetAtt MemoryKey.Arn
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/data-encryption.html
+        title: Data encryption - Amazon Bedrock AgentCore
+  - uid: mondoo-aws-security-bedrock-agentcore-memory-cmk-encryption-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.bedrock.agentCore.memories.all(kmsKey != empty && kmsKey.keyManager == "CUSTOMER")
+  - uid: mondoo-aws-security-bedrock-agentcore-memory-cmk-encryption-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_bedrockagentcore_memory")
+    mql: |
+      terraform.resources("aws_bedrockagentcore_memory").all(
+        arguments.encryption_key_arn != empty
+      )
+  - uid: mondoo-aws-security-bedrock-agentcore-memory-cmk-encryption-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_bedrockagentcore_memory")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_bedrockagentcore_memory").all(
+        change.after.encryption_key_arn != empty
+      )
+  - uid: mondoo-aws-security-bedrock-agentcore-memory-cmk-encryption-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_bedrockagentcore_memory")
+    mql: |
+      terraform.state.resources.where(type == "aws_bedrockagentcore_memory").all(
+        values.encryption_key_arn != empty
+      )
+  - uid: mondoo-aws-security-bedrock-agentcore-memory-cmk-encryption-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::BedrockAgentCore::Memory")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::BedrockAgentCore::Memory").all(
+        properties['EncryptionKeyArn'] != empty
+      )
+  - uid: mondoo-aws-security-bedrock-agentcore-policy-engine-cmk-encryption
+    title: Ensure Bedrock AgentCore policy engines use a customer-managed KMS key
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-2-iv-access-control-encryption-and-decryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-1
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-28
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a04
+      compliance/pci-dss-4: pcidss-requirement-3-5-1
+      compliance/soc2-2017: soc2-control-cc6-1-11
+      compliance/vda-isa-5: vda-isa-5-5-1-1
+    variants:
+      - uid: mondoo-aws-security-bedrock-agentcore-policy-engine-cmk-encryption-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+      - uid: mondoo-aws-security-bedrock-agentcore-policy-engine-cmk-encryption-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-bedrock-agentcore-policy-engine-cmk-encryption-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-bedrock-agentcore-policy-engine-cmk-encryption-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-bedrock-agentcore-policy-engine-cmk-encryption-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
+    docs:
+      desc: |
+        This check verifies that each Amazon Bedrock AgentCore policy engine is encrypted under a customer managed AWS KMS key. A policy engine stores the Cedar policies that decide which tool calls agents may make through the gateways attached to it. By default the data is encrypted with an AWS owned key, which the account cannot audit, rotate on its own schedule, or revoke. The key is chosen when the resource is created and cannot be changed afterwards, so moving to a customer managed key means creating a replacement.
+
+        **Why this matters**
+
+        A customer managed key puts access to the data under a key policy you control. Disabling the key or revoking a grant cuts off access to the encrypted data immediately, which is the one containment step available when a role with read access is compromised.
+
+        Every use of a customer managed key is recorded in CloudTrail, so reads of the data can be attributed to a principal and a time rather than inferred.
+
+        Frameworks that require control of encryption keys for regulated data, such as bring-your-own-key requirements for AI workloads, are satisfied only by a key the account owns.
+      audit: |
+        ### Audit via CLI
+
+        1. Read the encryption key of each policy engine:
+
+        ```bash
+        aws bedrock-agentcore-control get-policy-engine --policy-engine-id <policy-engine-id> --query 'encryptionKeyArn' --output text
+        aws kms describe-key --key-id <kms-key-arn> --query 'KeyMetadata.KeyManager'
+        ```
+
+        A passing policy engine returns a key whose `KeyManager` is `CUSTOMER`. A failing policy engine returns `None`.
+      remediation:
+        - id: console
+          desc: |
+            To use a customer managed key for a policy engine using the AWS Console:
+
+            1. Open the Amazon Bedrock AgentCore console and choose **Policy**.
+            2. Create a policy engine and choose a customer managed KMS key under the encryption settings.
+            3. Recreate the policies in the new engine, attach it to the gateways, and delete the old engine.
+        - id: cli
+          desc: |
+            To use a customer managed key for a policy engine using the AWS CLI, create a replacement with `--encryption-key-arn`:
+
+            ```bash
+            aws bedrock-agentcore-control create-policy-engine \
+              --name example_engine \
+              --encryption-key-arn <cmk-arn>
+            ```
+        - id: terraform
+          desc: |
+            To use a customer managed key for a policy engine in Terraform, set `encryption_key_arn` on `aws_bedrockagentcore_policy_engine`:
+
+            ```hcl
+            resource "aws_bedrockagentcore_policy_engine" "example" {
+              name               = "example_engine"
+              encryption_key_arn = aws_kms_key.policy_engine.arn
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            To use a customer managed key for a policy engine in CloudFormation, set `EncryptionKeyArn` on `AWS::BedrockAgentCore::PolicyEngine`:
+
+            ```yaml
+            Resources:
+              ExamplePolicyEngine:
+                Type: AWS::BedrockAgentCore::PolicyEngine
+                Properties:
+                  Name: example_engine
+                  EncryptionKeyArn: !GetAtt PolicyEngineKey.Arn
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/data-encryption.html
+        title: Data encryption - Amazon Bedrock AgentCore
+  - uid: mondoo-aws-security-bedrock-agentcore-policy-engine-cmk-encryption-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.bedrock.agentCore.policyEngines.all(kmsKey != empty && kmsKey.keyManager == "CUSTOMER")
+  - uid: mondoo-aws-security-bedrock-agentcore-policy-engine-cmk-encryption-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_bedrockagentcore_policy_engine")
+    mql: |
+      terraform.resources("aws_bedrockagentcore_policy_engine").all(
+        arguments.encryption_key_arn != empty
+      )
+  - uid: mondoo-aws-security-bedrock-agentcore-policy-engine-cmk-encryption-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_bedrockagentcore_policy_engine")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_bedrockagentcore_policy_engine").all(
+        change.after.encryption_key_arn != empty
+      )
+  - uid: mondoo-aws-security-bedrock-agentcore-policy-engine-cmk-encryption-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_bedrockagentcore_policy_engine")
+    mql: |
+      terraform.state.resources.where(type == "aws_bedrockagentcore_policy_engine").all(
+        values.encryption_key_arn != empty
+      )
+  - uid: mondoo-aws-security-bedrock-agentcore-policy-engine-cmk-encryption-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::BedrockAgentCore::PolicyEngine")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::BedrockAgentCore::PolicyEngine").all(
+        properties['EncryptionKeyArn'] != empty
+      )
+  # No Terraform variants: the hashicorp/aws provider has no resource for Bedrock Automated Reasoning policies.
+  - uid: mondoo-aws-security-bedrock-automated-reasoning-policy-cmk-encryption
+    title: Ensure Bedrock Automated Reasoning policies use a customer-managed KMS key
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-2-iv-access-control-encryption-and-decryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-1
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-28
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a04
+      compliance/pci-dss-4: pcidss-requirement-3-5-1
+      compliance/soc2-2017: soc2-control-cc6-1-11
+      compliance/vda-isa-5: vda-isa-5-5-1-1
+    variants:
+      - uid: mondoo-aws-security-bedrock-automated-reasoning-policy-cmk-encryption-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+      - uid: mondoo-aws-security-bedrock-automated-reasoning-policy-cmk-encryption-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
+    docs:
+      desc: |
+        This check verifies that each Amazon Bedrock Automated Reasoning policy is encrypted under a customer managed AWS KMS key. An Automated Reasoning policy encodes business rules, extracted from source documents such as HR or lending policies, that guardrails use to verify model responses. By default the data is encrypted with an AWS owned key, which the account cannot audit, rotate on its own schedule, or revoke. The key is chosen when the resource is created and cannot be changed afterwards, so moving to a customer managed key means creating a replacement.
+
+        **Why this matters**
+
+        A customer managed key puts access to the data under a key policy you control. Disabling the key or revoking a grant cuts off access to the encrypted data immediately, which is the one containment step available when a role with read access is compromised.
+
+        Every use of a customer managed key is recorded in CloudTrail, so reads of the data can be attributed to a principal and a time rather than inferred.
+
+        Frameworks that require control of encryption keys for regulated data, such as bring-your-own-key requirements for AI workloads, are satisfied only by a key the account owns.
+      audit: |
+        ### Audit via CLI
+
+        1. Read the encryption key of each Automated Reasoning policy:
+
+        ```bash
+        aws bedrock get-automated-reasoning-policy --policy-arn <policy-arn> --query 'kmsKeyArn' --output text
+        aws kms describe-key --key-id <kms-key-arn> --query 'KeyMetadata.KeyManager'
+        ```
+
+        A passing policy returns a key whose `KeyManager` is `CUSTOMER`. A failing policy returns `None`.
+      remediation:
+        - id: console
+          desc: |
+            To use a customer managed key for an Automated Reasoning policy using the AWS Console:
+
+            1. Open the [Amazon Bedrock console](https://console.aws.amazon.com/bedrock/) and choose **Automated Reasoning**.
+            2. Create a policy and choose a customer managed KMS key under the encryption settings.
+            3. Reference the new policy from the guardrails that used the old one, then delete the old policy.
+        - id: cli
+          desc: |
+            To use a customer managed key for an Automated Reasoning policy using the AWS CLI, create a replacement with `--kms-key-id`:
+
+            ```bash
+            aws bedrock create-automated-reasoning-policy \
+              --name example-policy \
+              --kms-key-id <cmk-arn>
+            ```
+        - id: cloudformation
+          desc: |
+            To use a customer managed key for an Automated Reasoning policy in CloudFormation, set `KmsKeyId` on `AWS::Bedrock::AutomatedReasoningPolicy`:
+
+            ```yaml
+            Resources:
+              ExamplePolicy:
+                Type: AWS::Bedrock::AutomatedReasoningPolicy
+                Properties:
+                  Name: example-policy
+                  KmsKeyId: !GetAtt ReasoningPolicyKey.Arn
+            ```
+        # No Terraform remediation: the hashicorp/aws provider has no resource for Bedrock Automated Reasoning policies.
+    refs:
+      - url: https://docs.aws.amazon.com/bedrock/latest/userguide/guardrails-automated-reasoning-checks.html
+        title: What are Automated Reasoning checks in Amazon Bedrock Guardrails?
+  - uid: mondoo-aws-security-bedrock-automated-reasoning-policy-cmk-encryption-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.bedrock.automatedReasoningPolicies.all(kmsKey != empty && kmsKey.keyManager == "CUSTOMER")
+  - uid: mondoo-aws-security-bedrock-automated-reasoning-policy-cmk-encryption-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::Bedrock::AutomatedReasoningPolicy")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::Bedrock::AutomatedReasoningPolicy").all(
+        properties['KmsKeyId'] != empty
+      )
+  # No CloudFormation variant: CloudFormation has no resource type for IAM service-specific credentials.
+  - uid: mondoo-aws-security-iam-bedrock-api-key-expires
+    title: Ensure long-term Amazon Bedrock API keys have an expiration
+    impact: 85
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: false
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-5-17
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-12
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a07
+      compliance/pci-dss-4: pcidss-requirement-8-6-3
+      compliance/soc2-2017: soc2-control-cc6-1-9
+      compliance/vda-isa-5: vda-isa-5-4-1-3
+    variants:
+      - uid: mondoo-aws-security-iam-bedrock-api-key-expires-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+      - uid: mondoo-aws-security-iam-bedrock-api-key-expires-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-iam-bedrock-api-key-expires-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-iam-bedrock-api-key-expires-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check verifies that every active long-term Amazon Bedrock API key has an expiration date. A long-term Bedrock API key is an IAM service-specific credential for `bedrock.amazonaws.com` attached to an IAM user, and it authenticates model invocations as a bearer token without request signing.
+
+        A key is created with a lifetime of a set number of days, or with no expiration at all. The check fails any active key with no expiration date.
+
+        **Why this matters**
+
+        A Bedrock API key is used by pasting it into application configuration, notebooks, and environment variables, which is exactly where credentials leak. Whoever holds a leaked key can run models and spend against the account's quota until someone deletes the key by hand.
+
+        A key that never expires stays usable after the project that needed it ends and after the person who created it leaves. An expiration date limits the window a leaked key is useful for. For production workloads, short-term API keys or IAM role credentials avoid long-lived bearer tokens entirely.
+      audit: |
+        ### Audit via Console
+
+        1. Open the **IAM Console** and choose **Users**.
+        2. For each user, open the **Security credentials** tab and review **API keys for Amazon Bedrock**.
+
+        A passing key shows an expiration date. A failing key shows that it never expires.
+
+        ### Audit via CLI
+
+        1. List every Bedrock API key in the account with its status and expiration:
+
+        ```bash
+        aws iam list-service-specific-credentials --service-name bedrock.amazonaws.com --all-users \
+          --query 'ServiceSpecificCredentials[*].{User:UserName,Id:ServiceSpecificCredentialId,Status:Status,Expires:ExpirationDate}' \
+          --output table
+        ```
+
+        A passing key in `Active` status has an `Expires` value. A failing key has none.
+      remediation:
+        - id: console
+          desc: |
+            To replace a non-expiring Bedrock API key using the AWS Console:
+
+            1. Open the **IAM Console**, choose **Users**, and select the key's owner.
+            2. On the **Security credentials** tab, generate a new API key for Amazon Bedrock with an expiration.
+            3. Update the applications that use the old key, then delete the old key.
+        - id: cli
+          desc: |
+            To replace a non-expiring Bedrock API key using the AWS CLI:
+
+            1. Create a key with an expiration:
+
+            ```bash
+            aws iam create-service-specific-credential \
+              --user-name <user-name> \
+              --service-name bedrock.amazonaws.com \
+              --credential-age-days 30
+            ```
+
+            2. Update the applications that use the old key, then delete it:
+
+            ```bash
+            aws iam delete-service-specific-credential \
+              --user-name <user-name> \
+              --service-specific-credential-id <credential-id>
+            ```
+        - id: terraform
+          desc: |
+            To give a Bedrock API key an expiration in Terraform, set `credential_age_days` on `aws_iam_service_specific_credential`:
+
+            ```hcl
+            resource "aws_iam_service_specific_credential" "bedrock" {
+              service_name        = "bedrock.amazonaws.com"
+              user_name           = aws_iam_user.example.name
+              credential_age_days = 30
+            }
+            ```
+        # No CloudFormation remediation: CloudFormation has no resource type for IAM service-specific credentials.
+    refs:
+      - url: https://docs.aws.amazon.com/bedrock/latest/userguide/api-keys.html
+        title: API keys - Amazon Bedrock
+  - uid: mondoo-aws-security-iam-bedrock-api-key-expires-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.iam.bedrockApiKeys.where(status == "Active").all(expiresAt != empty)
+  - uid: mondoo-aws-security-iam-bedrock-api-key-expires-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_iam_service_specific_credential")
+    mql: |
+      terraform.resources("aws_iam_service_specific_credential").where(arguments.service_name == "bedrock.amazonaws.com").all(
+        arguments.credential_age_days != empty
+      )
+  - uid: mondoo-aws-security-iam-bedrock-api-key-expires-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_iam_service_specific_credential")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_iam_service_specific_credential" && change.after.service_name == "bedrock.amazonaws.com").all(
+        change.after.credential_age_days != empty
+      )
+  - uid: mondoo-aws-security-iam-bedrock-api-key-expires-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_iam_service_specific_credential")
+    mql: |
+      terraform.state.resources.where(type == "aws_iam_service_specific_credential" && values.service_name == "bedrock.amazonaws.com").all(
+        values.credential_age_days != empty
+      )
+  # No Terraform variants: the hashicorp/aws provider has no resource for Q Business application permissions, and AWS::QBusiness::Permission declares one statement at a time with intrinsic functions in its principal.
+  - uid: mondoo-aws-security-qbusiness-application-not-public
+    title: Ensure Amazon Q Business applications are not publicly accessible
+    impact: 90
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-5-15
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
+      compliance/owasp-llm-top-10-2025: owasp-llm-top-10-2025-llm02
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-7-2-1
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    variants:
+      - uid: mondoo-aws-security-qbusiness-application-not-public-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check verifies that no Amazon Q Business application has a resource-based policy that grants access to any AWS principal. The policy is built from permissions added to the application, and each one grants another principal, typically a partner's IAM role, Q Business API actions against the application's indexed content.
+
+        An application fails when a statement allows a wildcard principal without a condition that scopes the caller. An application with no resource-based policy passes.
+
+        **Why this matters**
+
+        A Q Business application answers questions from everything it has indexed, which commonly includes wikis, ticket systems, file shares, and email. A wildcard grant lets any AWS account call its retrieval and chat APIs, and so query that content directly.
+
+        Grant access to the specific partner role that needs it, and add conditions that scope the caller, instead of a wildcard.
+      audit: |
+        ### Audit via CLI
+
+        1. Retrieve each application's resource-based policy:
+
+        ```bash
+        aws qbusiness get-policy --application-id <application-id> --query 'policy' --output text
+        ```
+
+        2. Review each `Allow` statement for a wildcard principal.
+
+        A passing application returns no policy, or a policy whose statements name specific principals or carry a scoping condition. A failing application returns a statement that allows `*` without one.
+      remediation:
+        - id: console
+          desc: |
+            To remove public access from a Q Business application using the AWS Console:
+
+            1. Open the [Amazon Q Business console](https://console.aws.amazon.com/amazonq/business/) and select the application.
+            2. Review the application's permissions and remove any that grant access to all principals.
+            3. Add permissions for the specific partner roles that need access.
+        - id: cli
+          desc: |
+            To remove a public permission from a Q Business application using the AWS CLI:
+
+            1. Find the `Sid` of the statement that allows a wildcard principal with `aws qbusiness get-policy --application-id <application-id>`.
+            2. Remove it:
+
+            ```bash
+            aws qbusiness disassociate-permission \
+              --application-id <application-id> \
+              --statement-id <statement-id>
+            ```
+
+            3. Grant access to the specific partner role instead:
+
+            ```bash
+            aws qbusiness associate-permission \
+              --application-id <application-id> \
+              --statement-id partner-access \
+              --actions qbusiness:SearchRelevantContent \
+              --principal arn:aws:iam::<partner-account-id>:role/<partner-role>
+            ```
+        # No Terraform remediation: the hashicorp/aws provider has no resource for Q Business application permissions.
+    refs:
+      - url: https://docs.aws.amazon.com/amazonq/latest/api-reference/API_AssociatePermission.html
+        title: AssociatePermission - Amazon Q Business
+  - uid: mondoo-aws-security-qbusiness-application-not-public-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.qBusiness.applications.all(isPublic == false)
+  - uid: mondoo-aws-security-qbusiness-application-cmk-encryption
+    title: Ensure Amazon Q Business applications use a customer-managed KMS key
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-2-iv-access-control-encryption-and-decryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-1
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-28
+      compliance/owasp-llm-top-10-2025: owasp-llm-top-10-2025-llm02
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a04
+      compliance/pci-dss-4: pcidss-requirement-3-5-1
+      compliance/soc2-2017: soc2-control-cc6-1-11
+      compliance/vda-isa-5: vda-isa-5-5-1-1
+    variants:
+      - uid: mondoo-aws-security-qbusiness-application-cmk-encryption-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+      - uid: mondoo-aws-security-qbusiness-application-cmk-encryption-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-qbusiness-application-cmk-encryption-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-qbusiness-application-cmk-encryption-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-qbusiness-application-cmk-encryption-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
+    docs:
+      desc: |
+        This check verifies that each Amazon Q Business application is encrypted under a customer managed AWS KMS key. The application's key encrypts the content it indexes from connected data sources, its conversation history, and the files users attach in chat. By default the data is encrypted with an AWS owned key, which the account cannot audit, rotate on its own schedule, or revoke. The key is chosen when the resource is created and cannot be changed afterwards, so moving to a customer managed key means creating a replacement.
+
+        **Why this matters**
+
+        A customer managed key puts access to the data under a key policy you control. Disabling the key or revoking a grant cuts off access to the encrypted data immediately, which is the one containment step available when a role with read access is compromised.
+
+        Every use of a customer managed key is recorded in CloudTrail, so reads of the data can be attributed to a principal and a time rather than inferred.
+
+        Frameworks that require control of encryption keys for regulated data, such as bring-your-own-key requirements for AI workloads, are satisfied only by a key the account owns.
+      audit: |
+        ### Audit via CLI
+
+        1. Read the encryption key of each application:
+
+        ```bash
+        aws qbusiness get-application --application-id <application-id> --query 'encryptionConfiguration.kmsKeyId' --output text
+        aws kms describe-key --key-id <kms-key-id> --query 'KeyMetadata.KeyManager'
+        ```
+
+        A passing application returns a key whose `KeyManager` is `CUSTOMER`. A failing application returns `None`.
+      remediation:
+        - id: console
+          desc: |
+            To use a customer managed key for a Q Business application using the AWS Console:
+
+            1. Open the [Amazon Q Business console](https://console.aws.amazon.com/amazonq/business/) and create an application.
+            2. Under **Encryption**, choose a customer managed KMS key.
+            3. Reconnect the data sources and retrievers to the new application, then delete the old one.
+        - id: cli
+          desc: |
+            To use a customer managed key for a Q Business application using the AWS CLI, create a replacement with an encryption configuration:
+
+            ```bash
+            aws qbusiness create-application \
+              --display-name example-app \
+              --identity-center-instance-arn <identity-center-instance-arn> \
+              --encryption-configuration kmsKeyId=<cmk-arn>
+            ```
+        - id: terraform
+          desc: |
+            To use a customer managed key for a Q Business application in Terraform, add an `encryption_configuration` block to `aws_qbusiness_application`:
+
+            ```hcl
+            resource "aws_qbusiness_application" "example" {
+              display_name                 = "example-app"
+              iam_service_role_arn         = aws_iam_role.qbusiness.arn
+              identity_center_instance_arn = "arn:aws:sso:::instance/ssoins-0123456789abcdef"
+
+              attachments_configuration {
+                attachments_control_mode = "ENABLED"
+              }
+
+              encryption_configuration {
+                kms_key_id = aws_kms_key.qbusiness.arn
+              }
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            To use a customer managed key for a Q Business application in CloudFormation, set `EncryptionConfiguration` on `AWS::QBusiness::Application`:
+
+            ```yaml
+            Resources:
+              ExampleApplication:
+                Type: AWS::QBusiness::Application
+                Properties:
+                  DisplayName: example-app
+                  EncryptionConfiguration:
+                    KmsKeyId: !GetAtt QBusinessKey.Arn
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/amazonq/latest/qbusiness-ug/encryption-at-rest.html
+        title: Encryption at rest - Amazon Q Business
+  - uid: mondoo-aws-security-qbusiness-application-cmk-encryption-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.qBusiness.applications.all(kmsKey != empty && kmsKey.keyManager == "CUSTOMER")
+  - uid: mondoo-aws-security-qbusiness-application-cmk-encryption-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_qbusiness_application")
+    mql: |
+      terraform.resources("aws_qbusiness_application").all(
+        blocks.where(type == "encryption_configuration") != empty
+      )
+      terraform.resources("aws_qbusiness_application").all(
+        blocks.where(type == "encryption_configuration").all(arguments.kms_key_id != empty)
+      )
+  - uid: mondoo-aws-security-qbusiness-application-cmk-encryption-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_qbusiness_application")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_qbusiness_application").all(
+        change.after.encryption_configuration != empty &&
+        change.after.encryption_configuration.all(_['kms_key_id'] != empty)
+      )
+  - uid: mondoo-aws-security-qbusiness-application-cmk-encryption-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_qbusiness_application")
+    mql: |
+      terraform.state.resources.where(type == "aws_qbusiness_application").all(
+        values.encryption_configuration != empty &&
+        values.encryption_configuration.all(_['kms_key_id'] != empty)
+      )
+  - uid: mondoo-aws-security-qbusiness-application-cmk-encryption-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::QBusiness::Application")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::QBusiness::Application").all(
+        properties['EncryptionConfiguration']['KmsKeyId'] != empty
+      )
+  # No Terraform variants: aws_s3vectors_vector_bucket_policy carries the policy as a JSON string that is usually built with jsonencode or a data source, which the HCL parser cannot resolve, and whether a statement is public depends on its conditions. The runtime check evaluates the parsed policy instead.
+  - uid: mondoo-aws-security-s3vectors-vector-bucket-not-public
+    title: Ensure S3 vector buckets are not publicly accessible
+    impact: 90
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-5-15
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
+      compliance/owasp-llm-top-10-2025: owasp-llm-top-10-2025-llm08
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-7-2-1
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    variants:
+      - uid: mondoo-aws-security-s3vectors-vector-bucket-not-public-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+    docs:
+      desc: |
+        This check verifies that no Amazon S3 vector bucket has a bucket policy that grants access to any principal. A vector bucket holds the vector indexes that retrieval-augmented generation applications and Bedrock knowledge bases query, with each vector stored alongside metadata from the source document.
+
+        A bucket fails when its policy contains a statement that allows a wildcard principal without a condition that scopes the caller. A bucket with no policy passes.
+
+        **Why this matters**
+
+        Embeddings are not anonymized data. Embedding inversion techniques reconstruct much of the source text from its vectors, and the metadata stored with each vector often carries document titles, paths, and excerpts directly, so read access to a vector index is close to read access to the documents behind it.
+
+        Write access is worse: an outsider who can put vectors into an index can plant passages that the application retrieves and feeds to the model as trusted context, which is a direct route to prompt injection.
+      audit: |
+        ### Audit via CLI
+
+        1. Retrieve each vector bucket's policy:
+
+        ```bash
+        aws s3vectors get-vector-bucket-policy --vector-bucket-name <bucket-name> --query 'policy' --output text
+        ```
+
+        2. Review each `Allow` statement for a wildcard principal.
+
+        A passing bucket returns no policy, or a policy whose statements name specific principals or carry a scoping condition. A failing bucket returns a statement that allows `*` without one.
+      remediation:
+        - id: console
+          desc: |
+            To remove public access from a vector bucket using the AWS Console:
+
+            1. Open the [Amazon S3 console](https://console.aws.amazon.com/s3/) and choose **Vector buckets**.
+            2. Select the bucket and open its **Permissions** tab.
+            3. Edit the bucket policy to replace the wildcard principal with specific account or role ARNs, or delete the policy.
+        - id: cli
+          desc: |
+            To remove public access from a vector bucket using the AWS CLI, delete the policy or replace it with one that names specific principals:
+
+            ```bash
+            aws s3vectors delete-vector-bucket-policy --vector-bucket-name <bucket-name>
+            ```
+
+            ```bash
+            aws s3vectors put-vector-bucket-policy \
+              --vector-bucket-name <bucket-name> \
+              --policy file://vector-bucket-policy.json
+            ```
+        - id: terraform
+          desc: |
+            To restrict a vector bucket's policy in Terraform, name the allowed principals on `aws_s3vectors_vector_bucket_policy`:
+
+            ```hcl
+            resource "aws_s3vectors_vector_bucket_policy" "example" {
+              vector_bucket_arn = aws_s3vectors_vector_bucket.example.vector_bucket_arn
+              policy = jsonencode({
+                Version = "2012-10-17"
+                Statement = [{
+                  Effect    = "Allow"
+                  Principal = { AWS = "arn:aws:iam::123456789012:role/rag-indexer" }
+                  Action    = ["s3vectors:GetVectors", "s3vectors:QueryVectors"]
+                  Resource  = "${aws_s3vectors_vector_bucket.example.vector_bucket_arn}/*"
+                }]
+              })
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            To restrict a vector bucket's policy in CloudFormation, name the allowed principals on `AWS::S3Vectors::VectorBucketPolicy`:
+
+            ```yaml
+            Resources:
+              ExampleBucketPolicy:
+                Type: AWS::S3Vectors::VectorBucketPolicy
+                Properties:
+                  VectorBucketArn: !GetAtt ExampleBucket.VectorBucketArn
+                  Policy:
+                    Version: "2012-10-17"
+                    Statement:
+                      - Effect: Allow
+                        Principal:
+                          AWS: !Sub arn:aws:iam::${AWS::AccountId}:role/rag-indexer
+                        Action:
+                          - s3vectors:GetVectors
+                          - s3vectors:QueryVectors
+                        Resource: !Sub arn:aws:s3vectors:${AWS::Region}:${AWS::AccountId}:bucket/example-vectors/*
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/AmazonS3/latest/userguide/s3-vectors-access-management.html
+        title: Identity and Access management in S3 Vectors
+  - uid: mondoo-aws-security-s3vectors-vector-bucket-not-public-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.s3vectors.vectorBuckets.all(isPublic == false)
+  - uid: mondoo-aws-security-s3vectors-vector-bucket-cmk-encryption
+    title: Ensure S3 vector buckets use a customer-managed KMS key
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-2-iv-access-control-encryption-and-decryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-1
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-28
+      compliance/owasp-llm-top-10-2025: owasp-llm-top-10-2025-llm08
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a04
+      compliance/pci-dss-4: pcidss-requirement-3-5-1
+      compliance/soc2-2017: soc2-control-cc6-1-11
+      compliance/vda-isa-5: vda-isa-5-5-1-1
+    variants:
+      - uid: mondoo-aws-security-s3vectors-vector-bucket-cmk-encryption-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+      - uid: mondoo-aws-security-s3vectors-vector-bucket-cmk-encryption-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-s3vectors-vector-bucket-cmk-encryption-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-s3vectors-vector-bucket-cmk-encryption-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-s3vectors-vector-bucket-cmk-encryption-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
+    docs:
+      desc: |
+        This check verifies that each Amazon S3 vector bucket is encrypted under a customer managed AWS KMS key. A vector bucket holds the embeddings and source-document metadata that retrieval-augmented generation applications query. By default vectors are encrypted with Amazon S3 managed keys, which the account cannot audit, rotate on its own schedule, or revoke. The key is chosen when the resource is created and cannot be changed afterwards, so moving to a customer managed key means creating a replacement.
+
+        **Why this matters**
+
+        A customer managed key puts access to the data under a key policy you control. Disabling the key or revoking a grant cuts off access to the encrypted data immediately, which is the one containment step available when a role with read access is compromised.
+
+        Every use of a customer managed key is recorded in CloudTrail, so reads of the data can be attributed to a principal and a time rather than inferred.
+
+        Frameworks that require control of encryption keys for regulated data, such as bring-your-own-key requirements for AI workloads, are satisfied only by a key the account owns.
+      audit: |
+        ### Audit via CLI
+
+        1. Read the encryption configuration of each vector bucket:
+
+        ```bash
+        aws s3vectors get-vector-bucket --vector-bucket-name <bucket-name> --query 'vectorBucket.encryptionConfiguration'
+        aws kms describe-key --key-id <kms-key-arn> --query 'KeyMetadata.KeyManager'
+        ```
+
+        A passing bucket returns `sseType` `aws:kms` with a key whose `KeyManager` is `CUSTOMER`. A failing bucket returns `AES256`.
+      remediation:
+        - id: console
+          desc: |
+            To use a customer managed key for a vector bucket using the AWS Console:
+
+            1. Open the [Amazon S3 console](https://console.aws.amazon.com/s3/) and choose **Vector buckets**.
+            2. Create a vector bucket and choose **SSE-KMS** with a customer managed key.
+            3. Re-index the vectors into the new bucket and delete the old one.
+        - id: cli
+          desc: |
+            To use a customer managed key for a vector bucket using the AWS CLI, create a replacement with an encryption configuration:
+
+            ```bash
+            aws s3vectors create-vector-bucket \
+              --vector-bucket-name <bucket-name> \
+              --encryption-configuration sseType=aws:kms,kmsKeyArn=<cmk-arn>
+            ```
+        - id: terraform
+          desc: |
+            To use a customer managed key for a vector bucket in Terraform, set `encryption_configuration` on `aws_s3vectors_vector_bucket`:
+
+            ```hcl
+            resource "aws_s3vectors_vector_bucket" "example" {
+              vector_bucket_name = "example-vectors"
+
+              encryption_configuration {
+                sse_type    = "aws:kms"
+                kms_key_arn = aws_kms_key.vectors.arn
+              }
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            To use a customer managed key for a vector bucket in CloudFormation, set `EncryptionConfiguration` on `AWS::S3Vectors::VectorBucket`:
+
+            ```yaml
+            Resources:
+              ExampleBucket:
+                Type: AWS::S3Vectors::VectorBucket
+                Properties:
+                  VectorBucketName: example-vectors
+                  EncryptionConfiguration:
+                    SseType: aws:kms
+                    KmsKeyArn: !GetAtt VectorsKey.Arn
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/AmazonS3/latest/userguide/s3-vectors-data-encryption.html
+        title: Data protection and encryption in S3 Vectors
+  - uid: mondoo-aws-security-s3vectors-vector-bucket-cmk-encryption-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.s3vectors.vectorBuckets.all(kmsKey != empty && kmsKey.keyManager == "CUSTOMER")
+  - uid: mondoo-aws-security-s3vectors-vector-bucket-cmk-encryption-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_s3vectors_vector_bucket")
+    mql: |
+      terraform.resources("aws_s3vectors_vector_bucket").all(
+        arguments.encryption_configuration != empty && arguments.encryption_configuration.where(_['sse_type'] == "aws:kms" && _['kms_key_arn'] != empty) != empty ||
+        blocks.where(type == "encryption_configuration" && arguments.sse_type == "aws:kms" && arguments.kms_key_arn != empty) != empty
+      )
+  - uid: mondoo-aws-security-s3vectors-vector-bucket-cmk-encryption-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_s3vectors_vector_bucket")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_s3vectors_vector_bucket").all(
+        change.after.encryption_configuration != empty &&
+        change.after.encryption_configuration.all(_['sse_type'] == "aws:kms" && _['kms_key_arn'] != empty)
+      )
+  - uid: mondoo-aws-security-s3vectors-vector-bucket-cmk-encryption-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_s3vectors_vector_bucket")
+    mql: |
+      terraform.state.resources.where(type == "aws_s3vectors_vector_bucket").all(
+        values.encryption_configuration != empty &&
+        values.encryption_configuration.all(_['sse_type'] == "aws:kms" && _['kms_key_arn'] != empty)
+      )
+  - uid: mondoo-aws-security-s3vectors-vector-bucket-cmk-encryption-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::S3Vectors::VectorBucket")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::S3Vectors::VectorBucket").all(
+        properties['EncryptionConfiguration']['SseType'] == "aws:kms" &&
+        properties['EncryptionConfiguration']['KmsKeyArn'] != empty
+      )
+  - uid: mondoo-aws-security-sagemaker-endpoint-config-kms-key-configured
+    title: Ensure SageMaker endpoint configurations encrypt storage volumes with KMS
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-2-iv-access-control-encryption-and-decryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-1
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-28
+      compliance/owasp-llm-top-10-2025: owasp-llm-top-10-2025-llm02
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a04
+      compliance/pci-dss-4: pcidss-requirement-3-5-1
+      compliance/soc2-2017: soc2-control-cc6-1-11
+      compliance/vda-isa-5: vda-isa-5-5-1-1
+    variants:
+      - uid: mondoo-aws-security-sagemaker-endpoint-config-kms-key-configured-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+      - uid: mondoo-aws-security-sagemaker-endpoint-config-kms-key-configured-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-sagemaker-endpoint-config-kms-key-configured-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-sagemaker-endpoint-config-kms-key-configured-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-aws-security-sagemaker-endpoint-config-kms-key-configured-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
+    docs:
+      desc: |
+        This check verifies that Amazon SageMaker endpoint configurations name an AWS KMS key for the storage volumes attached to the instances that host the model. The volume holds the model artifacts and the inference container's working data while the endpoint runs.
+
+        Endpoint configurations whose production variants are all serverless are not evaluated, because serverless endpoints have no attached storage volume. Instance types with local NVMe storage encrypt that storage with a hardware module regardless of the key, and the key still applies to the attached volume.
+
+        **Why this matters**
+
+        Model weights are often the most valuable artifact in an ML workload, the product of training data and compute the organization paid for. On the instance volume they sit next to the inference inputs the container writes to disk.
+
+        Naming a KMS key puts decryption of that volume under a key policy the account controls and records each use in CloudTrail. The key is fixed when the endpoint configuration is created, so applying it means creating a new configuration and updating the endpoint to use it.
+      audit: |
+        ### Audit via CLI
+
+        1. Read the KMS key of each endpoint configuration:
+
+        ```bash
+        aws sagemaker describe-endpoint-config --endpoint-config-name <endpoint-config-name> --query 'KmsKeyId' --output text
+        ```
+
+        A passing configuration returns a key ARN or alias. A failing configuration with instance-based variants returns `None`.
+      remediation:
+        - id: console
+          desc: |
+            To encrypt endpoint storage with a KMS key using the AWS Console:
+
+            1. Open the [Amazon SageMaker console](https://console.aws.amazon.com/sagemaker/) and choose **Inference**, then **Endpoint configurations**.
+            2. Clone the endpoint configuration and choose a KMS key under **Encryption key**.
+            3. Update the endpoint to use the new configuration.
+        - id: cli
+          desc: |
+            To encrypt endpoint storage with a KMS key using the AWS CLI:
+
+            1. Create a new endpoint configuration with `--kms-key-id`:
+
+            ```bash
+            aws sagemaker create-endpoint-config \
+              --endpoint-config-name <new-endpoint-config-name> \
+              --production-variants VariantName=AllTraffic,ModelName=<model-name>,InitialInstanceCount=1,InstanceType=ml.m5.large \
+              --kms-key-id <kms-key-arn>
+            ```
+
+            2. Point the endpoint at it:
+
+            ```bash
+            aws sagemaker update-endpoint \
+              --endpoint-name <endpoint-name> \
+              --endpoint-config-name <new-endpoint-config-name>
+            ```
+        - id: terraform
+          desc: |
+            To encrypt endpoint storage with a KMS key in Terraform, set `kms_key_arn` on `aws_sagemaker_endpoint_configuration`:
+
+            ```hcl
+            resource "aws_sagemaker_endpoint_configuration" "example" {
+              name        = "example-config"
+              kms_key_arn = aws_kms_key.sagemaker.arn
+
+              production_variants {
+                variant_name           = "AllTraffic"
+                model_name             = aws_sagemaker_model.example.name
+                initial_instance_count = 1
+                instance_type          = "ml.m5.large"
+              }
+            }
+            ```
+        - id: cloudformation
+          desc: |
+            To encrypt endpoint storage with a KMS key in CloudFormation, set `KmsKeyId` on `AWS::SageMaker::EndpointConfig`:
+
+            ```yaml
+            Resources:
+              ExampleEndpointConfig:
+                Type: AWS::SageMaker::EndpointConfig
+                Properties:
+                  KmsKeyId: !GetAtt SageMakerKey.Arn
+                  ProductionVariants:
+                    - VariantName: AllTraffic
+                      ModelName: !GetAtt ExampleModel.ModelName
+                      InitialInstanceCount: 1
+                      InstanceType: ml.m5.large
+                      InitialVariantWeight: 1
+            ```
+    refs:
+      - url: https://docs.aws.amazon.com/sagemaker/latest/APIReference/API_CreateEndpointConfig.html
+        title: CreateEndpointConfig - Amazon SageMaker
+  - uid: mondoo-aws-security-sagemaker-endpoint-config-kms-key-configured-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.sagemaker.endpointConfigs.all(kmsKey != empty || productionVariants.all(serverlessConfig != empty))
+  - uid: mondoo-aws-security-sagemaker-endpoint-config-kms-key-configured-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_sagemaker_endpoint_configuration")
+    mql: |
+      terraform.resources("aws_sagemaker_endpoint_configuration").all(
+        arguments.kms_key_arn != empty ||
+        blocks.where(type == "production_variants").all(blocks.where(type == "serverless_config") != empty)
+      )
+  - uid: mondoo-aws-security-sagemaker-endpoint-config-kms-key-configured-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_sagemaker_endpoint_configuration")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "aws_sagemaker_endpoint_configuration").all(
+        change.after.kms_key_arn != empty ||
+        change.after.production_variants.all(_['serverless_config'] != empty)
+      )
+  - uid: mondoo-aws-security-sagemaker-endpoint-config-kms-key-configured-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_sagemaker_endpoint_configuration")
+    mql: |
+      terraform.state.resources.where(type == "aws_sagemaker_endpoint_configuration").all(
+        values.kms_key_arn != empty ||
+        values.production_variants.all(_['serverless_config'] != empty)
+      )
+  - uid: mondoo-aws-security-sagemaker-endpoint-config-kms-key-configured-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::SageMaker::EndpointConfig")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::SageMaker::EndpointConfig").all(
+        properties['KmsKeyId'] != empty ||
+        properties['ProductionVariants'].all(_['ServerlessConfig'] != empty)
+      )
+  # No Terraform variants: the hashicorp/aws provider has no resource for SageMaker partner AI apps.
+  - uid: mondoo-aws-security-sagemaker-partner-app-cmk-encryption
+    title: Ensure SageMaker partner AI apps use a customer-managed KMS key
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-2-iv-access-control-encryption-and-decryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-1
+      compliance/nist-csf-2: nist-csf-2-pr-ds-01
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-28
+      compliance/owasp-llm-top-10-2025: owasp-llm-top-10-2025-llm02
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a04
+      compliance/pci-dss-4: pcidss-requirement-3-5-1
+      compliance/soc2-2017: soc2-control-cc6-1-11
+      compliance/vda-isa-5: vda-isa-5-5-1-1
+    variants:
+      - uid: mondoo-aws-security-sagemaker-partner-app-cmk-encryption-aws
+        tags:
+          mondoo.com/filter-title: AWS Account
+          mondoo.com/filter-icon: aws
+      - uid: mondoo-aws-security-sagemaker-partner-app-cmk-encryption-cloudformation
+        tags:
+          mondoo.com/filter-title: CloudFormation
+          mondoo.com/filter-icon: cloudformation
+    docs:
+      desc: |
+        This check verifies that each Amazon SageMaker partner AI app is encrypted under a customer managed AWS KMS key. A partner AI app runs a third-party tool such as an LLM evaluation, observability, or guardrail service inside SageMaker, and stores the prompts, responses, traces, and evaluation datasets sent to it. By default the data is encrypted with an AWS owned key, which the account cannot audit, rotate on its own schedule, or revoke. The key is chosen when the resource is created and cannot be changed afterwards, so moving to a customer managed key means creating a replacement.
+
+        **Why this matters**
+
+        A customer managed key puts access to the data under a key policy you control. Disabling the key or revoking a grant cuts off access to the encrypted data immediately, which is the one containment step available when a role with read access is compromised.
+
+        Every use of a customer managed key is recorded in CloudTrail, so reads of the data can be attributed to a principal and a time rather than inferred.
+
+        Frameworks that require control of encryption keys for regulated data, such as bring-your-own-key requirements for AI workloads, are satisfied only by a key the account owns.
+      audit: |
+        ### Audit via CLI
+
+        1. Read the KMS key of each partner AI app:
+
+        ```bash
+        aws sagemaker describe-partner-app --arn <partner-app-arn> --query 'KmsKeyId' --output text
+        aws kms describe-key --key-id <kms-key-id> --query 'KeyMetadata.KeyManager'
+        ```
+
+        A passing app returns a key whose `KeyManager` is `CUSTOMER`. A failing app returns `None`.
+      remediation:
+        - id: console
+          desc: |
+            To use a customer managed key for a partner AI app using the AWS Console:
+
+            1. Open the [Amazon SageMaker console](https://console.aws.amazon.com/sagemaker/) and choose **Partner AI Apps**.
+            2. Deploy the app again and choose a customer managed KMS key in its encryption settings.
+            3. Move users to the new app and delete the old one.
+        - id: cli
+          desc: |
+            To use a customer managed key for a partner AI app using the AWS CLI, create a replacement with `--kms-key-id`:
+
+            ```bash
+            aws sagemaker create-partner-app \
+              --name <app-name> \
+              --type <app-type> \
+              --execution-role-arn <role-arn> \
+              --tier <tier> \
+              --auth-type IAM \
+              --kms-key-id <cmk-arn>
+            ```
+        - id: cloudformation
+          desc: |
+            To use a customer managed key for a partner AI app in CloudFormation, set `KmsKeyId` on `AWS::SageMaker::PartnerApp`:
+
+            ```yaml
+            Resources:
+              ExamplePartnerApp:
+                Type: AWS::SageMaker::PartnerApp
+                Properties:
+                  Name: example-app
+                  Type: deepchecks-llm-evaluation
+                  ExecutionRoleArn: !GetAtt PartnerAppRole.Arn
+                  Tier: small
+                  AuthType: IAM
+                  KmsKeyId: !GetAtt PartnerAppKey.Arn
+            ```
+        # No Terraform remediation: the hashicorp/aws provider has no resource for SageMaker partner AI apps.
+    refs:
+      - url: https://docs.aws.amazon.com/sagemaker/latest/dg/partner-apps.html
+        title: Amazon SageMaker Partner AI Apps overview
+  - uid: mondoo-aws-security-sagemaker-partner-app-cmk-encryption-aws
+    filters: asset.platform == "aws"
+    mql: |
+      aws.sagemaker.partnerApps.all(kmsKey != empty && kmsKey.keyManager == "CUSTOMER")
+  - uid: mondoo-aws-security-sagemaker-partner-app-cmk-encryption-cloudformation
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::SageMaker::PartnerApp")
+    mql: |
+      cloudformation.template.resources.where(type == "AWS::SageMaker::PartnerApp").all(
+        properties['KmsKeyId'] != empty
+      )
   - uid: mondoo-aws-security-bedrock-flow-cmk-encryption-aws
     filters: asset.platform == "aws"
     mql: |
