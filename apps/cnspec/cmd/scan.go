@@ -235,48 +235,13 @@ var scanCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 
 	// If we had asset errors or the worst-case score exceeds the threshold,
 	// return non-zero. Flush the support bundle first so the user gets it.
-	if code := scanExitCode(res, conf.RiskThreshold); code != 0 {
+	// ScanResult.Failed judges every --report-type the same way.
+	if res.Failed(conf.RiskThreshold) {
 		if support != nil {
 			support.FinalizeAndAnnounce(os.Stderr)
 		}
-		os.Exit(code)
+		os.Exit(1)
 	}
-}
-
-// scanExitCode is the exit status of `cnspec scan`: 1 when any asset failed to
-// scan or the worst score meets the risk threshold, 0 otherwise. The decision
-// is the same for every --report-type. A full result is judged by its report
-// collection, which is the reference behaviour; error and none carry no
-// collection, so they are judged by ScanResult.Ok and ScanResult.WorstScore,
-// which every reporter fills in.
-func scanExitCode(res *scan.ScanResult, riskThreshold int) int {
-	if res == nil {
-		return 0
-	}
-
-	if full := res.GetFull(); full != nil {
-		if len(full.Errors) > 0 {
-			return 1
-		}
-		if (100 - full.GetWorstScore()) >= uint32(riskThreshold) {
-			return 1
-		}
-		return 0
-	}
-
-	if !res.Ok {
-		return 1
-	}
-	// A nil or unrated worst score means no asset was rated, which is the
-	// same as GetWorstScore's result for a collection without rated assets.
-	worst := uint32(100)
-	if s := res.GetWorstScore(); s != nil && s.Rating() != policy.ScoreRating_unrated {
-		worst = s.Value
-	}
-	if (100 - worst) >= uint32(riskThreshold) {
-		return 1
-	}
-	return 0
 }
 
 // isDebugDumpEnabled mirrors the gate the cnspec logger uses to flip into
