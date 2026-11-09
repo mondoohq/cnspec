@@ -160,6 +160,13 @@ PROVIDER_EXTRA_CONFIG = {
 INIT_ATTEMPTS = 3
 INIT_RETRY_DELAY = 3  # seconds, multiplied by the attempt number
 
+# `terraform providers mirror` downloads from registry.terraform.io, which
+# answers HTTP 504 or "could not query provider registry" during an outage.
+# Those last longer than a GitHub hiccup, so the pause between attempts is
+# longer too: 20s, then 40s.
+MIRROR_ATTEMPTS = 3
+MIRROR_RETRY_DELAY = 20  # seconds, multiplied by the attempt number
+
 FAILURES: list[dict] = []
 
 
@@ -838,15 +845,21 @@ def validate_block(
         # schema pass would report that as a fault in the snippet. Such a
         # snippet keeps its tflint coverage and skips the schema check, which
         # is the same deal every provider had before PROVIDER_MAP existed.
-        if terraform_available() and all(p in PROVIDER_MAP for p in providers):
+        #
+        # The same applies to a provider in the map that could not be mirrored,
+        # because the registry was unreachable or its pin matches no release:
+        # build_provider_mirror has already warned that its snippets are not
+        # schema checked, and init against the mirror would fail every one.
+        mirror_dir = mirror_path(plugin_cache)
+        if terraform_available() and all(
+            is_mirrored(p, mirror_dir) for p in providers
+        ):
             tf_dir = tmp_path / "tfvalidate"
             tf_dir.mkdir()
             (tf_dir / "main.tf").write_text(
                 generate_wrapper(neutralize_dangling_refs(sanitized), providers)
             )
-            issues.extend(
-                run_terraform_validate(tf_dir, mirror_path(plugin_cache))
-            )
+            issues.extend(run_terraform_validate(tf_dir, mirror_dir))
 
         return block, not issues, issues
 
@@ -909,6 +922,19 @@ def mirror_path(plugin_cache: Path) -> Path:
     return Path(override) if override else plugin_cache / "tf-mirror"
 
 
+def is_mirrored(provider: str, mirror_dir: Path) -> bool:
+    """Whether `terraform init -plugin-dir` can resolve this provider.
+
+    Checks for the release archive rather than the directory, which a mirror
+    that failed partway through a download can leave behind without one.
+    """
+    if provider not in PROVIDER_MAP:
+        return False
+    source = PROVIDER_MAP[provider][0]
+    provider_dir = mirror_dir / "registry.terraform.io" / source
+    return provider_dir.is_dir() and any(provider_dir.glob("*.zip"))
+
+
 def build_provider_mirror(
     provider_sets: set[frozenset[str]], mirror_dir: Path
 ) -> None:
@@ -936,10 +962,7 @@ def build_provider_mirror(
     # A mirror handed to us by CNSPEC_TF_MIRROR is already complete for every
     # provider in PROVIDER_MAP, so rebuilding it per target, or per agent
     # sharing a checkout, is pure cost.
-    if all(
-        (mirror_dir / "registry.terraform.io" / PROVIDER_MAP[p][0]).exists()
-        for p in wanted
-    ):
+    if all(is_mirrored(p, mirror_dir) for p in wanted):
         return
 
     # One provider at a time. `terraform providers mirror` is all or nothing, so
@@ -948,29 +971,35 @@ def build_provider_mirror(
     # schema pass would silently degrade to nothing.
     for prov in sorted(wanted):
         source, constraint = PROVIDER_MAP[prov]
-        if (mirror_dir / "registry.terraform.io" / source).exists():
+        if is_mirrored(prov, mirror_dir):
             continue
         with tempfile.TemporaryDirectory(prefix="tfmirror_") as tmp:
             tmp_path = Path(tmp)
             (tmp_path / "main.tf").write_text(generate_wrapper("", {prov}))
-            try:
-                result = subprocess.run(
-                    ["terraform", "providers", "mirror", str(mirror_dir)],
-                    cwd=tmp_path, capture_output=True, text=True,
-                    timeout=1800, env=env,
-                )
-            except subprocess.TimeoutExpired:
+            failure = ""
+            for attempt in range(MIRROR_ATTEMPTS):
+                if attempt:
+                    time.sleep(MIRROR_RETRY_DELAY * attempt)
+                try:
+                    result = subprocess.run(
+                        ["terraform", "providers", "mirror", str(mirror_dir)],
+                        cwd=tmp_path, capture_output=True, text=True,
+                        timeout=1800, env=env,
+                    )
+                except subprocess.TimeoutExpired:
+                    # A 30-minute stall is not transient; retrying would only
+                    # push the shard past its job timeout.
+                    failure = "timed out after 1800s"
+                    break
+                if result.returncode == 0:
+                    failure = ""
+                    break
+                failure = first_error_line(result.stderr, result.stdout)
+            if failure:
                 print(
-                    f"Warning: mirroring {source} {constraint} timed out; "
-                    f"its snippets will not be schema checked",
-                    file=sys.stderr,
-                )
-                continue
-            if result.returncode != 0:
-                print(
-                    f"Warning: cannot mirror {source} {constraint}, so its "
-                    f"snippets will not be schema checked: "
-                    + first_error_line(result.stderr, result.stdout),
+                    f"Warning: cannot mirror {source} {constraint} "
+                    f"(after {attempt + 1} attempts), so its snippets will not "
+                    f"be schema checked: {failure}",
                     file=sys.stderr,
                 )
     # Exec every provider binary once, serially, before the workers start. The
