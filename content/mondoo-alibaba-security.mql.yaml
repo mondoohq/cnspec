@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-alibaba-security
     name: Mondoo Alibaba Cloud Security
-    version: 1.2.2
+    version: 1.3.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -15,7 +15,7 @@ policies:
     authors:
       - name: Mondoo, Inc.
         email: hello@mondoo.com
-    summary: Secure Alibaba Cloud identity, storage, compute, database, registry, serverless, key management, and network resources
+    summary: Secure Alibaba Cloud identity, storage, compute, database, registry, serverless, AI, key management, and network resources
     docs:
       desc: |
         The Mondoo Alibaba Cloud Security policy identifies critical misconfigurations that could leave your Alibaba Cloud infrastructure vulnerable to attackers. This policy focuses on security-relevant controls and helps organizations harden against unauthorized access, data exposure, weak cryptography, credential misuse, and missing audit logging.
@@ -30,6 +30,7 @@ policies:
         - Container Registry (ACR) repositories and image scanning
         - Elasticsearch clusters
         - Function Compute functions
+        - Platform for AI (PAI) notebooks, inference services, and gateways, Model Studio API keys, and PolarDB knowledge spaces
         - Key Management Service (KMS) keys and secrets
         - ActionTrail audit logging
         - VPC flow logs, network ACLs, and IPsec VPN connections
@@ -92,6 +93,7 @@ policies:
           - uid: mondoo-alibaba-security-rds-instance-deletion-protection
           - uid: mondoo-alibaba-security-polardb-cluster-tde-enabled
           - uid: mondoo-alibaba-security-polardb-cluster-restrict-access-whitelist
+          - uid: mondoo-alibaba-security-polardb-knowledge-space-acl-enforced
       - title: ApsaraDB (Redis and MongoDB)
         checks:
           - uid: mondoo-alibaba-security-redis-instance-auth-enabled
@@ -104,6 +106,16 @@ policies:
         checks:
           - uid: mondoo-alibaba-security-fc-function-no-internet-access
           - uid: mondoo-alibaba-security-fc-function-no-credentials-in-env
+      - title: Platform for AI (PAI) and Model Studio
+        checks:
+          - uid: mondoo-alibaba-security-pai-dsw-instance-no-internet-forwarding
+          - uid: mondoo-alibaba-security-pai-dsw-instance-private-accessibility
+          - uid: mondoo-alibaba-security-pai-dsw-instance-no-credentials-in-env
+          - uid: mondoo-alibaba-security-pai-eas-service-dedicated-gateway
+          - uid: mondoo-alibaba-security-pai-eas-gateway-internet-acl-restricted
+          - uid: mondoo-alibaba-security-pai-eas-gateway-https-redirect
+          - uid: mondoo-alibaba-security-modelstudio-api-key-ip-allowlist
+          - uid: mondoo-alibaba-security-modelstudio-api-key-model-scope
       - title: Key Management Service (KMS)
         checks:
           - uid: mondoo-alibaba-security-kms-key-rotation-enabled
@@ -8137,3 +8149,740 @@ queries:
           _["source"] == "0.0.0.0/0" &&
           _["destination"] == "0.0.0.0/0"
         )
+
+  # ===========================================================================
+  # Platform for AI (PAI), Model Studio, and PolarDB knowledge spaces
+  # ===========================================================================
+  # No Terraform variants: the alicloud provider has no resource for PAI-DSW instances or their port forwards.
+  - uid: mondoo-alibaba-security-pai-dsw-instance-no-internet-forwarding
+    title: Ensure PAI-DSW notebooks are not exposed to the internet by port forwards
+    impact: 80
+    docs:
+      desc: |
+        This check verifies that no Data Science Workshop (DSW) notebook instance in Platform for AI (PAI) has an enabled port forward that reaches the internet.
+
+        A DSW instance attached to a VPC can publish SSH or a custom service such as Jupyter, TensorBoard, or a model demo through a port forward. A forward counts as public when its access type is `PUBLIC`, when it is bound to an elastic IP address through a NAT gateway, or when PAI reports a public endpoint for it. Forwards are configured on the instance details page under **Access Configurations**. An instance whose forwards are all private, or that has no forwards, passes.
+
+        **Why this matters**
+
+        A notebook is an interactive shell. Whoever reaches it can run code with everything the instance holds: the RAM role credentials PAI injects, the datasets and model weights mounted into it, and the network position inside the VPC. A public SSH or Jupyter port puts that shell one weak password, leaked key, or unpatched service away from an attacker.
+
+        Notebook services are rarely hardened like production endpoints. They are started for a quick experiment, protected by a default token or a password set once, and left running long after the experiment ends, which makes them a common foothold in machine learning environments.
+
+        Reach notebooks through the PAI console, a VPN, or a bastion host in the VPC instead. Those paths keep the instance off the internet while still giving data scientists interactive access.
+      audit: |
+        The scan lists DSW instances with the `paidsw:ListInstances` action in every region that offers PAI. A region the scanning credential cannot list is skipped rather than failed, so grant that action, or the `ReadOnlyAccess` system policy, for a complete result.
+
+        ### Audit via Console
+
+        1. Sign in to the [PAI console](https://pai.console.aliyun.com/) and open **Interactive Modeling (DSW)** in each workspace.
+        2. Open each instance and review the **Access Configurations** section on its details page.
+
+        A passing instance has no SSH or custom service row with public network access enabled. A failing instance has one.
+
+        ### Audit via CLI
+
+        1. Read each instance's port forwards:
+
+        ```bash
+        aliyun pai-dsw GetInstance --InstanceId <instance-id> --region <region-id>
+        ```
+
+        A passing instance returns no enabled entry in `UserVpc.ForwardInfos` with `PUBLIC` in `AccessType`, an `EipAllocationId`, or a public `ConnectInfo.Internet.Endpoint`. A failing instance returns one.
+      remediation:
+        - id: console
+          desc: |
+            To remove public access from a DSW instance in the PAI console:
+
+            1. Sign in to the [PAI console](https://pai.console.aliyun.com/) and open **Interactive Modeling (DSW)** in the instance's workspace.
+            2. Open the instance and find the **Access Configurations** section on its details page.
+            3. For each SSH or **Custom Service** row with public network access, select **Modify Configuration** and turn public network access off, or delete the service.
+            4. Connect through the PAI console, a VPN, or a bastion host in the VPC instead.
+        - id: cli
+          desc: |
+            To remove every port forward from a DSW instance with the `aliyun` CLI:
+
+            ```bash
+            aliyun pai-dsw UpdateInstance --InstanceId <instance-id> --region <region-id> \
+              --body '{"DisassociateForwardInfos":true}'
+            ```
+
+            `DisassociateForwardInfos` removes all forwards on the instance, private ones included. To keep a private forward, edit the instance in the console instead. The finding clears once no enabled forward reaches the internet.
+        # No Terraform remediation: the alicloud provider has no resource for PAI-DSW instances.
+    variants:
+      - uid: mondoo-alibaba-security-pai-dsw-instance-no-internet-forwarding-alicloud
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: false
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-ai-100-1: false
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-1
+      compliance/soc2-2017: soc2-control-cc6-6-4
+      compliance/vda-isa-5: false
+  - uid: mondoo-alibaba-security-pai-dsw-instance-no-internet-forwarding-alicloud
+    filters: asset.platform == "alicloud-account"
+    mql: |
+      alicloud.pai.dswInstances.all(hasInternetForwarding == false)
+
+  # No Terraform variants: the alicloud provider has no resource for PAI-DSW instances.
+  - uid: mondoo-alibaba-security-pai-dsw-instance-private-accessibility
+    title: Ensure PAI-DSW notebooks are private to their owner
+    impact: 60
+    docs:
+      desc: |
+        This check verifies that every Data Science Workshop (DSW) notebook instance in Platform for AI (PAI) has its accessibility set to `PRIVATE`.
+
+        Accessibility decides who in a workspace can open an instance. `PRIVATE` limits it to the owner and the workspace administrators. `PUBLIC` opens it to every member of the workspace. The setting is chosen when the instance is created and can be changed afterwards from the instance list or through `aliyun pai-dsw UpdateInstance`.
+
+        **Why this matters**
+
+        Opening a notebook means running code as that notebook. Every workspace member who can open a `PUBLIC` instance acts with the RAM role credentials PAI injects into it and reads every dataset and model mounted in it, regardless of whether their own role was ever granted that access. A shared notebook therefore turns the owner's permissions into the whole workspace's permissions.
+
+        Shared notebooks also blur accountability. Actions taken inside the instance are attributed to its credentials, not to the member who ran them, which makes later investigation of a data leak or a tampered model harder.
+
+        Share code and results through the workspace's code repositories and datasets instead, and give each person their own instance.
+      audit: |
+        The scan lists DSW instances with the `paidsw:ListInstances` action in every region that offers PAI. A region the scanning credential cannot list is skipped rather than failed, so grant that action, or the `ReadOnlyAccess` system policy, for a complete result.
+
+        ### Audit via Console
+
+        1. Sign in to the [PAI console](https://pai.console.aliyun.com/) and open **Interactive Modeling (DSW)** in each workspace.
+        2. Review the visibility shown for each instance.
+
+        A passing instance is visible only to its owner. A failing instance is visible to all workspace members.
+
+        ### Audit via CLI
+
+        1. List instances that every workspace member can open:
+
+        ```bash
+        aliyun pai-dsw ListInstances --region <region-id> --Accessibility PUBLIC
+        ```
+
+        A passing region returns no instances. A failing region returns at least one.
+      remediation:
+        - id: console
+          desc: |
+            To make a DSW instance private in the PAI console:
+
+            1. Sign in to the [PAI console](https://pai.console.aliyun.com/) and open **Interactive Modeling (DSW)** in the instance's workspace.
+            2. Edit the instance and set its visibility to the owner only.
+            3. Give other members who need a notebook their own instance.
+        - id: cli
+          desc: |
+            To make a DSW instance private with the `aliyun` CLI:
+
+            ```bash
+            aliyun pai-dsw UpdateInstance --InstanceId <instance-id> --region <region-id> \
+              --body '{"Accessibility":"PRIVATE"}'
+            ```
+
+            The finding clears once the instance reports `PRIVATE` accessibility.
+        # No Terraform remediation: the alicloud provider has no resource for PAI-DSW instances.
+    variants:
+      - uid: mondoo-alibaba-security-pai-dsw-instance-private-accessibility-alicloud
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-16
+      compliance/dora: false
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-3
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-ai-100-1: false
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-2
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-7
+      compliance/soc2-2017: soc2-control-cc6-1-7
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+  - uid: mondoo-alibaba-security-pai-dsw-instance-private-accessibility-alicloud
+    filters: asset.platform == "alicloud-account"
+    mql: |
+      alicloud.pai.dswInstances.all(accessibility == "PRIVATE")
+
+  # No Terraform variants: the alicloud provider has no resource for PAI-DSW instances.
+  - uid: mondoo-alibaba-security-pai-dsw-instance-no-credentials-in-env
+    title: Ensure PAI-DSW notebooks hold no credentials in environment variables
+    impact: 60
+    docs:
+      desc: |
+        This check verifies that no Data Science Workshop (DSW) notebook instance in Platform for AI (PAI) sets an environment variable whose name marks it as a credential.
+
+        PAI returns only the names of an instance's environment variables, never their values, so the check works from names. It flags a name when one of its underscore-separated words is `TOKEN`, `SECRET`, `PASSWORD`, `PASSWD`, `API_KEY`, `APIKEY`, `ACCESS_KEY`, or `PRIVATE_KEY`, in any case. That catches `HF_TOKEN`, `OPENAI_API_KEY`, `DASHSCOPE_API_KEY`, and `ALIBABA_CLOUD_ACCESS_KEY_ID`, while leaving settings such as `MAX_TOKENS` and `TOKENIZERS_PARALLELISM` alone. Environment variables are set when the instance is created or updated.
+
+        **Why this matters**
+
+        Environment variables are stored with the instance configuration in plain text. Anyone who can describe the instance, open it, or read a process listing inside it can read the value, and the value is copied into every image saved from the instance.
+
+        Model provider keys are a frequent target. A leaked inference key lets an outsider run requests on the account's budget and reach any private or fine-tuned model the key covers.
+
+        Let the instance obtain short-lived credentials from a RAM role through its credential configuration, and keep long-lived secrets in KMS Secrets Manager, read at runtime.
+      audit: |
+        The scan lists DSW instances with the `paidsw:ListInstances` action in every region that offers PAI. A region the scanning credential cannot list is skipped rather than failed, so grant that action, or the `ReadOnlyAccess` system policy, for a complete result.
+
+        ### Audit via Console
+
+        1. Sign in to the [PAI console](https://pai.console.aliyun.com/) and open **Interactive Modeling (DSW)** in each workspace.
+        2. Open each instance and review its environment variables.
+
+        A passing instance sets no variable named for a token, secret, password, API key, access key, or private key. A failing instance sets one.
+
+        ### Audit via CLI
+
+        1. Read each instance's environment variable names:
+
+        ```bash
+        aliyun pai-dsw GetInstance --InstanceId <instance-id> --region <region-id>
+        ```
+
+        A passing instance returns no `EnvironmentVariables` name matching a credential. A failing instance returns one.
+      remediation:
+        - id: console
+          desc: |
+            To move a credential out of a DSW instance's environment in the PAI console:
+
+            1. Store the value in [KMS Secrets Manager](https://kms.console.aliyun.com/), or grant the instance a RAM role that provides the access directly.
+            2. Sign in to the [PAI console](https://pai.console.aliyun.com/), open **Interactive Modeling (DSW)**, and edit the instance.
+            3. Remove the credential from the environment variables and have the code read it from Secrets Manager or the RAM role at runtime.
+            4. Rotate the exposed credential, because it has been readable for as long as it was configured.
+        - id: cli
+          desc: |
+            To replace a DSW instance's environment variables with the `aliyun` CLI:
+
+            ```bash
+            aliyun pai-dsw UpdateInstance --InstanceId <instance-id> --region <region-id> \
+              --body '{"EnvironmentVariables":{"<other-variable>":"<other-value>"}}'
+            ```
+
+            `<other-variable>` and `<other-value>` stand for every variable the instance still needs. Leave out the credential. To remove every user-defined variable instead, send `{"DisassociateEnvironmentVariables":true}`. Rotate the exposed credential afterwards.
+        # No Terraform remediation: the alicloud provider has no resource for PAI-DSW instances.
+    variants:
+      - uid: mondoo-alibaba-security-pai-dsw-instance-no-credentials-in-env-alicloud
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-15
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-d-person-or-entity-authentication
+      compliance/iso-27001-2022: iso-27001-2022-a-5-17
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-ai-100-1: false
+      compliance/nist-csf-1: nist-csf-1-pr-ds-5
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-171: false
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a07
+      compliance/pci-dss-4: pcidss-requirement-8-3-2
+      compliance/soc2-2017: soc2-control-cc6-1-9
+      compliance/vda-isa-5: vda-isa-5-4-1-3
+  - uid: mondoo-alibaba-security-pai-dsw-instance-no-credentials-in-env-alicloud
+    filters: asset.platform == "alicloud-account"
+    mql: |
+      alicloud.pai.dswInstances.all(
+        environmentVariableNames.none(_ == /(^|_)(token|secret|password|passwd|api_?key|access_?key|private_?key)(_|$)/i)
+      )
+
+  # No Terraform variants: alicloud_pai_service carries the gateway binding inside the service_config JSON string, which a variant cannot read reliably.
+  - uid: mondoo-alibaba-security-pai-eas-service-dedicated-gateway
+    title: Ensure PAI-EAS services are not public through the shared gateway
+    impact: 70
+    docs:
+      desc: |
+        This check verifies that every Elastic Algorithm Service (EAS) online inference service in Platform for AI (PAI) that has a public endpoint is bound to a dedicated gateway.
+
+        A service deployed on the shared gateway receives an internet endpoint by default, and the shared gateway offers no source address restriction. A dedicated gateway publishes the service only when its internet access is switched on, and then only to the CIDR blocks in its internet whitelist. A service passes when it has no public endpoint, or when it is bound to a dedicated gateway, whose exposure is judged by the dedicated gateway checks in this policy.
+
+        **Why this matters**
+
+        On the shared gateway the service token is the only thing between the internet and the model. Tokens end up in notebooks, client code, and chat messages, and anyone holding one can call the model from anywhere.
+
+        An internet-reachable model endpoint invites more than token reuse. Attackers probe it for prompt injection, extract model behavior through repeated queries, and run up inference cost on the account. Alibaba Cloud recommends the shared gateway for testing and a dedicated gateway for production.
+      audit: |
+        The scan lists services with the `eas:ListServices` action in every region that offers PAI and reads each one with `eas:DescribeService`. A region the scanning credential cannot list is skipped rather than failed, so grant those actions, or the `ReadOnlyAccess` system policy, for a complete result.
+
+        ### Audit via Console
+
+        1. Sign in to the [PAI console](https://pai.console.aliyun.com/) and open **Elastic Algorithm Service (EAS)** in each workspace.
+        2. Open each service's invocation information.
+
+        A passing service has no public endpoint on the shared gateway. A failing service lists a public endpoint under **Shared Gateway**.
+
+        ### Audit via CLI
+
+        1. Read each service's endpoints and gateway:
+
+        ```bash
+        aliyun eas DescribeService --ClusterId <region-id> --ServiceName <service-name>
+        ```
+
+        A passing service returns an empty `InternetEndpoint`, or a `Gateway` naming a dedicated gateway. A failing service returns an `InternetEndpoint` and an empty `Gateway`.
+      remediation:
+        - id: console
+          desc: |
+            To move an EAS service to a dedicated gateway in the PAI console:
+
+            1. Sign in to the [PAI console](https://pai.console.aliyun.com/) and open **Elastic Algorithm Service (EAS)**.
+            2. Create a dedicated gateway if the region has none, and add only the client CIDR blocks that need to call the service to its internet whitelist.
+            3. Update the service and select the dedicated gateway in its network settings.
+            4. Point clients at the dedicated gateway endpoint.
+        - id: cli
+          desc: |
+            To bind an EAS service to a dedicated gateway with the `aliyun` CLI:
+
+            ```bash
+            aliyun eas UpdateService --ClusterId <region-id> --ServiceName <service-name> \
+              --body '{"networking":{"gateway":"<gateway-id>"}}'
+            ```
+
+            `<gateway-id>` is the dedicated gateway, in the form `gw-xxxxxxxx`. The update merges this setting into the existing service configuration. Point clients at the dedicated gateway endpoint afterwards.
+        # No Terraform remediation: alicloud_pai_service takes the whole service definition as a JSON string, and the gateway setting depends on the rest of that definition.
+    variants:
+      - uid: mondoo-alibaba-security-pai-eas-service-dedicated-gateway-alicloud
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: false
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-ai-100-1: false
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/owasp-llm-top-10-2025: owasp-llm-top-10-2025-llm10
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-1
+      compliance/soc2-2017: soc2-control-cc6-6-4
+      compliance/vda-isa-5: false
+  - uid: mondoo-alibaba-security-pai-eas-service-dedicated-gateway-alicloud
+    filters: asset.platform == "alicloud-account"
+    mql: |
+      alicloud.pai.easServices.all(isPublic == false || gateway != empty)
+
+  # No Terraform variants: the alicloud provider has no resource for PAI-EAS dedicated gateways.
+  - uid: mondoo-alibaba-security-pai-eas-gateway-internet-acl-restricted
+    title: Ensure PAI-EAS dedicated gateways restrict internet source addresses
+    impact: 75
+    docs:
+      desc: |
+        This check verifies that no Elastic Algorithm Service (EAS) dedicated gateway in Platform for AI (PAI) with internet access on has `0.0.0.0/0` or `::/0` in its internet whitelist.
+
+        A dedicated gateway fronts every inference service bound to it. Internet access is off by default, and once it is switched on the gateway accepts public traffic only from the CIDR blocks in its internet whitelist. An empty whitelist admits no public address, and Alibaba Cloud documents adding `0.0.0.0/0` as the way to allow every address. A gateway passes when internet access is off, or when its whitelist names no catch-all block.
+
+        **Why this matters**
+
+        A world-open gateway exposes every model behind it to anyone holding a service token, and tokens are routinely copied into notebooks, scripts, and client code. Restricting the gateway to known client ranges means a leaked token is useless from anywhere else.
+
+        Open inference endpoints are also probed for prompt injection, model extraction through repeated queries, and cost abuse. Each of those needs the attacker to reach the endpoint in the first place, which the whitelist prevents.
+      audit: |
+        The scan lists dedicated gateways with the `eas:ListGateway` action in every region that offers PAI and reads each internet whitelist with `eas:ListAclPolicy`. A region the scanning credential cannot list is skipped rather than failed, so grant those actions, or the `ReadOnlyAccess` system policy, for a complete result.
+
+        ### Audit via Console
+
+        1. Sign in to the [PAI console](https://pai.console.aliyun.com/) and open the EAS dedicated gateways.
+        2. Open each gateway and review **Gateway Access Control** on the **Internet** tab.
+
+        A passing gateway has internet access off, or a whitelist of specific client ranges. A failing gateway has internet access on and `0.0.0.0/0` in its whitelist.
+
+        ### Audit via CLI
+
+        1. Read each gateway's whitelists:
+
+        ```bash
+        aliyun eas ListAclPolicy --ClusterId <region-id> --GatewayId <gateway-id>
+        ```
+
+        A passing gateway returns no `0.0.0.0/0` or `::/0` entry in `InternetAclPolicyList`. A failing gateway returns one.
+      remediation:
+        - id: console
+          desc: |
+            To restrict a dedicated gateway's internet access in the PAI console:
+
+            1. Sign in to the [PAI console](https://pai.console.aliyun.com/) and open the EAS dedicated gateways.
+            2. Open the gateway and select the **Internet** tab under **Gateway Access Control**.
+            3. Add the CIDR blocks of the clients that call the services, then remove `0.0.0.0/0` and `::/0` from the whitelist.
+            4. If no client calls the services over the internet, turn the **Access Portal** toggle off instead.
+        - id: cli
+          desc: |
+            To turn off a dedicated gateway's internet access with the `aliyun` CLI:
+
+            ```bash
+            aliyun eas UpdateGateway --ClusterId <region-id> --GatewayId <gateway-id> \
+              --body '{"EnableInternet":false}'
+            ```
+
+            Clients in a VPC keep reaching the services through the gateway's VPC endpoint. To keep internet access for specific clients instead, edit the internet whitelist in the console as described above.
+        # No Terraform remediation: the alicloud provider has no resource for PAI-EAS dedicated gateways.
+    variants:
+      - uid: mondoo-alibaba-security-pai-eas-gateway-internet-acl-restricted-alicloud
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: false
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-ai-100-1: false
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/owasp-llm-top-10-2025: owasp-llm-top-10-2025-llm10
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-1
+      compliance/soc2-2017: soc2-control-cc6-6-4
+      compliance/vda-isa-5: false
+  - uid: mondoo-alibaba-security-pai-eas-gateway-internet-acl-restricted-alicloud
+    filters: asset.platform == "alicloud-account"
+    mql: |
+      # An empty internet whitelist admits no public address, so only a catch-all
+      # entry fails. internetEnabled is null when the API omits it, which falls
+      # through to the whitelist test rather than passing.
+      alicloud.pai.easGateways.all(
+        internetEnabled == false ||
+        internetAcl.none(_["entry"] == "0.0.0.0/0" || _["entry"] == "::/0")
+      )
+
+  # No Terraform variants: the alicloud provider has no resource for PAI-EAS dedicated gateways.
+  - uid: mondoo-alibaba-security-pai-eas-gateway-https-redirect
+    title: Ensure PAI-EAS dedicated gateways redirect HTTP to HTTPS
+    impact: 65
+    docs:
+      desc: |
+        This check verifies that every Elastic Algorithm Service (EAS) dedicated gateway in Platform for AI (PAI) that accepts internet traffic redirects HTTP requests to HTTPS.
+
+        HTTP-to-HTTPS redirection is a gateway setting that is off by default. With it off, the gateway answers plain HTTP requests on its public domain. The check passes a gateway with internet access off, because no public client reaches it, and otherwise requires redirection to be on.
+
+        **Why this matters**
+
+        Every inference request carries the service token in its `Authorization` header and the prompt in its body, and every response carries the model's output. Over plain HTTP all three travel in the clear across every network between the client and Alibaba Cloud, where they can be read or altered.
+
+        A captured token grants the same access as a leaked one, and prompts often contain the customer data, documents, or internal context the model is meant to work on. Redirecting to HTTPS means a client that starts with an `http://` URL is moved to an encrypted connection.
+      audit: |
+        The scan lists dedicated gateways with the `eas:ListGateway` action in every region that offers PAI. A region the scanning credential cannot list is skipped rather than failed, so grant that action, or the `ReadOnlyAccess` system policy, for a complete result.
+
+        ### Audit via Console
+
+        1. Sign in to the [PAI console](https://pai.console.aliyun.com/) and open the EAS dedicated gateways.
+        2. Open each gateway and review its HTTP-to-HTTPS redirection setting.
+
+        A passing gateway has internet access off or redirection on. A failing gateway has internet access on and redirection off.
+
+        ### Audit via CLI
+
+        1. List the dedicated gateways in a region:
+
+        ```bash
+        aliyun eas ListGateway --region <region-id>
+        ```
+
+        A passing gateway returns `InternetEnabled` as `false`, or `SSLRedirectionEnabled` as `true`. A failing gateway returns `InternetEnabled` as `true` and `SSLRedirectionEnabled` as `false`.
+      remediation:
+        - id: console
+          desc: |
+            To turn on HTTP-to-HTTPS redirection in the PAI console:
+
+            1. Sign in to the [PAI console](https://pai.console.aliyun.com/) and open the EAS dedicated gateways.
+            2. Open the gateway and turn on HTTP-to-HTTPS redirection.
+            3. Update clients that use `http://` URLs to `https://`, so their requests are not redirected on every call.
+        - id: cli
+          desc: |
+            To turn on HTTP-to-HTTPS redirection with the `aliyun` CLI:
+
+            ```bash
+            aliyun eas UpdateGateway --ClusterId <region-id> --GatewayId <gateway-id> \
+              --body '{"EnableSSLRedirection":true}'
+            ```
+
+            The finding clears once the gateway reports `SSLRedirectionEnabled` as `true`.
+        # No Terraform remediation: the alicloud provider has no resource for PAI-EAS dedicated gateways.
+    variants:
+      - uid: mondoo-alibaba-security-pai-eas-gateway-https-redirect-alicloud
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
+      compliance/dora: false
+      compliance/hipaa: hipaa-security-ss164-312-e-2-ii-transmission-security-encryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-ai-100-1: false
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a04
+      compliance/pci-dss-4: pcidss-requirement-4
+      compliance/soc2-2017: soc2-control-cc6-7-1
+      compliance/vda-isa-5: vda-isa-5-5-1-1
+  - uid: mondoo-alibaba-security-pai-eas-gateway-https-redirect-alicloud
+    filters: asset.platform == "alicloud-account"
+    mql: |
+      alicloud.pai.easGateways.all(internetEnabled == false || sslRedirectionEnabled == true)
+
+  # No Terraform variants: the alicloud provider has no resource for Model Studio API keys.
+  - uid: mondoo-alibaba-security-modelstudio-api-key-ip-allowlist
+    title: Ensure Model Studio API keys restrict the source addresses they accept
+    impact: 75
+    docs:
+      desc: |
+        This check verifies that every enabled Model Studio API key restricts the IP addresses it is accepted from.
+
+        A Model Studio key with the **All** permission type, or a **Custom** key with no IP whitelist, is accepted from any address. When a **Custom** key is saved without a whitelist, Model Studio stores `0.0.0.0/0` and `::/0`, which also allow every address. The check fails a key whose whitelist is empty or contains either catch-all block, and passes a key that names specific addresses or CIDR blocks. A key that the API reports as disabled is skipped.
+
+        **Why this matters**
+
+        A Model Studio key is a bearer credential. It is pasted into applications, notebooks, and configuration files, and a key copied out of any of them works for whoever holds it. With no source restriction, a leaked key can call every model it covers from anywhere, on the account's budget.
+
+        An IP whitelist ties the key to the networks that are meant to use it, such as the egress addresses of the application servers. A key leaked outside those networks is then rejected, which turns a credential leak into a contained event instead of an open-ended one.
+      audit: |
+        The scan lists API keys with the `modelstudio:ListApiKeys` action in every region that offers Model Studio. A region the scanning credential cannot list is skipped rather than failed, so grant that action, or the `ReadOnlyAccess` system policy, for a complete result.
+
+        ### Audit via Console
+
+        1. Sign in to the [Model Studio console](https://bailian.console.aliyun.com/) and open the **API Key** page.
+        2. Review the permissions of each enabled key.
+
+        A passing key has **Custom** permissions with an IP whitelist of specific addresses. A failing key has **All** permissions, or a whitelist that is empty or contains `0.0.0.0/0` or `::/0`.
+
+        ### Audit via CLI
+
+        1. List the API keys in a region:
+
+        ```bash
+        aliyun modelstudio ListApiKeys --region <region-id>
+        ```
+
+        A passing key returns `auth.accessIps` listing specific addresses. A failing key returns no `accessIps`, or `0.0.0.0/0` or `::/0` among them.
+      remediation:
+        - id: console
+          desc: |
+            To restrict where a Model Studio API key is accepted in the console:
+
+            1. Sign in to the [Model Studio console](https://bailian.console.aliyun.com/) and open the **API Key** page.
+            2. Edit the key's permissions and select **Custom**.
+            3. Add the egress addresses or CIDR blocks of the systems that use the key to the IP whitelist, without `0.0.0.0/0` or `::/0`.
+            4. Keep the model access scope the key needs, then save.
+        - id: cli
+          desc: |
+            To restrict where a Model Studio API key is accepted with the `aliyun` CLI:
+
+            ```bash
+            aliyun modelstudio UpdateApiKey --apiKeyId <api-key-id> --region <region-id> \
+              --auth '{"type":"Custom","accessIps":["<client-cidr>"],"modelAccessScope":{"allowAllModels":false,"accessibleModels":["<model-name>"]}}'
+            ```
+
+            Replace the values as follows:
+
+            - `<client-cidr>` is an egress address or CIDR block of a system that uses the key. List every one it needs.
+            - `<model-name>` is a model the key calls. List every one it needs.
+
+            **The `auth` object replaces the key's whole permission setting.** Model Studio applies it as a unit, so send the IP whitelist and the model scope together, or the part left out is reset.
+        # No Terraform remediation: the alicloud provider has no resource for Model Studio API keys.
+    variants:
+      - uid: mondoo-alibaba-security-modelstudio-api-key-ip-allowlist-alicloud
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: false
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-ai-100-1: false
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/owasp-llm-top-10-2025: owasp-llm-top-10-2025-llm10
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-1
+      compliance/soc2-2017: soc2-control-cc6-6-4
+      compliance/vda-isa-5: false
+  - uid: mondoo-alibaba-security-modelstudio-api-key-ip-allowlist-alicloud
+    filters: asset.platform == "alicloud-account"
+    mql: |
+      # A Custom key saved without a whitelist is stored as 0.0.0.0/0 and ::/0,
+      # so a non-empty list is not enough on its own. enabled is null when the
+      # API omits the disabled flag; != false keeps such a key in scope.
+      alicloud.modelStudio.apiKeys.where(enabled != false).all(
+        accessIps != empty &&
+        accessIps.none(_ == "0.0.0.0/0" || _ == "::/0")
+      )
+
+  # No Terraform variants: the alicloud provider has no resource for Model Studio API keys.
+  - uid: mondoo-alibaba-security-modelstudio-api-key-model-scope
+    title: Ensure Model Studio API keys are limited to the models they need
+    impact: 60
+    docs:
+      desc: |
+        This check verifies that every enabled Model Studio API key is limited to a list of models rather than allowed to call every model the workspace has inference permissions for.
+
+        A key with the **All** permission type, or a **Custom** key with its model access scope switched off, can call every model the workspace is entitled to, including models added later. A **Custom** key with a model access scope calls only the models it names. The check fails a key whose scope allows all models or reports no scope, and skips keys the API reports as disabled.
+
+        **Why this matters**
+
+        Each key is usually created for one application that calls one or two models. Leaving it open to every model means a leaked key reaches the workspace's most expensive models and any private or fine-tuned model it holds, which widens both the cost exposure and the data exposure of the leak.
+
+        Scoping also makes misuse visible. A request for a model outside the list is rejected with an access-denied error, so an application or person reaching beyond what the key was issued for is stopped rather than quietly served.
+      audit: |
+        The scan lists API keys with the `modelstudio:ListApiKeys` action in every region that offers Model Studio. A region the scanning credential cannot list is skipped rather than failed, so grant that action, or the `ReadOnlyAccess` system policy, for a complete result.
+
+        ### Audit via Console
+
+        1. Sign in to the [Model Studio console](https://bailian.console.aliyun.com/) and open the **API Key** page.
+        2. Review the permissions of each enabled key.
+
+        A passing key has **Custom** permissions with the model access scope on and a list of models. A failing key has **All** permissions, or a scope that allows all models.
+
+        ### Audit via CLI
+
+        1. List the API keys in a region:
+
+        ```bash
+        aliyun modelstudio ListApiKeys --region <region-id>
+        ```
+
+        A passing key returns `auth.modelAccessScope.allowAllModels` as `false`. A failing key returns `true`, or no `modelAccessScope`.
+      remediation:
+        - id: console
+          desc: |
+            To limit a Model Studio API key to specific models in the console:
+
+            1. Sign in to the [Model Studio console](https://bailian.console.aliyun.com/) and open the **API Key** page.
+            2. Edit the key's permissions and select **Custom**.
+            3. Turn on **Model access scope** and select only the models the application calls.
+            4. Keep the IP whitelist the key needs, then save.
+        - id: cli
+          desc: |
+            To limit a Model Studio API key to specific models with the `aliyun` CLI:
+
+            ```bash
+            aliyun modelstudio UpdateApiKey --apiKeyId <api-key-id> --region <region-id> \
+              --auth '{"type":"Custom","accessIps":["<client-cidr>"],"modelAccessScope":{"allowAllModels":false,"accessibleModels":["<model-name>"]}}'
+            ```
+
+            Replace the values as follows:
+
+            - `<model-name>` is a model the key calls. List every one it needs.
+            - `<client-cidr>` is an egress address or CIDR block of a system that uses the key.
+
+            **The `auth` object replaces the key's whole permission setting.** Send the model scope and the IP whitelist together, or the part left out is reset.
+        # No Terraform remediation: the alicloud provider has no resource for Model Studio API keys.
+    variants:
+      - uid: mondoo-alibaba-security-modelstudio-api-key-model-scope-alicloud
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
+      compliance/dora: false
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-5-15
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-ai-100-1: false
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
+      compliance/owasp-llm-top-10-2025: owasp-llm-top-10-2025-llm10
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-7
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+  - uid: mondoo-alibaba-security-modelstudio-api-key-model-scope-alicloud
+    filters: asset.platform == "alicloud-account"
+    mql: |
+      # allowAllModels is null when the key has no model access scope, which is
+      # what an All-permission key reports, so the comparison fails it.
+      alicloud.modelStudio.apiKeys.where(enabled != false).all(allowAllModels == false)
+
+  # No Terraform variants: the alicloud provider has no resource for PolarDB knowledge spaces.
+  - uid: mondoo-alibaba-security-polardb-knowledge-space-acl-enforced
+    title: Ensure PolarDB knowledge spaces enforce per-document access control
+    impact: 70
+    docs:
+      desc: |
+        This check verifies that every PolarDB knowledge space enforces access control on retrieval.
+
+        A knowledge space is the vector store a PolarDB retrieval-augmented generation (RAG) workload answers from. Its access control mode is either `ENFORCED`, which limits each caller to the documents they are permitted to read, or `DISABLED`, which lets every caller that can query the space retrieve from the whole corpus. The mode is chosen when the space is created, `DISABLED` is the default, and it cannot be changed on an existing space. The scan reaches spaces through the knowledge bases they contain, so a space that holds no knowledge base is not evaluated.
+
+        **Why this matters**
+
+        A RAG corpus is usually assembled from many sources with different audiences: HR documents, contracts, support tickets, engineering notes. Without per-document access control, the assistant built on it answers every user from all of them, so a question from an employee or an external user can surface content they were never allowed to open.
+
+        The disclosure is hard to notice. Nothing is downloaded directly; the content appears inside a generated answer, and repeated or crafted questions can extract much of the corpus over time.
+      audit: |
+        The scan lists knowledge bases with the PolarDB `DescribeKnowledgeBases` action in every enabled region and reads each space with `DescribeKnowledgeSpaceAttribute`. A space the scanning credential cannot read is skipped rather than failed, so grant those actions, or the `ReadOnlyAccess` system policy, for a complete result.
+
+        ### Audit via Console
+
+        1. Sign in to the [PolarDB console](https://polardb.console.aliyun.com/) and open the knowledge spaces in each region.
+        2. Review the access control setting of each space.
+
+        A passing space enforces access control. A failing space has it disabled.
+
+        ### Audit via CLI
+
+        1. Read each knowledge space:
+
+        ```bash
+        aliyun polardb DescribeKnowledgeSpaceAttribute --RegionId <region-id> --KnowledgeSpaceId <knowledge-space-id>
+        ```
+
+        A passing space returns an access control mode of `ENFORCED`. A failing space returns `DISABLED`.
+      remediation:
+        - id: console
+          desc: |
+            Access control is fixed when a knowledge space is created, so a space with it disabled has to be replaced:
+
+            1. Sign in to the [PolarDB console](https://polardb.console.aliyun.com/) and create a knowledge space with ACL enforcement turned on.
+            2. Recreate the knowledge bases in the new space from the same source documents, with the permissions each document should carry.
+            3. Point the applications at the new space, confirm they answer only from permitted documents, then delete the old space.
+        - id: cli
+          desc: |
+            To create a replacement knowledge space that enforces access control with the `aliyun` CLI:
+
+            ```bash
+            aliyun polardb CreateKnowledgeSpace --RegionId <region-id> --ZoneId <zone-id> \
+              --Name <space-name> --EmbeddingModel <embedding-model> --OSSBucket <bucket-name> \
+              --EnforceAcl true
+            ```
+
+            Replace the values as follows:
+
+            - `<zone-id>` is the zone for the database PolarDB creates to hold the vectors.
+            - `<embedding-model>` is the embedding model, for example `text-embedding-v4`. Use the one the current space uses so the documents embed the same way.
+            - `<bucket-name>` is an OSS bucket in the same region that holds the source documents.
+
+            `EnforceAcl` defaults to `false` and cannot be changed after creation. Move the knowledge bases and applications to the new space, then delete the old one.
+        # No Terraform remediation: the alicloud provider has no resource for PolarDB knowledge spaces.
+    variants:
+      - uid: mondoo-alibaba-security-polardb-knowledge-space-acl-enforced-alicloud
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-16
+      compliance/dora: false
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-3
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-ai-100-1: false
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-2
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
+      compliance/owasp-llm-top-10-2025: owasp-llm-top-10-2025-llm08
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-7
+      compliance/soc2-2017: soc2-control-cc6-1-7
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+  - uid: mondoo-alibaba-security-polardb-knowledge-space-acl-enforced-alicloud
+    filters: asset.platform == "alicloud-account"
+    mql: |
+      alicloud.polardb.knowledgeSpaces.all(aclMode == "ENFORCED")

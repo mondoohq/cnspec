@@ -33,7 +33,7 @@ Our comprehensive collection of security policies covers major platforms and ser
 
 ### Cloud Providers
 
-- **Alibaba Cloud** - `mondoo-alibaba-security.mql.yaml` - Secure Alibaba Cloud identity, storage, compute, database, registry, serverless, key management, and network resources
+- **Alibaba Cloud** - `mondoo-alibaba-security.mql.yaml` - Secure Alibaba Cloud identity, storage, compute, database, registry, serverless, AI, key management, and network resources
 - **AWS** - `mondoo-aws-security.mql.yaml` - Comprehensive AWS security baseline and best practices
 - **Azure** - `mondoo-azure-security.mql.yaml` - Microsoft Azure security configuration and compliance checks
 - **DigitalOcean** - `mondoo-digitalocean-security.mql.yaml` - DigitalOcean Droplets, Databases, Load Balancers, DOKS, Spaces, and App Platform security
