@@ -470,7 +470,7 @@ func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, rep
 	}
 
 	if r.Conf.printChecks {
-		exceptionSet := buildExceptionSet(resolved)
+		exceptionSet := resolved.ExceptedQrIds()
 
 		// Build a map of matched queries keyed by MRN. We use the resolved
 		// policy's CHECK reporting jobs to determine which queries actually
@@ -812,43 +812,6 @@ func (r *defaultReporter) printCheck(score simpleScore, query *policy.Mquery, re
 }
 
 // ============================= ^^ ============================================
-
-// buildExceptionSet builds a set of check MRNs that have exceptions applied,
-// by inspecting the ReportingJob.ChildJobs edges in the resolved policy for
-// IGNORE_SCORE or DISABLED impacts.
-//
-// A check is considered excepted if any parent reporting job marks it with
-// IGNORE_SCORE or DISABLED. This means that if the same check appears under
-// multiple policies and only one policy excepts it, the check will still be
-// treated as an exception in the output. This is intentional: exceptions are
-// configured per-policy and the presence of any exception signals that the
-// check should appear in the exceptions section rather than pass/fail.
-func buildExceptionSet(resolved *policy.ResolvedPolicy) map[string]struct{} {
-	if resolved == nil || resolved.CollectorJob == nil {
-		return nil
-	}
-
-	uuidToQrId := make(map[string]string, len(resolved.CollectorJob.ReportingJobs))
-	for _, rj := range resolved.CollectorJob.ReportingJobs {
-		uuidToQrId[rj.Uuid] = rj.QrId
-	}
-
-	exceptions := map[string]struct{}{}
-	for _, rj := range resolved.CollectorJob.ReportingJobs {
-		for childUuid, impact := range rj.ChildJobs {
-			if impact == nil {
-				continue
-			}
-			if impact.Scoring == policy.ScoringSystem_IGNORE_SCORE ||
-				impact.Scoring == policy.ScoringSystem_DISABLED {
-				if qrId, ok := uuidToQrId[childUuid]; ok {
-					exceptions[qrId] = struct{}{}
-				}
-			}
-		}
-	}
-	return exceptions
-}
 
 func (r *defaultReporter) printVulns(report *policy.Report, assetMrn string) {
 	print := r.Printer

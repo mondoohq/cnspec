@@ -15,9 +15,10 @@ import (
 // scanned and the worst score it saw, because the CLI exit status is derived
 // from ScanResult.Ok and ScanResult.WorstScore for every report type.
 type NoOpReporter struct {
-	mu         sync.Mutex
-	failed     bool
-	worstScore *policy.Score
+	mu              sync.Mutex
+	failed          bool
+	worstScore      *policy.Score
+	worstCheckScore *policy.Score
 }
 
 func NewNoOpReporter() Reporter {
@@ -30,6 +31,7 @@ func (r *NoOpReporter) AddReport(asset *inventory.Asset, results *AssetReport) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.worstScore = lowerScore(r.worstScore, results.Report.GetScore())
+	r.worstCheckScore = lowerScore(r.worstCheckScore, policy.WorstCheckScore(results.ResolvedPolicy, results.Report))
 }
 
 func (r *NoOpReporter) AddScanError(asset *inventory.Asset, err error) {
@@ -42,8 +44,9 @@ func (r *NoOpReporter) Reports() *ScanResult {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return &ScanResult{
-		Ok:         !r.failed,
-		WorstScore: r.worstScore,
-		Result:     &ScanResult_None{None: &Empty{}},
+		Ok:              !r.failed,
+		WorstScore:      r.worstScore,
+		WorstCheckScore: r.worstCheckScore,
+		Result:          &ScanResult_None{None: &Empty{}},
 	}
 }
