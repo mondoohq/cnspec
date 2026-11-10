@@ -147,9 +147,9 @@ workflow is running and not a result about cnspec.
 ## Two things that shape every assertion here
 
 **The exit code is not a gate.** cnspec's default `--risk-threshold` is 101 and
-the comparison is `100 - worstScore >= threshold`, which 100 can never satisfy.
-A scan where every check fails, errors or is skipped still exits 0; only an
-asset-level error changes that. So `set -e` around a scan proves only that the
+the comparison is `100 - worst check score >= threshold`, which 100 can never
+satisfy. A scan where every check fails, errors or is skipped still exits 0;
+only an asset-level error changes that. So `set -e` around a scan proves only that the
 process started and connected, which is why everything here asserts on the
 report instead. `TestRiskThresholdExitCodes` pins the arithmetic on both sides.
 

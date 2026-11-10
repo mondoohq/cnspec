@@ -17,19 +17,21 @@ import (
 // TestRiskThresholdExitCodes pins the arithmetic behind `--risk-threshold`.
 //
 // Why this is worth a test of its own: the default threshold is 101, and the
-// comparison is `100 - worstScore >= threshold`. The left side can never reach
-// 101, so **at the default a scan exits 0 no matter how badly it scores** --
-// only an asset-level error changes that. Every `cnspec scan` in someone's CI
-// that relies on a non-zero exit is relying on this flag, and an off-by-one
-// here turns every one of those gates into "always passes" or "always fails"
-// without any other symptom.
+// comparison is `100 - worst check score >= threshold`. The left side can never
+// reach 101, so **at the default a scan exits 0 no matter how badly it
+// scores** -- only an asset-level error changes that. Every `cnspec scan` in
+// someone's CI that relies on a non-zero exit is relying on this flag, and an
+// off-by-one here turns every one of those gates into "always passes" or
+// "always fails" without any other symptom.
 //
-// The expectation is derived from the scan itself rather than hardcoded. An
-// earlier version of this test asserted that alpine could not score 100 against
-// mondoo-linux-security; it does (15 pass, 5 skip, aggregate risk 0), so the
-// test failed for a reason that had nothing to do with cnspec. Reading the
-// risk score out of the report and probing either side of it holds whatever the
-// content and the base image do.
+// The threshold judges the worst failing check, not the asset score. The asset
+// score averages its policies, so it sits below the worst finding whenever any
+// policy passes; probing it would put both thresholds under that finding and
+// expect an exit 0 the scan must not give.
+//
+// The expectation is derived from the scan itself rather than hardcoded:
+// reading the worst check's risk out of the report and probing either side of
+// it holds whatever the content and the base image do.
 func TestRiskThresholdExitCodes(t *testing.T) {
 	requireDocker(t)
 	pullImage(t, imageDebian)
@@ -49,10 +51,20 @@ func TestRiskThresholdExitCodes(t *testing.T) {
 	mrn, _ := requireOneAsset(t, rep)
 	requireNoAssetErrors(t, rep)
 
-	overall := rep.GetScores()[mrn].GetValues()[mrn]
-	require.NotNil(t, overall, "no aggregate score to derive a threshold from")
-	risk := overall.GetRiskScore()
-	t.Logf("%s scored risk=%d (status %q)", imageDebian, risk, overall.GetStatus())
+	// The worst finding: the highest risk among failing checks. The entry
+	// under the asset's own MRN is the asset score, which the threshold
+	// does not judge.
+	var risk uint32
+	failing := 0
+	for id, v := range rep.GetScores()[mrn].GetValues() {
+		if id == mrn || v.GetStatus() != "fail" {
+			continue
+		}
+		failing++
+		risk = max(risk, v.GetRiskScore())
+	}
+	require.NotZero(t, failing, "no failing check to derive a threshold from")
+	t.Logf("%s: %d failing checks, worst risk=%d", imageDebian, failing, risk)
 	require.LessOrEqual(t, risk, uint32(100), "risk score out of range")
 
 	// 2. threshold == risk: `risk >= threshold` holds, so exit 1.

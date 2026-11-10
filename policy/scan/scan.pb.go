@@ -455,9 +455,13 @@ func (x *File) GetData() []byte {
 }
 
 type ScanResult struct {
-	state      protoimpl.MessageState `protogen:"open.v1"`
-	WorstScore *policy.Score          `protobuf:"bytes,1,opt,name=worstScore,proto3" json:"worstScore,omitempty"`
-	Ok         bool                   `protobuf:"varint,2,opt,name=ok,proto3" json:"ok,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// The lowest rated asset score across all scanned assets.
+	WorstScore *policy.Score `protobuf:"bytes,1,opt,name=worstScore,proto3" json:"worstScore,omitempty"`
+	// The lowest rated check score across all scanned assets: the worst
+	// finding. --risk-threshold judges this one.
+	WorstCheckScore *policy.Score `protobuf:"bytes,6,opt,name=worstCheckScore,proto3" json:"worstCheckScore,omitempty"`
+	Ok              bool          `protobuf:"varint,2,opt,name=ok,proto3" json:"ok,omitempty"`
 	// Types that are valid to be assigned to Result:
 	//
 	//	*ScanResult_Full
@@ -501,6 +505,13 @@ func (*ScanResult) Descriptor() ([]byte, []int) {
 func (x *ScanResult) GetWorstScore() *policy.Score {
 	if x != nil {
 		return x.WorstScore
+	}
+	return nil
+}
+
+func (x *ScanResult) GetWorstCheckScore() *policy.Score {
+	if x != nil {
+		return x.WorstCheckScore
 	}
 	return nil
 }
@@ -783,12 +794,13 @@ const file_scan_proto_rawDesc = "" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x1a\n" +
 	"\x04File\x12\x12\n" +
-	"\x04data\x18\x01 \x01(\fR\x04data\"\x89\x02\n" +
+	"\x04data\x18\x01 \x01(\fR\x04data\"\xcc\x02\n" +
 	"\n" +
 	"ScanResult\x127\n" +
 	"\n" +
 	"worstScore\x18\x01 \x01(\v2\x17.cnspec.policy.v1.ScoreR\n" +
-	"worstScore\x12\x0e\n" +
+	"worstScore\x12A\n" +
+	"\x0fworstCheckScore\x18\x06 \x01(\v2\x17.cnspec.policy.v1.ScoreR\x0fworstCheckScore\x12\x0e\n" +
 	"\x02ok\x18\x02 \x01(\bR\x02ok\x128\n" +
 	"\x04full\x18\x03 \x01(\v2\".cnspec.policy.v1.ReportCollectionH\x00R\x04full\x12=\n" +
 	"\x06errors\x18\x04 \x01(\v2#.cnspec.policy.scan.ErrorCollectionH\x00R\x06errors\x12/\n" +
@@ -877,28 +889,29 @@ var file_scan_proto_depIdxs = []int32{
 	19, // 8: cnspec.policy.scan.AdmissionReviewJob.discovery:type_name -> cnquery.providers.v1.Discovery
 	14, // 9: cnspec.policy.scan.GarbageCollectOptions.labels:type_name -> cnspec.policy.scan.GarbageCollectOptions.LabelsEntry
 	20, // 10: cnspec.policy.scan.ScanResult.worstScore:type_name -> cnspec.policy.v1.Score
-	21, // 11: cnspec.policy.scan.ScanResult.full:type_name -> cnspec.policy.v1.ReportCollection
-	8,  // 12: cnspec.policy.scan.ScanResult.errors:type_name -> cnspec.policy.scan.ErrorCollection
-	2,  // 13: cnspec.policy.scan.ScanResult.none:type_name -> cnspec.policy.scan.Empty
-	15, // 14: cnspec.policy.scan.ErrorCollection.errors:type_name -> cnspec.policy.scan.ErrorCollection.ErrorsEntry
-	1,  // 15: cnspec.policy.scan.HealthCheckResponse.status:type_name -> cnspec.policy.scan.HealthCheckResponse.ServingStatus
-	3,  // 16: cnspec.policy.scan.Scan.Run:input_type -> cnspec.policy.scan.Job
-	3,  // 17: cnspec.policy.scan.Scan.RunIncognito:input_type -> cnspec.policy.scan.Job
-	3,  // 18: cnspec.policy.scan.Scan.Schedule:input_type -> cnspec.policy.scan.Job
-	4,  // 19: cnspec.policy.scan.Scan.RunAdmissionReview:input_type -> cnspec.policy.scan.AdmissionReviewJob
-	5,  // 20: cnspec.policy.scan.Scan.GarbageCollectAssets:input_type -> cnspec.policy.scan.GarbageCollectOptions
-	9,  // 21: cnspec.policy.scan.Scan.HealthCheck:input_type -> cnspec.policy.scan.HealthCheckRequest
-	7,  // 22: cnspec.policy.scan.Scan.Run:output_type -> cnspec.policy.scan.ScanResult
-	7,  // 23: cnspec.policy.scan.Scan.RunIncognito:output_type -> cnspec.policy.scan.ScanResult
-	2,  // 24: cnspec.policy.scan.Scan.Schedule:output_type -> cnspec.policy.scan.Empty
-	7,  // 25: cnspec.policy.scan.Scan.RunAdmissionReview:output_type -> cnspec.policy.scan.ScanResult
-	2,  // 26: cnspec.policy.scan.Scan.GarbageCollectAssets:output_type -> cnspec.policy.scan.Empty
-	10, // 27: cnspec.policy.scan.Scan.HealthCheck:output_type -> cnspec.policy.scan.HealthCheckResponse
-	22, // [22:28] is the sub-list for method output_type
-	16, // [16:22] is the sub-list for method input_type
-	16, // [16:16] is the sub-list for extension type_name
-	16, // [16:16] is the sub-list for extension extendee
-	0,  // [0:16] is the sub-list for field type_name
+	20, // 11: cnspec.policy.scan.ScanResult.worstCheckScore:type_name -> cnspec.policy.v1.Score
+	21, // 12: cnspec.policy.scan.ScanResult.full:type_name -> cnspec.policy.v1.ReportCollection
+	8,  // 13: cnspec.policy.scan.ScanResult.errors:type_name -> cnspec.policy.scan.ErrorCollection
+	2,  // 14: cnspec.policy.scan.ScanResult.none:type_name -> cnspec.policy.scan.Empty
+	15, // 15: cnspec.policy.scan.ErrorCollection.errors:type_name -> cnspec.policy.scan.ErrorCollection.ErrorsEntry
+	1,  // 16: cnspec.policy.scan.HealthCheckResponse.status:type_name -> cnspec.policy.scan.HealthCheckResponse.ServingStatus
+	3,  // 17: cnspec.policy.scan.Scan.Run:input_type -> cnspec.policy.scan.Job
+	3,  // 18: cnspec.policy.scan.Scan.RunIncognito:input_type -> cnspec.policy.scan.Job
+	3,  // 19: cnspec.policy.scan.Scan.Schedule:input_type -> cnspec.policy.scan.Job
+	4,  // 20: cnspec.policy.scan.Scan.RunAdmissionReview:input_type -> cnspec.policy.scan.AdmissionReviewJob
+	5,  // 21: cnspec.policy.scan.Scan.GarbageCollectAssets:input_type -> cnspec.policy.scan.GarbageCollectOptions
+	9,  // 22: cnspec.policy.scan.Scan.HealthCheck:input_type -> cnspec.policy.scan.HealthCheckRequest
+	7,  // 23: cnspec.policy.scan.Scan.Run:output_type -> cnspec.policy.scan.ScanResult
+	7,  // 24: cnspec.policy.scan.Scan.RunIncognito:output_type -> cnspec.policy.scan.ScanResult
+	2,  // 25: cnspec.policy.scan.Scan.Schedule:output_type -> cnspec.policy.scan.Empty
+	7,  // 26: cnspec.policy.scan.Scan.RunAdmissionReview:output_type -> cnspec.policy.scan.ScanResult
+	2,  // 27: cnspec.policy.scan.Scan.GarbageCollectAssets:output_type -> cnspec.policy.scan.Empty
+	10, // 28: cnspec.policy.scan.Scan.HealthCheck:output_type -> cnspec.policy.scan.HealthCheckResponse
+	23, // [23:29] is the sub-list for method output_type
+	17, // [17:23] is the sub-list for method input_type
+	17, // [17:17] is the sub-list for extension type_name
+	17, // [17:17] is the sub-list for extension extendee
+	0,  // [0:17] is the sub-list for field type_name
 }
 
 func init() { file_scan_proto_init() }

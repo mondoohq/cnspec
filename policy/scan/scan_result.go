@@ -17,10 +17,23 @@ func (r *ScanResult) WorstScoreValue() uint32 {
 	return s.Value
 }
 
+// WorstCheckScoreValue is the lowest rated check score across all scanned
+// assets, or 100 when no check was rated.
+func (r *ScanResult) WorstCheckScoreValue() uint32 {
+	s := r.GetWorstCheckScore()
+	if s == nil || s.Rating() == policy.ScoreRating_unrated {
+		return 100
+	}
+	return s.Value
+}
+
 // Failed reports whether the scan should be treated as a failure: an asset
-// failed to scan, or the risk of the worst score (100 minus its value) meets
-// riskThreshold. The verdict is the same for every ReportType because Ok and
-// WorstScore are set for all of them. A nil result has not failed.
+// failed to scan, or a check's risk (100 minus its score) meets
+// riskThreshold. The threshold judges findings, never the asset score: an
+// asset score averages its policies, so one critical finding next to a
+// passing policy would read as medium and slip under the threshold. The
+// verdict is the same for every ReportType because Ok and WorstCheckScore are
+// set for all of them. A nil result has not failed.
 func (r *ScanResult) Failed(riskThreshold int) bool {
 	if r == nil {
 		return false
@@ -28,5 +41,5 @@ func (r *ScanResult) Failed(riskThreshold int) bool {
 	if !r.Ok {
 		return true
 	}
-	return (100 - r.WorstScoreValue()) >= uint32(riskThreshold)
+	return (100 - r.WorstCheckScoreValue()) >= uint32(riskThreshold)
 }

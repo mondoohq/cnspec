@@ -29,6 +29,7 @@ type AggregateReporter struct {
 	resolvedPolicies map[string]*policy.ResolvedPolicy
 	exceptions       map[string]*policy.ExceptionDecisions
 	worstScore       *policy.Score
+	worstCheckScore  *policy.Score
 }
 
 func NewAggregateReporter() *AggregateReporter {
@@ -65,6 +66,7 @@ func (r *AggregateReporter) AddReport(asset *inventory.Asset, results *AssetRepo
 	}
 
 	r.worstScore = lowerScore(r.worstScore, results.Report.GetScore())
+	r.worstCheckScore = lowerScore(r.worstCheckScore, policy.WorstCheckScore(results.ResolvedPolicy, results.Report))
 }
 
 func (r *AggregateReporter) AddVulnReport(asset *inventory.Asset, vulnReport *gql.VulnReport) {
@@ -119,8 +121,9 @@ func (r *AggregateReporter) Reports() *ScanResult {
 	}
 
 	return &ScanResult{
-		Ok:         len(errors) == 0,
-		WorstScore: r.worstScore,
+		Ok:              len(errors) == 0,
+		WorstScore:      r.worstScore,
+		WorstCheckScore: r.worstCheckScore,
 		Result: &ScanResult_Full{
 			Full: &policy.ReportCollection{
 				Assets:             r.assets,

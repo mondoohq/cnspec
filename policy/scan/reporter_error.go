@@ -15,10 +15,11 @@ import (
 )
 
 type ErrorReporter struct {
-	mu         sync.Mutex
-	assets     map[string]*policy.Asset
-	errors     map[string]string
-	worstScore *policy.Score
+	mu              sync.Mutex
+	assets          map[string]*policy.Asset
+	errors          map[string]string
+	worstScore      *policy.Score
+	worstCheckScore *policy.Score
 }
 
 func NewErrorReporter() Reporter {
@@ -29,6 +30,7 @@ func (r *ErrorReporter) AddReport(asset *inventory.Asset, results *AssetReport) 
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.worstScore = lowerScore(r.worstScore, results.Report.GetScore())
+	r.worstCheckScore = lowerScore(r.worstCheckScore, policy.WorstCheckScore(results.ResolvedPolicy, results.Report))
 }
 
 func (r *ErrorReporter) AddBundle(bundle *policy.Bundle) {}
@@ -53,9 +55,10 @@ func (r *ErrorReporter) Reports() *ScanResult {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return &ScanResult{
-		Ok:         len(r.errors) == 0,
-		WorstScore: r.worstScore,
-		Result:     &ScanResult_Errors{Errors: &ErrorCollection{Errors: r.errors}},
+		Ok:              len(r.errors) == 0,
+		WorstScore:      r.worstScore,
+		WorstCheckScore: r.worstCheckScore,
+		Result:          &ScanResult_Errors{Errors: &ErrorCollection{Errors: r.errors}},
 	}
 }
 

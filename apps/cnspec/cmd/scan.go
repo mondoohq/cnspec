@@ -233,8 +233,8 @@ var scanCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 		log.Fatal().Err(err).Msg("failed to write report to output target")
 	}
 
-	// If we had asset errors or the worst-case score exceeds the threshold,
-	// return non-zero. Flush the support bundle first so the user gets it.
+	// If we had asset errors or a check's risk meets the threshold, return
+	// non-zero. Flush the support bundle first so the user gets it.
 	// ScanResult.Failed judges every --report-type the same way.
 	if res.Failed(conf.RiskThreshold) {
 		if support != nil {
@@ -692,8 +692,8 @@ func RunScan(parentCtx context.Context, config *scanConfig, scannerOpts ...scan.
 	return res.GetFull(), nil
 }
 
-// RunScanResult runs the scan and returns the whole scan result, whose Ok and
-// WorstScore are set for every report type.
+// RunScanResult runs the scan and returns the whole scan result, whose Ok,
+// WorstScore and WorstCheckScore are set for every report type.
 func RunScanResult(parentCtx context.Context, config *scanConfig, scannerOpts ...scan.ScannerOption) (*scan.ScanResult, error) {
 	// RunScan is the entry point for the interactive CLI scan commands (scan,
 	// vuln, sbom, aibom, ...), so default the scan source to interactive. It is
