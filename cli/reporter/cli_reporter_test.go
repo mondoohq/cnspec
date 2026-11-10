@@ -278,3 +278,100 @@ func TestCompactReporterQuerypackData(t *testing.T) {
 		assert.Contains(t, out, "querypack-marker")
 	})
 }
+
+// TestCompactReporterRiskThresholdSections pins that "Failures (at or above
+// risk threshold N)" lists exactly the checks that fail the exit code
+// (policy.WorstCheckScore): rated results at or above the threshold. An error
+// or a skip carries a value of 0 and must not be listed as a failure at risk
+// 100; each gets its own section.
+func TestCompactReporterRiskThresholdSections(t *testing.T) {
+	assetMrn := "//assets.api.mondoo.app/spaces/test/assets/a"
+	type check struct {
+		uid    string
+		impact int32
+		score  *policy.Score
+	}
+	result := func(v uint32) *policy.Score {
+		return &policy.Score{Type: policy.ScoreType_Result, Value: v, ScoreCompletion: 100}
+	}
+	checks := []check{
+		{"passing", 100, result(100)},
+		{"medium", 50, result(50)},
+		{"critical", 100, result(0)},
+		{"erroring", 100, &policy.Score{Type: policy.ScoreType_Error, Value: 0, ScoreCompletion: 100, Message: "permission denied"}},
+		{"skipped", 100, &policy.Score{Type: policy.ScoreType_Skip, Value: 0, ScoreCompletion: 100}},
+	}
+
+	bundle := &policy.Bundle{}
+	scores := map[string]*policy.Score{}
+	rjs := map[string]*policy.ReportingJob{}
+	rqs := map[string]*policy.StringArray{}
+	for _, c := range checks {
+		mrn := "//local.cnspec.io/queries/" + c.uid
+		codeId := "code-" + c.uid
+		bundle.Queries = append(bundle.Queries, &policy.Mquery{
+			Mrn: mrn, Uid: c.uid, Title: "Check " + c.uid, CodeId: codeId,
+			Impact: &policy.Impact{Value: &policy.ImpactValue{Value: c.impact}},
+		})
+		c.score.QrId = mrn
+		scores[mrn] = c.score
+		rjs[c.uid] = &policy.ReportingJob{Uuid: c.uid, QrId: mrn, Type: policy.ReportingJob_CHECK}
+		rqs[codeId] = &policy.StringArray{Items: []string{c.uid}}
+	}
+
+	data := &policy.ReportCollection{
+		Assets: map[string]*inventory.Asset{
+			assetMrn: {Mrn: assetMrn, Name: "a", Platform: &inventory.Platform{Name: "debian", Title: "Debian"}},
+		},
+		Reports: map[string]*policy.Report{
+			assetMrn: {ScoringMrn: assetMrn, Score: result(50), Scores: scores, Data: map[string]*llx.Result{}},
+		},
+		ResolvedPolicies: map[string]*policy.ResolvedPolicy{
+			assetMrn: {
+				ExecutionJob: &policy.ExecutionJob{Queries: map[string]*policy.ExecutionQuery{}},
+				CollectorJob: &policy.CollectorJob{ReportingJobs: rjs, ReportingQueries: rqs},
+			},
+		},
+		Bundle: bundle,
+	}
+
+	buf := bytes.Buffer{}
+	writer := iox.IOWriter{Writer: &buf}
+	rr := &defaultReporter{
+		Reporter: &Reporter{
+			Conf:          defaultPrintConfig(),
+			Printer:       &printer.DefaultPrinter,
+			Colors:        &colors.DefaultColorTheme,
+			RiskThreshold: 70,
+		},
+		output: &writer,
+		data:   data,
+	}
+	rr.print()
+
+	// Map each check title to the section heading printed above it.
+	sectionOf := map[string]string{}
+	section := ""
+	for _, line := range strings.Split(buf.String(), NewLineCharacter) {
+		if strings.HasSuffix(line, ":") && !strings.HasPrefix(line, " ") {
+			section = line
+			continue
+		}
+		for _, c := range checks {
+			if strings.Contains(line, "Check "+c.uid) {
+				sectionOf[c.uid] = section
+			}
+		}
+	}
+
+	assert.Equal(t, "Passing:", sectionOf["passing"])
+	assert.Equal(t, "Warnings (below risk threshold 70):", sectionOf["medium"])
+	assert.Equal(t, "Failures (at or above risk threshold 70):", sectionOf["critical"])
+	assert.Equal(t, "Errors (not judged by the risk threshold):", sectionOf["erroring"])
+	assert.Equal(t, "Skipped:", sectionOf["skipped"])
+
+	// The same report decides the exit code from the critical check alone.
+	worst := policy.WorstCheckScore(data.ResolvedPolicies[assetMrn], data.Reports[assetMrn])
+	require.NotNil(t, worst)
+	assert.Equal(t, "//local.cnspec.io/queries/critical", worst.QrId)
+}

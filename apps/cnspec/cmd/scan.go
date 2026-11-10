@@ -233,6 +233,12 @@ var scanCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 		log.Fatal().Err(err).Msg("failed to write report to output target")
 	}
 
+	// Say which check decided the threshold. It goes to stderr so it shows
+	// whatever --output and --report-type print to stdout, including nothing.
+	if verdict := res.RiskThresholdVerdict(conf.RiskThreshold, checkTitles(report.GetBundle(), conf.Bundle)); verdict != "" {
+		fmt.Fprintln(os.Stderr, verdict)
+	}
+
 	// If we had asset errors or a check's risk meets the threshold, return
 	// non-zero. Flush the support bundle first so the user gets it.
 	// ScanResult.Failed judges every --report-type the same way.
@@ -241,6 +247,22 @@ var scanCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 			support.FinalizeAndAnnounce(os.Stderr)
 		}
 		os.Exit(1)
+	}
+}
+
+// checkTitles looks a check's title up by MRN in the first bundle that has it.
+// A full report carries the bundle the scan resolved against; the bundle the
+// scan was given covers --report-type error and none, which carry none.
+func checkTitles(bundles ...*policy.Bundle) func(string) string {
+	return func(mrn string) string {
+		for _, b := range bundles {
+			for _, q := range b.GetQueries() {
+				if q.GetMrn() == mrn && q.GetTitle() != "" {
+					return q.GetTitle()
+				}
+			}
+		}
+		return ""
 	}
 }
 

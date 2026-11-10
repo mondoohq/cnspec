@@ -5,6 +5,7 @@ package scan
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -177,4 +178,50 @@ func TestScanResultFailed_Nil(t *testing.T) {
 	assert.False(t, res.Failed(defaultRiskThreshold))
 	assert.Equal(t, uint32(100), res.WorstScoreValue())
 	assert.Equal(t, uint32(100), res.WorstCheckScoreValue())
+}
+
+func TestScanResultRiskThresholdVerdict(t *testing.T) {
+	worst := func(v uint32) *ScanResult {
+		return &ScanResult{Ok: true, WorstCheckScore: &policy.Score{QrId: "//queries/q", Type: policy.ScoreType_Result, Value: v, ScoreCompletion: 100}}
+	}
+	title := func(mrn string) string {
+		if mrn == "//queries/q" {
+			return "Ensure q"
+		}
+		return ""
+	}
+
+	cases := []struct {
+		name      string
+		res       *ScanResult
+		threshold int
+		title     func(string) string
+		want      string
+	}{
+		{"default threshold says nothing", worst(0), defaultRiskThreshold, title, ""},
+		{"met names the check", worst(0), 70, title, "✕ Risk threshold 70 met by the worst failing check: CRITICAL (100) Ensure q"},
+		{"met exactly at the threshold", worst(30), 70, title, "✕ Risk threshold 70 met by the worst failing check: HIGH (70) Ensure q"},
+		{"not met names the worst check", worst(31), 70, title, "✓ Risk threshold 70 not met: the worst failing check is MEDIUM (69) Ensure q"},
+		{"unknown title falls back to the rating", worst(0), 70, nil, "✕ Risk threshold 70 met by the worst failing check: CRITICAL (100)"},
+		{"no failing check", worst(100), 70, title, "✓ Risk threshold 70 not met: no check failed"},
+		{"no rated check", &ScanResult{Ok: true}, 70, title, "✓ Risk threshold 70 not met: no check failed"},
+		{"threshold 0 is always met", &ScanResult{Ok: true}, 0, title, "✕ Risk threshold 0 met: no check failed, but a threshold of 0 is met by every scan"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, tc.res.RiskThresholdVerdict(tc.threshold, tc.title))
+		})
+	}
+
+	// The verdict and the exit status come from one comparison and agree on
+	// every threshold, including ones the flag would not normally see.
+	for _, res := range []*ScanResult{worst(0), worst(30), worst(100), {Ok: true}} {
+		for th := -1; th <= 101; th++ {
+			v := res.RiskThresholdVerdict(th, nil)
+			if v == "" {
+				continue
+			}
+			assert.Equal(t, res.Failed(th), strings.HasPrefix(v, "✕"), "threshold %d, verdict %q", th, v)
+		}
+	}
 }
