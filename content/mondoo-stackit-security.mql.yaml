@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-stackit-security
     name: Mondoo STACKIT Security
-    version: 1.3.0
+    version: 1.4.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -31,6 +31,7 @@ policies:
         - **Key Management (KMS)** — key lifecycle and health
         - **Kubernetes Engine (SKE)** — cluster health and version auto-update
         - **Telemetry Router** and **AI Model Serving** — access-token lifecycle
+        - **AI Model Experiments** — tracking-token lifecycle and deleted-experiment retention
 
         ## Scope and design
 
@@ -108,6 +109,12 @@ policies:
         checks:
           - uid: mondoo-stackit-security-modelserving-token-expiry-set
           - uid: mondoo-stackit-security-modelserving-token-not-expired
+          - uid: mondoo-stackit-security-modelserving-token-max-validity
+      - title: STACKIT Model Experiments
+        checks:
+          - uid: mondoo-stackit-security-modelexperiments-token-short-lived
+          - uid: mondoo-stackit-security-modelexperiments-token-not-expired
+          - uid: mondoo-stackit-security-modelexperiments-deleted-experiment-retention
 queries:
   # ----------------------------- STACKIT Compute -----------------------------
   - uid: mondoo-stackit-security-compute-server-has-security-group
@@ -3670,6 +3677,407 @@ queries:
     refs:
       - url: https://docs.stackit.cloud/products/data-and-ai/ai-model-serving/
         title: STACKIT Documentation - Model Serving
+  - uid: mondoo-stackit-security-modelserving-token-max-validity
+    title: Ensure STACKIT Model Serving tokens expire within one year
+    impact: 60
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: false
+      compliance/dora: false
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-5-17
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
+      compliance/nist-sp-800-171: false
+      compliance/owasp-llm-top-10-2025: owasp-llm-top-10-2025-llm06
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a07
+      compliance/pci-dss-4: pcidss-requirement-8-6-3
+      compliance/soc2-2017: soc2-control-cc6-1-9
+      compliance/vda-isa-5: false
+    variants:
+      - uid: mondoo-stackit-security-modelserving-token-max-validity-stackit-project
+        tags:
+          mondoo.com/filter-title: STACKIT Project
+          mondoo.com/filter-icon: stackit
+      - uid: mondoo-stackit-security-modelserving-token-max-validity-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-stackit-security-modelserving-token-max-validity-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-stackit-security-modelserving-token-max-validity-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check verifies that every STACKIT Model Serving token with a validity end date expires within one year.
+
+        In a STACKIT project, the check requires each token's validity end date to fall no more than 365 days in the future. In Terraform, it requires the `ttl_duration` of each `stackit_modelserving_token` to be one year or less. Tokens with no end date pass this check and are assessed by a companion check in this policy.
+
+        **Why this matters**
+
+        A validity end date only limits exposure if it is close enough to matter. A token issued for ten years has an end date and is, for every practical purpose, a token that never expires.
+
+        Model Serving tokens authenticate inference requests, which are billed by use and carry the prompts an application sends. A leaked token stays usable until it expires or someone revokes it, so its lifetime is the longest a leak can go unnoticed and still be exploited.
+
+        A lifetime of a year or less also forces a renewal path to exist. Applications that renew a token every few months keep working through a rotation, and teams that have done one rotation can do the next one on short notice after a suspected leak.
+
+        Issue tokens with the shortest lifetime the consuming applications can renew reliably, and no longer than one year.
+      audit: |
+        1. Sign in to the STACKIT Portal.
+        2. Open **Model Serving** and review the project's authentication tokens.
+        3. Compare each token's validity end date with the current date.
+
+        A passing project has no token whose validity ends more than one year from now. A failing project has a token that stays valid for longer than a year, so a leak of that token remains exploitable for that long.
+
+        The STACKIT CLI has no Model Serving commands, so review the tokens in the STACKIT Portal.
+      remediation:
+        - id: console
+          desc: |
+            In the STACKIT Portal, issue a replacement Model Serving token with a validity of one year or less, move each application to it, and delete the long-lived token.
+
+            **A deleted token stops working immediately.** Confirm that no application still uses it before you delete it.
+        - id: terraform
+          desc: |
+            Set `ttl_duration` on the `stackit_modelserving_token` resource to one year or less. The value is a duration such as `24h` or `2160h`:
+
+            ```hcl
+            resource "stackit_modelserving_token" "example" {
+              project_id   = "00000000-0000-0000-0000-000000000000"
+              name         = "example-token"
+              ttl_duration = "2160h"
+            }
+            ```
+
+            Changing `ttl_duration` replaces the token, so applications need the new token value after the apply.
+    refs:
+      - url: https://docs.stackit.cloud/products/data-and-ai/ai-model-serving/
+        title: STACKIT Documentation - Model Serving
+  - uid: mondoo-stackit-security-modelserving-token-max-validity-stackit-project
+    filters: asset.platform == "stackit-project"
+    mql: |
+      stackit.modelServing.tokens.all(validUntil == null || validUntil <= time.now + 365 * time.day)
+  - uid: mondoo-stackit-security-modelserving-token-max-validity-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "stackit_modelserving_token")
+    mql: |
+      # The ttl_duration must be at most one year: up to 8760 hours with minutes and
+      # seconds below 60, a bare minute or second count of bounded length, or at most
+      # 365 days. An absent ttl_duration never expires and is the expiry check's finding.
+      terraform.resources("stackit_modelserving_token").all(
+        arguments["ttl_duration"] == empty ||
+        arguments["ttl_duration"] == /^(([0-9]{1,3}|[1-7][0-9]{3}|8[0-6][0-9]{2}|87[0-5][0-9]|8760)h)?([0-5]?[0-9]m)?([0-5]?[0-9]s)?$|^[0-9]{1,5}m$|^[0-9]{1,6}s$|^([0-9]{1,2}|[12][0-9]{2}|3[0-5][0-9]|36[0-5])d$/
+      )
+  - uid: mondoo-stackit-security-modelserving-token-max-validity-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "stackit_modelserving_token")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "stackit_modelserving_token").all(
+        change.after["ttl_duration"] == empty ||
+        change.after["ttl_duration"] == /^(([0-9]{1,3}|[1-7][0-9]{3}|8[0-6][0-9]{2}|87[0-5][0-9]|8760)h)?([0-5]?[0-9]m)?([0-5]?[0-9]s)?$|^[0-9]{1,5}m$|^[0-9]{1,6}s$|^([0-9]{1,2}|[12][0-9]{2}|3[0-5][0-9]|36[0-5])d$/
+      )
+  - uid: mondoo-stackit-security-modelserving-token-max-validity-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "stackit_modelserving_token")
+    mql: |
+      terraform.state.resources.where(type == "stackit_modelserving_token").all(
+        values["ttl_duration"] == empty ||
+        values["ttl_duration"] == /^(([0-9]{1,3}|[1-7][0-9]{3}|8[0-6][0-9]{2}|87[0-5][0-9]|8760)h)?([0-5]?[0-9]m)?([0-5]?[0-9]s)?$|^[0-9]{1,5}m$|^[0-9]{1,6}s$|^([0-9]{1,2}|[12][0-9]{2}|3[0-5][0-9]|36[0-5])d$/
+      )
+  # ----------------------------- STACKIT Model Experiments -----------------------------
+  - uid: mondoo-stackit-security-modelexperiments-token-short-lived
+    title: Ensure STACKIT Model Experiments tokens expire within 90 days
+    impact: 50
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: false
+      compliance/dora: false
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-5-17
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
+      compliance/nist-sp-800-171: false
+      compliance/owasp-llm-top-10-2025: owasp-llm-top-10-2025-llm06
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a07
+      compliance/pci-dss-4: pcidss-requirement-8-6-3
+      compliance/soc2-2017: soc2-control-cc6-1-9
+      compliance/vda-isa-5: false
+    variants:
+      - uid: mondoo-stackit-security-modelexperiments-token-short-lived-stackit-project
+        tags:
+          mondoo.com/filter-title: STACKIT Project
+          mondoo.com/filter-icon: stackit
+      - uid: mondoo-stackit-security-modelexperiments-token-short-lived-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-stackit-security-modelexperiments-token-short-lived-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-stackit-security-modelexperiments-token-short-lived-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check verifies that every STACKIT AI Model Experiments tracking token expires within 90 days.
+
+        AI Model Experiments runs managed MLflow tracking servers. A tracking token authenticates the MLflow SDK and REST API against one instance, from notebooks, local development environments, and CI pipelines. In a STACKIT project, the check requires each token's validity end date to fall no more than 90 days in the future. In Terraform, it requires the `ttl_duration` of each `stackit_modelexperiments_token` to be 90 days or less. A token created without a lifetime is valid for six months, which fails.
+
+        **Why this matters**
+
+        A tracking token reads and writes everything the instance holds: experiment runs, logged parameters and metrics, registered models, and the artifacts behind them. Training code often logs dataset samples and configuration, so the instance can hold more sensitive material than its name suggests.
+
+        Write access matters as much as read access. A holder of a leaked token can register a tampered model version or replace an artifact, and pipelines that promote models from the registry deploy whatever they find there.
+
+        Tracking tokens are copied into notebooks, CI variables, and training job configuration, where they outlive the work they were created for. A short lifetime limits how long a forgotten copy stays usable.
+
+        Issue tracking tokens with a lifetime of 90 days or less, and renew them through the pipelines that use them.
+      audit: |
+        1. Sign in to the STACKIT Portal.
+        2. On the sidebar, click **AI Model Experiments** and select each instance.
+        3. On the left, select **Tracking tokens** and compare each token's validity end date with the current date.
+
+        A passing project has no tracking token whose validity ends more than 90 days from now. A failing project has a token that stays valid for longer.
+
+        The STACKIT CLI has no AI Model Experiments commands, so review the tokens in the STACKIT Portal.
+      remediation:
+        - id: console
+          desc: |
+            To replace a long-lived tracking token in the STACKIT Portal:
+
+            1. On the sidebar, click **AI Model Experiments** and select the instance.
+            2. On the left, select **Tracking tokens**, then click **Create tracking token**.
+            3. Enter a **Token name** and a **Lifetime** of 90 days or less, then click **Save**. Copy the token, which cannot be retrieved afterwards.
+            4. Update every notebook, pipeline, and job that uses the old token.
+            5. Open the old token's three dots menu, click **Delete**, enter the token's name, and confirm.
+
+            **A deleted token stops working immediately.** Confirm that nothing still uses it before you delete it.
+        - id: terraform
+          desc: |
+            Set `ttl_duration` on the `stackit_modelexperiments_token` resource to 90 days or less:
+
+            ```hcl
+            resource "stackit_modelexperiments_token" "example" {
+              project_id   = "00000000-0000-0000-0000-000000000000"
+              instance_id  = "00000000-0000-0000-0000-000000000000"
+              name         = "ci-pipeline"
+              ttl_duration = "2160h"
+            }
+            ```
+
+            Changing `ttl_duration` replaces the token, so the pipelines that use it need the new token value after the apply.
+    refs:
+      - url: https://docs.stackit.cloud/products/data-and-ai/ai-model-experiments/how-tos/create-and-manage-tokens/
+        title: STACKIT Documentation - Create and manage tokens of AI Model Experiments
+  - uid: mondoo-stackit-security-modelexperiments-token-short-lived-stackit-project
+    filters: asset.platform == "stackit-project"
+    mql: |
+      stackit.modelExperiments.instances.all(
+        tokens.all(validUntil != null && validUntil <= time.now + 90 * time.day)
+      )
+  - uid: mondoo-stackit-security-modelexperiments-token-short-lived-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "stackit_modelexperiments_token")
+    mql: |
+      # The ttl_duration must be at most 90 days: up to 2160 hours with minutes and
+      # seconds below 60, a bare minute or second count of bounded length, or at most
+      # 90 days. An absent ttl_duration defaults to six months and fails.
+      terraform.resources("stackit_modelexperiments_token").all(
+        arguments["ttl_duration"] != empty &&
+        arguments["ttl_duration"] == /^(([0-9]{1,3}|1[0-9]{3}|20[0-9]{2}|21[0-5][0-9]|2160)h)?([0-5]?[0-9]m)?([0-5]?[0-9]s)?$|^[0-9]{1,5}m$|^[0-9]{1,6}s$|^([0-9]|[1-8][0-9]|90)d$/
+      )
+  - uid: mondoo-stackit-security-modelexperiments-token-short-lived-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "stackit_modelexperiments_token")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "stackit_modelexperiments_token").all(
+        change.after["ttl_duration"] != empty &&
+        change.after["ttl_duration"] == /^(([0-9]{1,3}|1[0-9]{3}|20[0-9]{2}|21[0-5][0-9]|2160)h)?([0-5]?[0-9]m)?([0-5]?[0-9]s)?$|^[0-9]{1,5}m$|^[0-9]{1,6}s$|^([0-9]|[1-8][0-9]|90)d$/
+      )
+  - uid: mondoo-stackit-security-modelexperiments-token-short-lived-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "stackit_modelexperiments_token")
+    mql: |
+      terraform.state.resources.where(type == "stackit_modelexperiments_token").all(
+        values["ttl_duration"] != empty &&
+        values["ttl_duration"] == /^(([0-9]{1,3}|1[0-9]{3}|20[0-9]{2}|21[0-5][0-9]|2160)h)?([0-5]?[0-9]m)?([0-5]?[0-9]s)?$|^[0-9]{1,5}m$|^[0-9]{1,6}s$|^([0-9]|[1-8][0-9]|90)d$/
+      )
+  # No Terraform variant: valid_until is reported by the AI Model Experiments API after the
+  # token is issued, and whether it has passed depends on the time of the scan.
+  - uid: mondoo-stackit-security-modelexperiments-token-not-expired
+    title: Ensure STACKIT Model Experiments tokens are not expired
+    impact: 50
+    filters: asset.platform == "stackit-project"
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: false
+      compliance/dora: false
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-5-17
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
+      compliance/nist-sp-800-171: false
+      compliance/owasp-llm-top-10-2025: owasp-llm-top-10-2025-llm06
+      compliance/owasp-top-10-2025: false
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: soc2-control-cc6-1-9
+      compliance/vda-isa-5: false
+    mql: |
+      stackit.modelExperiments.instances.all(
+        tokens.all(validUntil == null || validUntil > time.now)
+      )
+    docs:
+      desc: |
+        This check verifies that no STACKIT AI Model Experiments tracking token has already passed its validity end date.
+
+        The check reads the tracking tokens of every AI Model Experiments instance in the project and requires that each token's validity end date is in the future.
+
+        **Why this matters**
+
+        An expired tracking token no longer authenticates, so it is not an access risk by itself. It is a record of an integration that lapsed: a notebook, pipeline, or training job stopped renewing its token, or stopped running and nobody removed it.
+
+        Leaving those entries in place makes the token list harder to review. Each expired token is one more entry to reason about when deciding which credentials are live and which systems hold them, and an unrecognized live token is easier to miss among stale ones.
+
+        Each expired token also raises a question worth answering: whether the integration behind it was retired deliberately or broke without anyone noticing.
+
+        Delete expired tracking tokens during credential reviews, so the token list matches the integrations that actually run.
+      audit: |
+        1. Sign in to the STACKIT Portal.
+        2. On the sidebar, click **AI Model Experiments** and select each instance.
+        3. On the left, select **Tracking tokens** and compare each token's validity end date with the current date.
+
+        A passing project has no tracking token whose validity has already lapsed. A failing project still holds an expired token.
+
+        The STACKIT CLI has no AI Model Experiments commands, so review the tokens in the STACKIT Portal.
+      remediation:
+        - id: console
+          desc: |
+            To delete an expired tracking token in the STACKIT Portal:
+
+            1. On the sidebar, click **AI Model Experiments** and select the instance.
+            2. On the left, select **Tracking tokens**.
+            3. Open the expired token's three dots menu, click **Delete**, enter the token's name, and confirm.
+
+            Issue a new token for any integration that still needs access.
+        # No Terraform remediation: whether a token is expired depends on the time of the scan;
+        # keeping tokens current means recreating them with a fresh ttl_duration, an operational
+        # action rather than a configurable attribute.
+    refs:
+      - url: https://docs.stackit.cloud/products/data-and-ai/ai-model-experiments/how-tos/create-and-manage-tokens/
+        title: STACKIT Documentation - Create and manage tokens of AI Model Experiments
+  - uid: mondoo-stackit-security-modelexperiments-deleted-experiment-retention
+    title: Ensure STACKIT Model Experiments retain deleted experiments for 7 days
+    impact: 40
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-bcr-08
+      compliance/dora: dora-art-12
+      compliance/hipaa: hipaa-security-ss164-308-a-7-ii-a-contingency-plan-data-backup-plan
+      compliance/iso-27001-2022: iso-27001-2022-a-8-13
+      compliance/nis-2: nis-2-21-2-c
+      compliance/nist-csf-1: nist-csf-1-pr-ip-4
+      compliance/nist-csf-2: nist-csf-2-pr-ds-11
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cp-9
+      compliance/nist-sp-800-171: false
+      compliance/owasp-top-10-2025: false
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: vda-isa-5-3-1-2
+    variants:
+      - uid: mondoo-stackit-security-modelexperiments-deleted-experiment-retention-stackit-project
+        tags:
+          mondoo.com/filter-title: STACKIT Project
+          mondoo.com/filter-icon: stackit
+      - uid: mondoo-stackit-security-modelexperiments-deleted-experiment-retention-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-stackit-security-modelexperiments-deleted-experiment-retention-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-stackit-security-modelexperiments-deleted-experiment-retention-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check verifies that every STACKIT AI Model Experiments instance keeps deleted experiments for at least 7 days before purging them.
+
+        Deleting an experiment in MLflow only marks it for deletion. The instance's deleted experiment retention sets the grace period before the experiment's runs and artifacts are permanently removed from the database and artifact storage. The service accepts 1 to 90 days and defaults to 30 days. The check passes a retention written as 7 to 90 days, or as 168 to 2160 hours.
+
+        **Why this matters**
+
+        Experiment history is the lineage of every model trained on the instance: the parameters, metrics, code versions, and artifacts that explain how a registered model was produced. Once the purge runs, that record cannot be recovered.
+
+        A short retention turns an accidental or malicious deletion into a permanent loss. Someone who obtains a tracking token can delete experiments, and with a one-day retention the evidence and the lineage are gone before a weekly review would notice.
+
+        A week or more gives the team time to notice a deletion and restore what was lost, including over a weekend or holiday.
+
+        Keep the default 30-day retention unless storage cost or a data-handling requirement calls for a shorter period, and do not set it below 7 days.
+      audit: |
+        1. Sign in to the STACKIT Portal.
+        2. On the sidebar, click **AI Model Experiments** and select each instance.
+        3. Review the instance's deleted experiment retention.
+
+        A passing project has every instance retaining deleted experiments for at least 7 days. A failing project has an instance that purges deleted experiments sooner.
+
+        The STACKIT CLI has no AI Model Experiments commands, so review the instances in the STACKIT Portal.
+      remediation:
+        - id: console
+          desc: |
+            To lengthen the deleted experiment retention in the STACKIT Portal:
+
+            1. On the sidebar, click **AI Model Experiments**.
+            2. Click the instance to open its details pane.
+            3. Set the deleted experiment retention to `7d` or longer, such as the default `30d`.
+            4. Click **Save**.
+        - id: terraform
+          desc: |
+            Set `deleted_experiment_retention` on the `stackit_modelexperiments_instance` resource to `7d` or longer, or omit it to keep the 30-day default:
+
+            ```hcl
+            resource "stackit_modelexperiments_instance" "example" {
+              project_id                   = "00000000-0000-0000-0000-000000000000"
+              name                         = "ml-tracking"
+              deleted_experiment_retention = "30d"
+            }
+            ```
+    refs:
+      - url: https://docs.stackit.cloud/products/data-and-ai/ai-model-experiments/how-tos/create-and-manage-instances/
+        title: STACKIT Documentation - Create and manage instances of AI Model Experiments
+  - uid: mondoo-stackit-security-modelexperiments-deleted-experiment-retention-stackit-project
+    filters: asset.platform == "stackit-project"
+    mql: |
+      stackit.modelExperiments.instances.all(
+        deletedExperimentRetention == /^([7-9]|[1-8][0-9]|90)d$|^(16[89]|1[7-9][0-9]|[2-9][0-9]{2}|1[0-9]{3}|20[0-9]{2}|21[0-5][0-9]|2160)h$/
+      )
+  - uid: mondoo-stackit-security-modelexperiments-deleted-experiment-retention-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "stackit_modelexperiments_instance")
+    mql: |
+      # An absent deleted_experiment_retention takes the service default of 30 days.
+      terraform.resources("stackit_modelexperiments_instance").all(
+        arguments["deleted_experiment_retention"] == empty ||
+        arguments["deleted_experiment_retention"] == /^([7-9]|[1-8][0-9]|90)d$|^(16[89]|1[7-9][0-9]|[2-9][0-9]{2}|1[0-9]{3}|20[0-9]{2}|21[0-5][0-9]|2160)h$/
+      )
+  - uid: mondoo-stackit-security-modelexperiments-deleted-experiment-retention-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "stackit_modelexperiments_instance")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "stackit_modelexperiments_instance").all(
+        change.after["deleted_experiment_retention"] == empty ||
+        change.after["deleted_experiment_retention"] == /^([7-9]|[1-8][0-9]|90)d$|^(16[89]|1[7-9][0-9]|[2-9][0-9]{2}|1[0-9]{3}|20[0-9]{2}|21[0-5][0-9]|2160)h$/
+      )
+  - uid: mondoo-stackit-security-modelexperiments-deleted-experiment-retention-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "stackit_modelexperiments_instance")
+    mql: |
+      terraform.state.resources.where(type == "stackit_modelexperiments_instance").all(
+        values["deleted_experiment_retention"] == /^([7-9]|[1-8][0-9]|90)d$|^(16[89]|1[7-9][0-9]|[2-9][0-9]{2}|1[0-9]{3}|20[0-9]{2}|21[0-5][0-9]|2160)h$/
+      )
   # ----------------------------- STACKIT Kubernetes (SKE) -----------------------------
   # No Terraform variant: the expiration dates for a cluster's Kubernetes version and node pool machine
   # images come from the SKE API's version catalog. The configuration names a version, and whether that
