@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-oci-security
     name: Mondoo Oracle Cloud Infrastructure (OCI) Security
-    version: 4.7.0
+    version: 4.8.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -185,9 +185,19 @@ policies:
           - uid: mondoo-oci-security-genai-endpoint-pii-detection
           - uid: mondoo-oci-security-genai-endpoint-content-moderation
           - uid: mondoo-oci-security-genai-endpoint-private-endpoint
+          - uid: mondoo-oci-security-genai-hosted-application-authentication-required
+          - uid: mondoo-oci-security-genai-hosted-application-secrets-in-vault
+          - uid: mondoo-oci-security-genai-hosted-deployment-vulnerability-scan-required
+          - uid: mondoo-oci-security-genai-project-sandbox-egress-restricted
+          - uid: mondoo-oci-security-genai-api-key-max-lifetime
+          - uid: mondoo-oci-security-genai-agent-endpoint-prompt-injection-guardrail
+          - uid: mondoo-oci-security-genai-agent-endpoint-pii-guardrail
+          - uid: mondoo-oci-security-genai-agent-endpoint-content-moderation
       - title: Data Science
         checks:
           - uid: mondoo-oci-security-datascience-notebook-private-endpoint
+          - uid: mondoo-oci-security-datascience-model-deployment-private-endpoint
+          - uid: mondoo-oci-security-datascience-model-deployment-access-logging
     scoring_system: highest impact
 queries:
   # No Terraform variants: MFA activation is operational telemetry exposed by the IAM API at runtime; the `oci_identity_user` Terraform resource has no field that toggles or evidences MFA enrollment.
@@ -10439,7 +10449,7 @@ queries:
     filters: asset.platform == "oci-identity-user"
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-10
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-12
       compliance/dora: dora-art-9
       compliance/hipaa: hipaa-security-ss164-312-d-person-or-entity-authentication
       compliance/iso-27001-2022: iso-27001-2022-a-5-17
@@ -12831,6 +12841,1042 @@ queries:
       terraform.state.resources.where(type == 'oci_generative_ai_endpoint').all(
         values['generative_ai_private_endpoint_id'] != null && values['generative_ai_private_endpoint_id'] != ""
       )
+  - uid: mondoo-oci-security-genai-hosted-application-authentication-required
+    title: Ensure public Generative AI hosted applications require authentication
+    impact: 90
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-16
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-5-15
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-03
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
+      compliance/owasp-llm-top-10-2025: owasp-llm-top-10-2025-llm06
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-8-3-1
+      compliance/soc2-2017: soc2-control-cc6-1-4
+      compliance/vda-isa-5: vda-isa-5-4-1-2
+    variants:
+      - uid: mondoo-oci-security-genai-hosted-application-authentication-required-oci
+        tags:
+          mondoo.com/filter-title: OCI
+          mondoo.com/filter-icon: oci
+      - uid: mondoo-oci-security-genai-hosted-application-authentication-required-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-genai-hosted-application-authentication-required-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-genai-hosted-application-authentication-required-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check verifies that no OCI Generative AI hosted application accepts unauthenticated requests on an endpoint that is reachable from outside the virtual cloud network.
+
+        A hosted application runs a containerized agent or application on infrastructure that the Generative AI service manages. Two settings decide who can call it. The endpoint mode is either public, reachable from outside the virtual cloud network, or private, reachable only through a Generative AI private endpoint. The inbound authentication type is an identity domain bearer token, an identity domain browser session, or no authentication, which the service documents as allowing anyone who can reach the endpoint to send requests. The check passes an application whose endpoint is private, or whose inbound authentication is anything other than no authentication. An application that reports no endpoint mode is treated as public.
+
+        **Why this matters**
+
+        A hosted application is usually an agent, and an agent acts. It holds the credentials, tools, and model access it was built with, and every request it receives is an instruction it will try to carry out. A public endpoint with no authentication hands that capability to anyone on the internet who finds the URL, with no identity attached to the request and nothing for an access policy to evaluate.
+
+        The consequences compound. An anonymous caller can drive the agent's tools against internal systems, probe it with prompt injection until it leaks what it can see, and run up model and compute spend that the tenancy pays for. Because no identity is recorded, the logs that would normally attribute misuse to an account show only an address.
+
+        Applications that implement their own authentication inside the container are the one case where platform authentication can be off, and that design moves an access-control decision out of the platform and into application code. Keeping it at the platform means one place to audit it.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the OCI Console.
+        2. Open the navigation menu, select **Analytics & AI**, and under **AI Services** select **Generative AI**.
+        3. Under **Generative AI**, select **Applications** and open each application.
+        4. Review the endpoint type under **Networking** and the inbound authentication setting.
+
+        A passing application uses a private endpoint or an identity domain authentication type. A failing application uses a public endpoint with no authentication.
+
+        ### Audit via CLI
+
+        1. List hosted applications in a compartment with their endpoint mode and authentication type:
+
+        ```bash
+        oci generative-ai hosted-application-collection list-hosted-applications --compartment-id <compartment-ocid> \
+          --query 'data.items[].{name:"display-name",id:id}'
+        ```
+
+        2. Inspect one application:
+
+        ```bash
+        oci generative-ai hosted-application get --hosted-application-id <hosted-application-ocid> \
+          --query 'data.{mode:"networking-config"."inbound-networking-config"."endpoint-mode",auth:"inbound-auth-config"."inbound-auth-config-type"}'
+        ```
+
+        A failing application reports `PUBLIC` together with `NO_AUTH_CONFIG`.
+      remediation:
+        - id: console
+          desc: |
+            Require identity domain authentication on the application:
+
+            1. Open **Analytics & AI > Generative AI > Applications** and select the application.
+            2. Edit the application and, under authentication, select **Identity domain bearer token** for API callers or **Identity domain browser session** for browser users.
+            3. Enter the identity domain URL and the scope the callers must present, then save the change.
+        - id: cli
+          desc: |
+            Set an identity domain authentication type on the application. Callers then need a bearer token for the given scope:
+
+            ```bash
+            oci generative-ai hosted-application update --hosted-application-id <hosted-application-ocid> \
+              --inbound-auth-config '{"inboundAuthConfigType": "IDCS_AUTH_CONFIG", "idcsConfig": {"domainUrl": "<identity-domain-url>", "scope": "<scope>"}}'
+            ```
+        - id: terraform
+          desc: |
+            Declare identity domain authentication in `inbound_auth_config`, or serve the application through a private endpoint:
+
+            ```hcl
+            resource "oci_generative_ai_hosted_application" "agent" {
+              compartment_id = var.compartment_ocid
+              display_name   = "support-agent"
+
+              inbound_auth_config {
+                inbound_auth_config_type = "IDCS_AUTH_CONFIG"
+
+                idcs_config {
+                  domain_url = var.identity_domain_url
+                  scope      = var.agent_scope
+                }
+              }
+            }
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/generative-ai/create-application.htm
+        title: OCI - Creating an Application
+  - uid: mondoo-oci-security-genai-hosted-application-authentication-required-oci
+    filters: asset.platform == "oci"
+    mql: |
+      # endpointMode is empty when the application reports no networking configuration,
+      # so only an explicit PRIVATE passes on the network side.
+      oci.ai.generativeAi.hostedApplications.where(state != "DELETED" && state != "DELETING").all(
+        endpointMode == "PRIVATE" || inboundAuthType != empty && inboundAuthType != "NO_AUTH_CONFIG"
+      )
+  - uid: mondoo-oci-security-genai-hosted-application-authentication-required-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'oci_generative_ai_hosted_application')
+    mql: |
+      terraform.resources('oci_generative_ai_hosted_application').all(
+        blocks.where(type == 'networking_config').any(
+          _.blocks.where(type == 'inbound_networking_config').any(arguments['endpoint_mode'] == 'PRIVATE')
+        ) ||
+        blocks.where(type == 'inbound_auth_config').any(
+          arguments['inbound_auth_config_type'] != null && arguments['inbound_auth_config_type'] != 'NO_AUTH_CONFIG'
+        )
+      )
+  - uid: mondoo-oci-security-genai-hosted-application-authentication-required-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'oci_generative_ai_hosted_application')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'oci_generative_ai_hosted_application').all(
+        change.after['networking_config'] != empty && change.after['networking_config'].any(
+          _['inbound_networking_config'] != empty && _['inbound_networking_config'].any(_['endpoint_mode'] == 'PRIVATE')
+        ) ||
+        change.after['inbound_auth_config'] != empty && change.after['inbound_auth_config'].any(
+          _['inbound_auth_config_type'] != null && _['inbound_auth_config_type'] != 'NO_AUTH_CONFIG'
+        )
+      )
+  - uid: mondoo-oci-security-genai-hosted-application-authentication-required-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'oci_generative_ai_hosted_application')
+    mql: |
+      terraform.state.resources.where(type == 'oci_generative_ai_hosted_application').all(
+        values['networking_config'] != empty && values['networking_config'].any(
+          _['inbound_networking_config'] != empty && _['inbound_networking_config'].any(_['endpoint_mode'] == 'PRIVATE')
+        ) ||
+        values['inbound_auth_config'] != empty && values['inbound_auth_config'].any(
+          _['inbound_auth_config_type'] != null && _['inbound_auth_config_type'] != 'NO_AUTH_CONFIG'
+        )
+      )
+  - uid: mondoo-oci-security-genai-hosted-application-secrets-in-vault
+    title: Ensure Generative AI hosted applications read credentials from OCI Vault
+    impact: 75
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-15
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-308-a-5-ii-d-security-awareness-training-and-tools-password-management
+      compliance/iso-27001-2022: iso-27001-2022-a-5-17
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-7
+      compliance/owasp-llm-top-10-2025: owasp-llm-top-10-2025-llm02
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a07
+      compliance/pci-dss-4: pcidss-requirement-8-6-2
+      compliance/soc2-2017: soc2-control-cc6-1-9
+      compliance/vda-isa-5: vda-isa-5-4-1-3
+    variants:
+      - uid: mondoo-oci-security-genai-hosted-application-secrets-in-vault-oci
+        tags:
+          mondoo.com/filter-title: OCI
+          mondoo.com/filter-icon: oci
+      - uid: mondoo-oci-security-genai-hosted-application-secrets-in-vault-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-genai-hosted-application-secrets-in-vault-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-genai-hosted-application-secrets-in-vault-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check verifies that every environment variable on an OCI Generative AI hosted application whose name marks it as a credential takes its value from a vault secret.
+
+        A hosted application receives configuration through environment variables of two types. A plaintext variable stores its value in the application definition. A vault variable stores only a reference to an OCI Vault secret, and the service hands the reference to the container at runtime. The check looks at variables whose names contain password, secret, token, API key, access key, private key, or credential, and requires each one to be a vault variable. Variable values are never read by the scan.
+
+        **Why this matters**
+
+        A plaintext value is part of the application's configuration record. Everyone who can read the application can read the value, it is returned by the API, and it appears in every infrastructure-as-code file and state file that describes the application. An agent's configuration typically carries the keys to the systems it acts on, such as model provider keys, database passwords, and tokens for the tools it calls, so this is the place where a read-only role on the application quietly becomes write access to everything behind it.
+
+        A vault secret keeps the value in a store with its own access policy, audit trail, and rotation. The application definition then holds a pointer that is useless on its own, and rotating the credential no longer means editing and redeploying the application.
+
+        The match is by name, so a credential stored under an unremarkable name is not caught, and a non-secret variable whose name contains one of the words is flagged. Rename such a variable rather than leave a known exception in place.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the OCI Console.
+        2. Open **Analytics & AI > Generative AI > Applications** and select an application.
+        3. Review the environment variables and their types.
+
+        A passing application stores every credential-named variable as a vault variable. A failing application stores one or more of them as plaintext.
+
+        ### Audit via CLI
+
+        1. Show the names and types of an application's environment variables:
+
+        ```bash
+        oci generative-ai hosted-application get --hosted-application-id <hosted-application-ocid> \
+          --query 'data."environment-variables"[].{name:name,type:type}'
+        ```
+
+        A failing application lists a credential-named variable with type `PLAINTEXT`.
+      remediation:
+        - id: console
+          desc: |
+            Move each credential into OCI Vault and reference it from the application:
+
+            1. Create a secret in OCI Vault for each credential.
+            2. Open **Analytics & AI > Generative AI > Applications** and edit the application.
+            3. Replace each plaintext credential variable with a vault variable that names the vault and the secret.
+            4. Save the change and rotate the credentials that were stored in plaintext, since their values were exposed in the configuration.
+        - id: cli
+          desc: |
+            Replace the environment variables with a list in which each credential is a vault variable. The update replaces the whole list, so include every variable the application needs:
+
+            ```bash
+            oci generative-ai hosted-application update --hosted-application-id <hosted-application-ocid> \
+              --environment-variables '[{"name": "MODEL_API_KEY", "type": "VAULT", "value": {"vaultId": "<vault-ocid>", "key": "<secret-name>"}}, {"name": "LOG_LEVEL", "type": "PLAINTEXT", "value": "info"}]'
+            ```
+
+            Rotate every credential that was stored in plaintext.
+        - id: terraform
+          desc: |
+            Declare credential variables with `type = "VAULT"` and keep their values out of the configuration:
+
+            ```hcl
+            resource "oci_generative_ai_hosted_application" "agent" {
+              compartment_id = var.compartment_ocid
+              display_name   = "support-agent"
+
+              environment_variables {
+                name  = "MODEL_API_KEY"
+                type  = "VAULT"
+                value = jsonencode({ vaultId = var.vault_ocid, key = var.model_api_key_secret_name })
+              }
+            }
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/generative-ai/create-application.htm
+        title: OCI - Creating an Application
+  - uid: mondoo-oci-security-genai-hosted-application-secrets-in-vault-oci
+    filters: asset.platform == "oci"
+    mql: |
+      oci.ai.generativeAi.hostedApplications.where(state != "DELETED" && state != "DELETING").all(
+        vaultEnvironmentVariableNames.containsAll(
+          environmentVariableNames.where(_ == /(?i)(password|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|credential)/)
+        )
+      )
+  - uid: mondoo-oci-security-genai-hosted-application-secrets-in-vault-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'oci_generative_ai_hosted_application')
+    mql: |
+      terraform.resources('oci_generative_ai_hosted_application').all(
+        blocks.where(type == 'environment_variables' && arguments['name'] == /(?i)(password|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|credential)/).all(
+          arguments['type'] == 'VAULT'
+        )
+      )
+  - uid: mondoo-oci-security-genai-hosted-application-secrets-in-vault-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'oci_generative_ai_hosted_application')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'oci_generative_ai_hosted_application').all(
+        change.after['environment_variables'] == empty ||
+        change.after['environment_variables'].where(_['name'] == /(?i)(password|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|credential)/).all(
+          _['type'] == 'VAULT'
+        )
+      )
+  - uid: mondoo-oci-security-genai-hosted-application-secrets-in-vault-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'oci_generative_ai_hosted_application')
+    mql: |
+      terraform.state.resources.where(type == 'oci_generative_ai_hosted_application').all(
+        values['environment_variables'] == empty ||
+        values['environment_variables'].where(_['name'] == /(?i)(password|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|credential)/).all(
+          _['type'] == 'VAULT'
+        )
+      )
+  - uid: mondoo-oci-security-genai-hosted-deployment-vulnerability-scan-required
+    title: Ensure Generative AI hosted deployments require an image vulnerability scan
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-tvm-07
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-8
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-id-ra-1
+      compliance/nist-csf-2: nist-csf-2-id-ra-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ra-5
+      compliance/nist-sp-800-171: nist-sp-800-171--3-11-2
+      compliance/owasp-llm-top-10-2025: owasp-llm-top-10-2025-llm03
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a03
+      compliance/pci-dss-4: pcidss-requirement-6-3-1
+      compliance/soc2-2017: soc2-control-cc7-1-5
+      compliance/vda-isa-5: vda-isa-5-5-2-5
+    variants:
+      - uid: mondoo-oci-security-genai-hosted-deployment-vulnerability-scan-required-oci
+        tags:
+          mondoo.com/filter-title: OCI
+          mondoo.com/filter-icon: oci
+      - uid: mondoo-oci-security-genai-hosted-deployment-vulnerability-scan-required-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-genai-hosted-deployment-vulnerability-scan-required-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-genai-hosted-deployment-vulnerability-scan-required-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check verifies that the active container image of every OCI Generative AI hosted deployment had to pass a vulnerability scan before it could run.
+
+        A hosted deployment runs one artifact of its hosted application at a time, a container image pulled from OCI Container Registry. Each artifact carries a flag that requires an OCI Vulnerability Scanning Service compliance report for the image before the artifact can become active. The flag defaults to off, in which case the artifact activates without waiting for any scan result. The check requires the flag on the active artifact of every deployment.
+
+        **Why this matters**
+
+        The image is the agent. Its base layers, language runtime, and the libraries that call models, parse documents, and talk to tools are all third-party code, and AI application stacks pull in a long tail of fast-moving packages. A known vulnerability in any of them runs with the agent's credentials and network access as soon as the deployment goes live.
+
+        Requiring the scan turns the registry's vulnerability report into a gate rather than a report someone might read later. An image that fails is blocked from activating, so the decision to ship a known flaw has to be made explicitly instead of happening by default.
+
+        The scan covers known vulnerabilities in the image contents. It does not judge the application's own logic, so it complements rather than replaces review of the code the image runs.
+      audit: |
+        ### Audit via CLI
+
+        1. List the hosted deployments in a compartment with the scan requirement of their active artifact:
+
+        ```bash
+        oci generative-ai hosted-deployment-collection list-hosted-deployments --compartment-id <compartment-ocid> \
+          --query 'data.items[].{name:"display-name",scanRequired:"active-artifact"."is-vulnerability-scan-required"}'
+        ```
+
+        A passing deployment reports `true`. A failing deployment reports `false` or no value.
+      remediation:
+        - id: cli
+          desc: |
+            Add a new artifact that requires the scan, then activate it so it replaces the current one:
+
+            1. Add the artifact with the scan requirement set:
+
+            ```bash
+            oci generative-ai hosted-deployment add --hosted-deployment-id <hosted-deployment-ocid> \
+              --artifact '{"artifactType": "SIMPLE_DOCKER_ARTIFACT", "containerUri": "<region>.ocir.io/<namespace>/<repository>", "tag": "<tag>", "isVulnerabilityScanRequired": true}'
+            ```
+
+            2. Activate the new artifact from the deployment's **Artifacts** list in the Console once it has passed the scan.
+        - id: terraform
+          desc: |
+            Set `is_vulnerability_scan_required` on the deployment's active artifact:
+
+            ```hcl
+            resource "oci_generative_ai_hosted_deployment" "agent" {
+              compartment_id        = var.compartment_ocid
+              hosted_application_id = oci_generative_ai_hosted_application.agent.id
+
+              active_artifact {
+                artifact_type                  = "SIMPLE_DOCKER_ARTIFACT"
+                container_uri                  = var.container_uri
+                tag                            = var.image_tag
+                is_vulnerability_scan_required = true
+              }
+            }
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/generative-ai/create-deployment.htm
+        title: OCI - Creating a Deployment
+      - url: https://docs.oracle.com/en-us/iaas/Content/scanning/home.htm
+        title: OCI - Vulnerability Scanning
+  - uid: mondoo-oci-security-genai-hosted-deployment-vulnerability-scan-required-oci
+    filters: asset.platform == "oci"
+    mql: |
+      oci.ai.generativeAi.hostedApplications.where(state != "DELETED" && state != "DELETING").all(
+        hostedDeployments.where(state != "DELETED" && state != "DELETING").all(activeArtifactVulnerabilityScanRequired == true)
+      )
+  - uid: mondoo-oci-security-genai-hosted-deployment-vulnerability-scan-required-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'oci_generative_ai_hosted_deployment')
+    mql: |
+      terraform.resources('oci_generative_ai_hosted_deployment').all(
+        blocks.where(type == 'active_artifact') != empty &&
+        blocks.where(type == 'active_artifact').all(arguments['is_vulnerability_scan_required'] == true)
+      )
+  - uid: mondoo-oci-security-genai-hosted-deployment-vulnerability-scan-required-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'oci_generative_ai_hosted_deployment')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'oci_generative_ai_hosted_deployment').all(
+        change.after['active_artifact'] != empty &&
+        change.after['active_artifact'].all(_['is_vulnerability_scan_required'] == true)
+      )
+  - uid: mondoo-oci-security-genai-hosted-deployment-vulnerability-scan-required-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'oci_generative_ai_hosted_deployment')
+    mql: |
+      terraform.state.resources.where(type == 'oci_generative_ai_hosted_deployment').all(
+        values['active_artifact'] != empty &&
+        values['active_artifact'].all(_['is_vulnerability_scan_required'] == true)
+      )
+  # No Terraform variants: the oci_generative_ai_project resource has no sandbox configuration block, so the
+  # sandbox network policy can only be read from the Generative AI API at runtime.
+  - uid: mondoo-oci-security-genai-project-sandbox-egress-restricted
+    title: Ensure Generative AI code sandboxes restrict outbound network access
+    impact: 75
+    filters: asset.platform == "oci"
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
+      compliance/owasp-llm-top-10-2025: owasp-llm-top-10-2025-llm02
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-1-3-2
+      compliance/soc2-2017: soc2-control-cc6-6-4
+      compliance/vda-isa-5: vda-isa-5-5-2-6
+    mql: |
+      # A CUSTOM sandbox leaves through a customer subnet, where the VCN's own egress
+      # controls apply. A MANAGED sandbox must name a policy other than ALLOW_ALL; the
+      # policy reads null when the project reports none, which fails.
+      oci.ai.generativeAi.projects.where(state != "DELETED" && state != "DELETING").all(
+        sandboxEnabled == false ||
+        sandboxOutboundNetworkMode == "CUSTOM" ||
+        sandboxNetworkPolicyMode != empty && sandboxNetworkPolicyMode != "ALLOW_ALL"
+      )
+    docs:
+      desc: |
+        This check verifies that no OCI Generative AI project lets its code sandboxes open connections to any destination on the internet.
+
+        A Generative AI project can enable code sandboxes, isolated containers in which agents run code. Every sandbox in a project shares the project's outbound networking. In managed mode the service owns the network path and the project's network policy decides where traffic may go: deny all outbound access, allow selected domains only, or allow all outbound access. In custom mode the traffic leaves through a subnet in the customer's virtual cloud network, and the network's own route tables and security rules decide. The check passes a project whose sandbox is disabled, uses custom networking, or uses a managed policy other than allow all. A managed sandbox that reports no policy fails.
+
+        **Why this matters**
+
+        The code a sandbox runs is written by a model, and the model writes what its context tells it to. A prompt injection planted in a document, web page, or tool result can therefore become code that reads whatever the sandbox can reach and sends it out. Projects can also inject credential profiles into outbound requests, which makes an open egress path a route for those credentials as well as for data.
+
+        Restricting egress is the control that still holds after the model has been manipulated. With outbound access denied or limited to the domains the workload needs, injected code can run but has nowhere to send what it finds.
+
+        Allowing selected domains is the usual working setting, because sandboxes typically need to download packages or call specific services. List those destinations explicitly rather than opening all outbound access.
+      audit: |
+        ### Audit via CLI
+
+        1. List projects in a compartment:
+
+        ```bash
+        oci generative-ai generative-ai-project-collection list-generative-ai-projects --compartment-id <compartment-ocid> \
+          --query 'data.items[].{name:"display-name",id:id}'
+        ```
+
+        2. Inspect the sandbox configuration of a project:
+
+        ```bash
+        oci generative-ai generative-ai-project get --generative-ai-project-id <project-ocid> \
+          --query 'data."sandbox-config"'
+        ```
+
+        A failing project has the sandbox enabled with a `MANAGED` network mode whose network policy mode is `ALLOW_ALL`.
+      remediation:
+        - id: cli
+          desc: |
+            Replace the project's sandbox configuration with a managed network policy that allows only the domains the workload needs. The update replaces the whole sandbox configuration, so carry over any credential profiles the project uses:
+
+            ```bash
+            oci generative-ai generative-ai-project update --generative-ai-project-id <project-ocid> \
+              --sandbox-config '{"isEnabled": true, "sandboxOutboundNetworkingConfig": {"networkMode": "MANAGED", "networkPolicy": {"mode": "ALLOW", "allowedDomains": [{"hostnames": ["pypi.org", "files.pythonhosted.org"], "ports": [443]}]}}}'
+            ```
+
+            Use `{"mode": "DENY_ALL"}` as the network policy when the sandboxes need no outbound access.
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/generative-ai/sandbox-networking.htm
+        title: OCI - Networking for Sandboxes
+  # No Terraform variants: the OCI Terraform provider has no resource for Generative AI API keys, so key
+  # expiry can only be read from the Generative AI API at runtime.
+  - uid: mondoo-oci-security-genai-api-key-max-lifetime
+    title: Ensure Generative AI API keys expire within one year of creation
+    impact: 60
+    filters: asset.platform == "oci"
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-15
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-d-person-or-entity-authentication
+      compliance/iso-27001-2022: iso-27001-2022-a-5-17
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
+      compliance/nist-sp-800-171: false
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a07
+      compliance/pci-dss-4: pcidss-requirement-8-6-3
+      compliance/soc2-2017: soc2-control-cc6-1-9
+      compliance/vda-isa-5: vda-isa-5-4-1-3
+    mql: |
+      oci.ai.generativeAi.apiKeys.where(state != "DELETED" && state != "DELETING").all(
+        keys.where(state == "ACTIVE").all(timeExpiry != empty && timeExpiry - created <= 365 * time.day)
+      )
+    docs:
+      desc: |
+        This check verifies that every active key of an OCI Generative AI API key expires no more than one year after it was created.
+
+        A Generative AI API key resource holds up to two keys, each a bearer credential that calls Generative AI models without an OCI signing key. Each key carries an expiration time. The Console proposes three months from creation and accepts a later date. The check requires each active key to have an expiration time no more than 365 days after the key was created.
+
+        **Why this matters**
+
+        A bearer key works for whoever holds it. It is pasted into application configuration, notebooks, CI variables, and chat messages, and every copy stays valid until the key expires or someone revokes it. The expiry date is the upper bound on how long a copy that nobody knows about remains useful.
+
+        A key that lives for years outlasts the application, the team, and the people who handled it, and model access is directly billable, so a leaked long-lived key is both a data path to whatever the models are allowed to see and an open line of spend.
+
+        Renewing a key replaces its value and sets a new expiry. Plan the renewal into the application's deployment, and keep the second key slot for overlap so callers can move to the new value before the old one stops working.
+      audit: |
+        ### Audit via CLI
+
+        1. List the API keys in a compartment:
+
+        ```bash
+        oci generative-ai api-key-collection list-api-keys --compartment-id <compartment-ocid> \
+          --query 'data.items[].{name:"display-name",id:id}'
+        ```
+
+        2. Inspect the keys held by one API key:
+
+        ```bash
+        oci generative-ai api-key get --api-key-id <api-key-ocid> \
+          --query 'data.keys[].{name:"key-name",state:"key-state",created:"time-created",expires:"time-expiry"}'
+        ```
+
+        A failing key is active and expires more than 365 days after it was created.
+      remediation:
+        - id: console
+          desc: |
+            Replace keys with an excessive lifetime:
+
+            1. Open the Generative AI **API keys** list page and select the API key.
+            2. Renew the failing key with an expiration date no more than one year away.
+            3. Update the applications that use the key with the new value.
+        - id: cli
+          desc: |
+            Renew the key with a bounded expiry. Renewing issues a new value, so update its callers afterward:
+
+            ```bash
+            oci generative-ai api-key renew --api-key-id <api-key-ocid> \
+              --details '{"keyName": "<key-name>", "timeExpiry": "<expiry-within-one-year>"}'
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/generative-ai/create-api-key.htm
+        title: OCI - Creating an API Key
+  - uid: mondoo-oci-security-genai-agent-endpoint-prompt-injection-guardrail
+    title: Ensure Generative AI agent endpoints enable the prompt injection guardrail
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: false
+      compliance/dora: false
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-26
+      compliance/nis-2: false
+      compliance/nist-ai-100-1: nist-ai-100-1-measure-2-7
+      compliance/nist-csf-1: false
+      compliance/nist-csf-2: false
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-10
+      compliance/nist-sp-800-171: false
+      compliance/owasp-llm-top-10-2025: owasp-llm-top-10-2025-llm01
+      compliance/owasp-top-10-2025: false
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: false
+    variants:
+      - uid: mondoo-oci-security-genai-agent-endpoint-prompt-injection-guardrail-oci
+        tags:
+          mondoo.com/filter-title: OCI
+          mondoo.com/filter-icon: oci
+      - uid: mondoo-oci-security-genai-agent-endpoint-prompt-injection-guardrail-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-genai-agent-endpoint-prompt-injection-guardrail-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-genai-agent-endpoint-prompt-injection-guardrail-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check verifies that every OCI Generative AI Agents endpoint screens user input for prompt injection.
+
+        An agent endpoint is how clients reach a deployed agent, and it carries the agent's guardrail configuration. The prompt injection guardrail inspects user prompts for instructions that try to override the agent's own, and runs in one of three modes: block, which applies the protection, inform, which flags the attempt to the user without blocking it, and disable. The check requires the guardrail to be set to block or inform. Block is the recommended mode.
+
+        **Why this matters**
+
+        An agent is a model with tools. It can query knowledge bases, run SQL, and call functions and APIs on the caller's behalf, which means a prompt that persuades it to ignore its instructions can turn those tools against the data and systems behind them. A model endpoint that only generates text leaks text when it is subverted; an agent endpoint takes action.
+
+        Prompt injection is also the attack that needs nothing but access to the chat. No credential theft or network position is required, only a well-crafted message, so the guardrail sits on the shortest path an attacker has.
+
+        The guardrail is a filter, not a guarantee. Pair it with tools that run with the least privilege they need, so a prompt that gets past the filter still cannot reach anything the agent did not need.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the OCI Console.
+        2. Navigate to the Generative AI Agents **Agents** list page and select an agent.
+        3. Under **Resources**, select **Endpoints** and open each endpoint.
+        4. Review the **Prompt injection (PI) protection** guardrail.
+
+        A passing endpoint shows block or inform. A failing endpoint shows disable.
+
+        ### Audit via CLI
+
+        1. List agent endpoints in a compartment:
+
+        ```bash
+        oci generative-ai-agent agent-endpoint list --compartment-id <compartment-ocid> \
+          --query 'data.items[].{name:"display-name",id:id}'
+        ```
+
+        2. Inspect the guardrail configuration of one endpoint:
+
+        ```bash
+        oci generative-ai-agent agent-endpoint get --agent-endpoint-id <agent-endpoint-ocid> \
+          --query 'data."guardrail-config"'
+        ```
+
+        A failing endpoint has no prompt injection configuration, or its input guardrail mode is `DISABLE`.
+      remediation:
+        - id: console
+          desc: |
+            Turn on the prompt injection guardrail:
+
+            1. Open the agent's **Endpoints** list and select the endpoint.
+            2. Edit the endpoint and set **Prompt injection (PI) protection** to **Block**.
+            3. Save the change.
+        - id: cli
+          desc: |
+            Set the guardrail configuration on the endpoint. The update replaces the whole configuration, so include the content moderation and personal information settings the endpoint should keep:
+
+            ```bash
+            oci generative-ai-agent agent-endpoint update --agent-endpoint-id <agent-endpoint-ocid> \
+              --guardrail-config '{"promptInjectionConfig": {"inputGuardrailMode": "BLOCK"}, "contentModerationConfig": {"inputGuardrailMode": "BLOCK", "outputGuardrailMode": "BLOCK"}, "personallyIdentifiableInformationConfig": {"inputGuardrailMode": "BLOCK", "outputGuardrailMode": "BLOCK"}}'
+            ```
+        - id: terraform
+          desc: |
+            Declare the prompt injection guardrail in `guardrail_config`:
+
+            ```hcl
+            resource "oci_generative_ai_agent_agent_endpoint" "support" {
+              agent_id       = oci_generative_ai_agent_agent.support.id
+              compartment_id = var.compartment_ocid
+
+              guardrail_config {
+                prompt_injection_config {
+                  input_guardrail_mode = "BLOCK"
+                }
+              }
+            }
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/generative-ai-agents/create-endpoint.htm
+        title: OCI - Creating an Endpoint in Generative AI Agents
+  - uid: mondoo-oci-security-genai-agent-endpoint-prompt-injection-guardrail-oci
+    filters: asset.platform == "oci"
+    mql: |
+      oci.ai.agents.agentEndpoints.where(state != "DELETED" && state != "DELETING").all(
+        guardrailConfig['promptInjectionConfig']['inputGuardrailMode'] == /^(BLOCK|INFORM)$/
+      )
+  - uid: mondoo-oci-security-genai-agent-endpoint-prompt-injection-guardrail-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'oci_generative_ai_agent_agent_endpoint')
+    mql: |
+      terraform.resources('oci_generative_ai_agent_agent_endpoint').all(
+        blocks.where(type == 'guardrail_config').any(
+          _.blocks.where(type == 'prompt_injection_config').any(arguments['input_guardrail_mode'] == /^(BLOCK|INFORM)$/)
+        )
+      )
+  - uid: mondoo-oci-security-genai-agent-endpoint-prompt-injection-guardrail-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'oci_generative_ai_agent_agent_endpoint')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'oci_generative_ai_agent_agent_endpoint').all(
+        change.after['guardrail_config'] != empty && change.after['guardrail_config'].any(
+          _['prompt_injection_config'] != empty && _['prompt_injection_config'].any(_['input_guardrail_mode'] == /^(BLOCK|INFORM)$/)
+        )
+      )
+  - uid: mondoo-oci-security-genai-agent-endpoint-prompt-injection-guardrail-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'oci_generative_ai_agent_agent_endpoint')
+    mql: |
+      terraform.state.resources.where(type == 'oci_generative_ai_agent_agent_endpoint').all(
+        values['guardrail_config'] != empty && values['guardrail_config'].any(
+          _['prompt_injection_config'] != empty && _['prompt_injection_config'].any(_['input_guardrail_mode'] == /^(BLOCK|INFORM)$/)
+        )
+      )
+  - uid: mondoo-oci-security-genai-agent-endpoint-pii-guardrail
+    title: Ensure Generative AI agent endpoints enable the PII guardrail
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: false
+      compliance/dora: false
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-12
+      compliance/nis-2: false
+      compliance/nist-ai-100-1: nist-ai-100-1-measure-2-10
+      compliance/nist-csf-1: false
+      compliance/nist-csf-2: false
+      compliance/nist-sp-800-53-rev5: false
+      compliance/nist-sp-800-171: false
+      compliance/owasp-llm-top-10-2025: owasp-llm-top-10-2025-llm02
+      compliance/owasp-top-10-2025: false
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: false
+    variants:
+      - uid: mondoo-oci-security-genai-agent-endpoint-pii-guardrail-oci
+        tags:
+          mondoo.com/filter-title: OCI
+          mondoo.com/filter-icon: oci
+      - uid: mondoo-oci-security-genai-agent-endpoint-pii-guardrail-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-genai-agent-endpoint-pii-guardrail-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-genai-agent-endpoint-pii-guardrail-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check verifies that every OCI Generative AI Agents endpoint screens both user input and agent output for personally identifiable information.
+
+        The personally identifiable information guardrail on an agent endpoint inspects prompts, responses, or both for personal data such as names, contact details, and government identifiers. Each direction runs in block, inform, or disable mode. The check requires both the input and the output direction to be set to block or inform. Block is the recommended mode.
+
+        **Why this matters**
+
+        An agent answers from the data its tools can reach: knowledge bases built from document stores, databases it can query, and APIs it can call. Personal data in those sources reaches the conversation whenever a question touches it, and the person asking is not necessarily someone entitled to see it. Output screening is the control that catches personal data on its way out of the agent, regardless of which tool surfaced it.
+
+        Input screening covers the other direction. Users paste customer records and support tickets into chats, and what goes into a prompt is retained in session history, traces, and any output bucket the endpoint writes to. Blocking it at the endpoint keeps it out of every one of those places at once.
+
+        Screening both directions is what makes the guardrail meaningful, because a gap in either direction is the gap personal data flows through.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the OCI Console.
+        2. Navigate to the Generative AI Agents **Agents** list page and select an agent.
+        3. Under **Resources**, select **Endpoints** and open each endpoint.
+        4. Review the **Personally identifiable information (PII) protection** guardrail for input and output.
+
+        A passing endpoint shows block or inform for both input and output. A failing endpoint disables either one.
+
+        ### Audit via CLI
+
+        1. Inspect the guardrail configuration of an endpoint:
+
+        ```bash
+        oci generative-ai-agent agent-endpoint get --agent-endpoint-id <agent-endpoint-ocid> \
+          --query 'data."guardrail-config"."personally-identifiable-information-config"'
+        ```
+
+        A failing endpoint returns nothing, or has an input or output guardrail mode of `DISABLE`.
+      remediation:
+        - id: console
+          desc: |
+            Turn on the personal information guardrail in both directions:
+
+            1. Open the agent's **Endpoints** list and select the endpoint.
+            2. Edit the endpoint and set **Personally identifiable information (PII) protection** to **Block** for both input and output.
+            3. Save the change.
+        - id: cli
+          desc: |
+            Set the guardrail configuration on the endpoint. The update replaces the whole configuration, so include the prompt injection and content moderation settings the endpoint should keep:
+
+            ```bash
+            oci generative-ai-agent agent-endpoint update --agent-endpoint-id <agent-endpoint-ocid> \
+              --guardrail-config '{"personallyIdentifiableInformationConfig": {"inputGuardrailMode": "BLOCK", "outputGuardrailMode": "BLOCK"}, "promptInjectionConfig": {"inputGuardrailMode": "BLOCK"}, "contentModerationConfig": {"inputGuardrailMode": "BLOCK", "outputGuardrailMode": "BLOCK"}}'
+            ```
+        - id: terraform
+          desc: |
+            Declare the personal information guardrail for both directions in `guardrail_config`:
+
+            ```hcl
+            resource "oci_generative_ai_agent_agent_endpoint" "support" {
+              agent_id       = oci_generative_ai_agent_agent.support.id
+              compartment_id = var.compartment_ocid
+
+              guardrail_config {
+                personally_identifiable_information_config {
+                  input_guardrail_mode  = "BLOCK"
+                  output_guardrail_mode = "BLOCK"
+                }
+              }
+            }
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/generative-ai-agents/create-endpoint.htm
+        title: OCI - Creating an Endpoint in Generative AI Agents
+  - uid: mondoo-oci-security-genai-agent-endpoint-pii-guardrail-oci
+    filters: asset.platform == "oci"
+    mql: |
+      oci.ai.agents.agentEndpoints.where(state != "DELETED" && state != "DELETING").all(
+        guardrailConfig['personallyIdentifiableInformationConfig']['inputGuardrailMode'] == /^(BLOCK|INFORM)$/ &&
+        guardrailConfig['personallyIdentifiableInformationConfig']['outputGuardrailMode'] == /^(BLOCK|INFORM)$/
+      )
+  - uid: mondoo-oci-security-genai-agent-endpoint-pii-guardrail-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'oci_generative_ai_agent_agent_endpoint')
+    mql: |
+      terraform.resources('oci_generative_ai_agent_agent_endpoint').all(
+        blocks.where(type == 'guardrail_config').any(
+          _.blocks.where(type == 'personally_identifiable_information_config').any(
+            arguments['input_guardrail_mode'] == /^(BLOCK|INFORM)$/ &&
+            arguments['output_guardrail_mode'] == /^(BLOCK|INFORM)$/
+          )
+        )
+      )
+  - uid: mondoo-oci-security-genai-agent-endpoint-pii-guardrail-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'oci_generative_ai_agent_agent_endpoint')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'oci_generative_ai_agent_agent_endpoint').all(
+        change.after['guardrail_config'] != empty && change.after['guardrail_config'].any(
+          _['personally_identifiable_information_config'] != empty && _['personally_identifiable_information_config'].any(
+            _['input_guardrail_mode'] == /^(BLOCK|INFORM)$/ &&
+            _['output_guardrail_mode'] == /^(BLOCK|INFORM)$/
+          )
+        )
+      )
+  - uid: mondoo-oci-security-genai-agent-endpoint-pii-guardrail-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'oci_generative_ai_agent_agent_endpoint')
+    mql: |
+      terraform.state.resources.where(type == 'oci_generative_ai_agent_agent_endpoint').all(
+        values['guardrail_config'] != empty && values['guardrail_config'].any(
+          _['personally_identifiable_information_config'] != empty && _['personally_identifiable_information_config'].any(
+            _['input_guardrail_mode'] == /^(BLOCK|INFORM)$/ &&
+            _['output_guardrail_mode'] == /^(BLOCK|INFORM)$/
+          )
+        )
+      )
+  - uid: mondoo-oci-security-genai-agent-endpoint-content-moderation
+    title: Ensure Generative AI agent endpoints moderate input and output content
+    impact: 60
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: false
+      compliance/dora: false
+      compliance/hipaa: false
+      compliance/iso-27001-2022: false
+      compliance/nis-2: false
+      compliance/nist-ai-100-1: nist-ai-100-1-measure-2-6
+      compliance/nist-csf-1: false
+      compliance/nist-csf-2: false
+      compliance/nist-sp-800-53-rev5: false
+      compliance/nist-sp-800-171: false
+      compliance/owasp-llm-top-10-2025: owasp-llm-top-10-2025-llm05
+      compliance/owasp-top-10-2025: false
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: false
+    variants:
+      - uid: mondoo-oci-security-genai-agent-endpoint-content-moderation-oci
+        tags:
+          mondoo.com/filter-title: OCI
+          mondoo.com/filter-icon: oci
+      - uid: mondoo-oci-security-genai-agent-endpoint-content-moderation-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-genai-agent-endpoint-content-moderation-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-genai-agent-endpoint-content-moderation-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check verifies that every OCI Generative AI Agents endpoint moderates both the prompts it receives and the responses it returns.
+
+        An agent endpoint offers content moderation through two settings. The older content moderation configuration turns moderation on for input, output, or both. The guardrail configuration has its own content moderation guardrail, set per direction to block, inform, or disable. The check passes each direction when either setting covers it: the older setting is on, or the guardrail is set to block or inform.
+
+        **Why this matters**
+
+        An agent's output is assembled from retrieved documents, tool results, and model generation, and any of them can carry harmful material into a response. Without moderation on output, what the agent shows a user is whatever that combination produced. Without moderation on input, the agent processes abusive or disallowed requests and hands them to the same tools and data sources it uses for legitimate ones.
+
+        The organization answers for what its agent says. An agent exposed to customers or employees that produces harassment, violent content, or other disallowed material is a reputational and legal event, and the volume an endpoint can produce means a single abuse pattern repeats quickly.
+
+        Moderation completes the guardrail set alongside prompt injection and personal information protection. Turning on only some of them leaves the remaining gap for whoever probes the endpoint.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the OCI Console.
+        2. Navigate to the Generative AI Agents **Agents** list page and select an agent.
+        3. Under **Resources**, select **Endpoints** and open each endpoint.
+        4. Review the **Content moderation** guardrail for input and output.
+
+        A passing endpoint moderates both input and output. A failing endpoint leaves either one unmoderated.
+
+        ### Audit via CLI
+
+        1. Inspect both content moderation settings of an endpoint:
+
+        ```bash
+        oci generative-ai-agent agent-endpoint get --agent-endpoint-id <agent-endpoint-ocid> \
+          --query 'data.{legacy:"content-moderation-config",guardrail:"guardrail-config"."content-moderation-config"}'
+        ```
+
+        A failing endpoint has neither setting enabled for input, or neither enabled for output.
+      remediation:
+        - id: console
+          desc: |
+            Turn on content moderation in both directions:
+
+            1. Open the agent's **Endpoints** list and select the endpoint.
+            2. Edit the endpoint and set the **Content moderation** guardrail to **Block** for both input and output.
+            3. Save the change.
+        - id: cli
+          desc: |
+            Set the guardrail configuration on the endpoint. The update replaces the whole configuration, so include the prompt injection and personal information settings the endpoint should keep:
+
+            ```bash
+            oci generative-ai-agent agent-endpoint update --agent-endpoint-id <agent-endpoint-ocid> \
+              --guardrail-config '{"contentModerationConfig": {"inputGuardrailMode": "BLOCK", "outputGuardrailMode": "BLOCK"}, "promptInjectionConfig": {"inputGuardrailMode": "BLOCK"}, "personallyIdentifiableInformationConfig": {"inputGuardrailMode": "BLOCK", "outputGuardrailMode": "BLOCK"}}'
+            ```
+        - id: terraform
+          desc: |
+            Declare the content moderation guardrail for both directions in `guardrail_config`:
+
+            ```hcl
+            resource "oci_generative_ai_agent_agent_endpoint" "support" {
+              agent_id       = oci_generative_ai_agent_agent.support.id
+              compartment_id = var.compartment_ocid
+
+              guardrail_config {
+                content_moderation_config {
+                  input_guardrail_mode  = "BLOCK"
+                  output_guardrail_mode = "BLOCK"
+                }
+              }
+            }
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/generative-ai-agents/create-endpoint.htm
+        title: OCI - Creating an Endpoint in Generative AI Agents
+  - uid: mondoo-oci-security-genai-agent-endpoint-content-moderation-oci
+    filters: asset.platform == "oci"
+    mql: |
+      # The older content moderation booleans and the newer guardrail modes both moderate
+      # traffic, so each direction passes when either one covers it.
+      oci.ai.agents.agentEndpoints.where(state != "DELETED" && state != "DELETING").all(
+        contentModerationOnInput == true || guardrailConfig['contentModerationConfig']['inputGuardrailMode'] == /^(BLOCK|INFORM)$/
+      )
+      oci.ai.agents.agentEndpoints.where(state != "DELETED" && state != "DELETING").all(
+        contentModerationOnOutput == true || guardrailConfig['contentModerationConfig']['outputGuardrailMode'] == /^(BLOCK|INFORM)$/
+      )
+  - uid: mondoo-oci-security-genai-agent-endpoint-content-moderation-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'oci_generative_ai_agent_agent_endpoint')
+    mql: |
+      terraform.resources('oci_generative_ai_agent_agent_endpoint').all(
+        blocks.where(type == 'content_moderation_config').any(arguments['should_enable_on_input'] == true) ||
+        blocks.where(type == 'guardrail_config').any(
+          _.blocks.where(type == 'content_moderation_config').any(arguments['input_guardrail_mode'] == /^(BLOCK|INFORM)$/)
+        )
+      )
+      terraform.resources('oci_generative_ai_agent_agent_endpoint').all(
+        blocks.where(type == 'content_moderation_config').any(arguments['should_enable_on_output'] == true) ||
+        blocks.where(type == 'guardrail_config').any(
+          _.blocks.where(type == 'content_moderation_config').any(arguments['output_guardrail_mode'] == /^(BLOCK|INFORM)$/)
+        )
+      )
+  - uid: mondoo-oci-security-genai-agent-endpoint-content-moderation-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'oci_generative_ai_agent_agent_endpoint')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'oci_generative_ai_agent_agent_endpoint').all(
+        change.after['content_moderation_config'] != empty && change.after['content_moderation_config'].any(_['should_enable_on_input'] == true) ||
+        change.after['guardrail_config'] != empty && change.after['guardrail_config'].any(
+          _['content_moderation_config'] != empty && _['content_moderation_config'].any(_['input_guardrail_mode'] == /^(BLOCK|INFORM)$/)
+        )
+      )
+      terraform.plan.resourceChanges.where(type == 'oci_generative_ai_agent_agent_endpoint').all(
+        change.after['content_moderation_config'] != empty && change.after['content_moderation_config'].any(_['should_enable_on_output'] == true) ||
+        change.after['guardrail_config'] != empty && change.after['guardrail_config'].any(
+          _['content_moderation_config'] != empty && _['content_moderation_config'].any(_['output_guardrail_mode'] == /^(BLOCK|INFORM)$/)
+        )
+      )
+  - uid: mondoo-oci-security-genai-agent-endpoint-content-moderation-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'oci_generative_ai_agent_agent_endpoint')
+    mql: |
+      terraform.state.resources.where(type == 'oci_generative_ai_agent_agent_endpoint').all(
+        values['content_moderation_config'] != empty && values['content_moderation_config'].any(_['should_enable_on_input'] == true) ||
+        values['guardrail_config'] != empty && values['guardrail_config'].any(
+          _['content_moderation_config'] != empty && _['content_moderation_config'].any(_['input_guardrail_mode'] == /^(BLOCK|INFORM)$/)
+        )
+      )
+      terraform.state.resources.where(type == 'oci_generative_ai_agent_agent_endpoint').all(
+        values['content_moderation_config'] != empty && values['content_moderation_config'].any(_['should_enable_on_output'] == true) ||
+        values['guardrail_config'] != empty && values['guardrail_config'].any(
+          _['content_moderation_config'] != empty && _['content_moderation_config'].any(_['output_guardrail_mode'] == /^(BLOCK|INFORM)$/)
+        )
+      )
   - uid: mondoo-oci-security-datascience-notebook-private-endpoint
     title: Ensure Data Science notebook sessions use a private endpoint
     impact: 70
@@ -12979,6 +14025,330 @@ queries:
       terraform.state.resources.where(type == 'oci_datascience_notebook_session').all(
         values['notebook_session_config_details'] != null && values['notebook_session_config_details'].any(_['private_endpoint_id'] != null && _['private_endpoint_id'] != "") ||
         values['notebook_session_configuration_details'] != null && values['notebook_session_configuration_details'].any(_['private_endpoint_id'] != null && _['private_endpoint_id'] != "")
+      )
+  - uid: mondoo-oci-security-datascience-model-deployment-private-endpoint
+    title: Ensure Data Science model deployments use a private endpoint
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/owasp-llm-top-10-2025: owasp-llm-top-10-2025-llm02
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-1-3-1
+      compliance/soc2-2017: soc2-control-cc6-6-4
+      compliance/vda-isa-5: vda-isa-5-5-2-6
+    variants:
+      - uid: mondoo-oci-security-datascience-model-deployment-private-endpoint-oci
+        tags:
+          mondoo.com/filter-title: OCI
+          mondoo.com/filter-icon: oci
+      - uid: mondoo-oci-security-datascience-model-deployment-private-endpoint-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-datascience-model-deployment-private-endpoint-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-datascience-model-deployment-private-endpoint-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check verifies that every OCI Data Science model deployment is reached through a private endpoint inside the customer's virtual cloud network.
+
+        A model deployment serves a trained model over HTTPS. Its endpoint type is either public, which accepts requests from outside a virtual cloud network, or private, which binds the deployment to a Data Science private endpoint in a customer subnet so that inference requests arrive over private addresses. The check requires single-model and model-group deployments to reference a Data Science private endpoint. Flex deployments on a managed compute cluster are not evaluated, because they report no instance network.
+
+        **Why this matters**
+
+        Inference requests carry the inputs the model scores, which for most production models means customer records, transactions, documents, or images, and the responses carry the model's judgment about them. A public endpoint sends that traffic across networks the organization does not control and makes the endpoint addressable by anyone who learns its URL and holds a credential.
+
+        A deployed model is also an asset in its own right. Repeated queries against a reachable endpoint can approximate the model's behavior or probe it for training data it memorized, and the cost of every request lands on the tenancy. Keeping the endpoint private limits who can attempt either to the workloads on the network.
+
+        A private endpoint puts inference traffic under the controls the virtual cloud network already applies, so network security groups decide which workloads may call the model and flow logs record that they did.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the OCI Console.
+        2. Navigate to **Analytics & AI > Data Science**, open a project, and select **Model deployments**.
+        3. Open each deployment and review its endpoint type.
+
+        A passing deployment uses a private endpoint. A failing deployment uses a public endpoint.
+
+        ### Audit via CLI
+
+        1. List model deployments in a compartment:
+
+        ```bash
+        oci data-science model-deployment list --compartment-id <compartment-ocid> \
+          --query 'data[].{name:"display-name",id:id}'
+        ```
+
+        2. Inspect the deployment configuration of one deployment:
+
+        ```bash
+        oci data-science model-deployment get --model-deployment-id <model-deployment-ocid> \
+          --query 'data."model-deployment-configuration-details"'
+        ```
+
+        A passing deployment has a `private-endpoint-id` in its instance configuration. A failing deployment has none.
+      remediation:
+        - id: console
+          desc: |
+            Serve the model through a Data Science private endpoint:
+
+            1. Under **Analytics & AI > Data Science**, create a private endpoint for model deployments in the target VCN.
+            2. Open the model deployment and edit it, or create a replacement deployment.
+            3. Set **Endpoint type** to **Private endpoint** and select the private endpoint.
+            4. Route callers to the deployment over the private network.
+        - id: cli
+          desc: |
+            Update the deployment's instance configuration with the private endpoint:
+
+            ```bash
+            oci data-science model-deployment update --model-deployment-id <model-deployment-ocid> \
+              --model-deployment-configuration-details '{"deploymentType": "SINGLE_MODEL", "modelConfigurationDetails": {"modelId": "<model-ocid>", "instanceConfiguration": {"instanceShapeName": "<shape>", "privateEndpointId": "<private-endpoint-ocid>"}}}'
+            ```
+        - id: terraform
+          desc: |
+            Set `private_endpoint_id` in the deployment's instance configuration:
+
+            ```hcl
+            resource "oci_datascience_model_deployment" "scoring" {
+              compartment_id = var.compartment_ocid
+              project_id     = oci_datascience_project.scoring.id
+
+              model_deployment_configuration_details {
+                deployment_type = "SINGLE_MODEL"
+
+                model_configuration_details {
+                  model_id = oci_datascience_model.scoring.id
+
+                  instance_configuration {
+                    instance_shape_name = "VM.Standard.E4.Flex"
+                    private_endpoint_id = oci_datascience_private_endpoint.scoring.id
+                  }
+                }
+              }
+            }
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/data-science/using/model_dep_create.htm
+        title: OCI - Creating a Model Deployment
+  - uid: mondoo-oci-security-datascience-model-deployment-private-endpoint-oci
+    filters: asset.platform == "oci"
+    mql: |
+      # A flex deployment on a managed compute cluster reports no instance network, so
+      # there is no private endpoint setting to evaluate on it.
+      oci.ai.dataScience.modelDeployments.where(
+        state != "DELETED" && state != "DELETING" && configuration['deploymentType'] != "SINGLE_MODEL_FLEX"
+      ).all(privateEndpoint != empty)
+  - uid: mondoo-oci-security-datascience-model-deployment-private-endpoint-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'oci_datascience_model_deployment')
+    mql: |
+      # Single-model deployments carry the instance configuration under
+      # model_configuration_details, model-group deployments under
+      # infrastructure_configuration_details, so both are searched.
+      terraform.resources('oci_datascience_model_deployment').all(
+        blocks.where(type == 'model_deployment_configuration_details').any(
+          arguments['deployment_type'] == 'SINGLE_MODEL_FLEX' ||
+          _.blocks.where(type == 'model_configuration_details' || type == 'infrastructure_configuration_details').any(
+            _.blocks.where(type == 'instance_configuration').any(
+              arguments['private_endpoint_id'] != null && arguments['private_endpoint_id'] != ""
+            )
+          )
+        )
+      )
+  - uid: mondoo-oci-security-datascience-model-deployment-private-endpoint-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'oci_datascience_model_deployment')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'oci_datascience_model_deployment').all(
+        change.after['model_deployment_configuration_details'] != empty &&
+        change.after['model_deployment_configuration_details'].any(
+          _['deployment_type'] == 'SINGLE_MODEL_FLEX' ||
+          _['model_configuration_details'] != empty && _['model_configuration_details'].any(
+            _['instance_configuration'] != empty && _['instance_configuration'].any(_['private_endpoint_id'] != null && _['private_endpoint_id'] != "")
+          ) ||
+          _['infrastructure_configuration_details'] != empty && _['infrastructure_configuration_details'].any(
+            _['instance_configuration'] != empty && _['instance_configuration'].any(_['private_endpoint_id'] != null && _['private_endpoint_id'] != "")
+          )
+        )
+      )
+  - uid: mondoo-oci-security-datascience-model-deployment-private-endpoint-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'oci_datascience_model_deployment')
+    mql: |
+      terraform.state.resources.where(type == 'oci_datascience_model_deployment').all(
+        values['model_deployment_configuration_details'] != empty &&
+        values['model_deployment_configuration_details'].any(
+          _['deployment_type'] == 'SINGLE_MODEL_FLEX' ||
+          _['model_configuration_details'] != empty && _['model_configuration_details'].any(
+            _['instance_configuration'] != empty && _['instance_configuration'].any(_['private_endpoint_id'] != null && _['private_endpoint_id'] != "")
+          ) ||
+          _['infrastructure_configuration_details'] != empty && _['infrastructure_configuration_details'].any(
+            _['instance_configuration'] != empty && _['instance_configuration'].any(_['private_endpoint_id'] != null && _['private_endpoint_id'] != "")
+          )
+        )
+      )
+  - uid: mondoo-oci-security-datascience-model-deployment-access-logging
+    title: Ensure Data Science model deployments send access logs to OCI Logging
+    impact: 60
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-log-08
+      compliance/dora: dora-art-10
+      compliance/hipaa: hipaa-security-ss164-312-b-audit-controls
+      compliance/iso-27001-2022: iso-27001-2022-a-8-15
+      compliance/nis-2: nis-2-21-2-b
+      compliance/nist-csf-1: nist-csf-1-pr-pt-1
+      compliance/nist-csf-2: nist-csf-2-de-cm-09
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-au-12
+      compliance/nist-sp-800-171: nist-sp-800-171--3-3-1
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a09
+      compliance/pci-dss-4: pcidss-requirement-10-2-1
+      compliance/soc2-2017: soc2-control-cc7-2-1
+      compliance/vda-isa-5: vda-isa-5-5-2-4
+    variants:
+      - uid: mondoo-oci-security-datascience-model-deployment-access-logging-oci
+        tags:
+          mondoo.com/filter-title: OCI
+          mondoo.com/filter-icon: oci
+      - uid: mondoo-oci-security-datascience-model-deployment-access-logging-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-datascience-model-deployment-access-logging-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-datascience-model-deployment-access-logging-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check verifies that every OCI Data Science model deployment writes access logs to a log in OCI Logging.
+
+        A model deployment can emit two categories of logs. Access logs record each request that reaches the inference endpoint, with the time it arrived, the request path, the model latency, the request identifier, and the response status. Predict logs record what the model's own code writes to standard output and standard error. The check requires the access log category to point at an existing log. A deployment that references a log the scan cannot find is reported as an error rather than a pass.
+
+        **Why this matters**
+
+        Access logs are the record of who used the model and when. Without them there is no way to tell a burst of legitimate traffic from someone scraping the model, no way to attribute an abusive request, and no baseline to alert against. Investigations of model extraction, data probing, or cost spikes all start from this log.
+
+        Predict logs do not substitute for access logs. They contain whatever the model code chose to print, which is designed for debugging the model rather than accounting for the requests made to it, and they may not record the request at all.
+
+        Send access logs to a log group with a retention period that matches the organization's audit requirements, and alert on unusual request volume or error rates.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the OCI Console.
+        2. Navigate to **Analytics & AI > Data Science**, open a project, and select **Model deployments**.
+        3. Open each deployment and review its **Logging** configuration.
+
+        A passing deployment names an access log. A failing deployment has no access log configured.
+
+        ### Audit via CLI
+
+        1. Inspect the log configuration of a deployment:
+
+        ```bash
+        oci data-science model-deployment get --model-deployment-id <model-deployment-ocid> \
+          --query 'data."category-log-details".access'
+        ```
+
+        A failing deployment returns nothing.
+      remediation:
+        - id: console
+          desc: |
+            Turn on access logging for the deployment:
+
+            1. Create a custom log for the deployment in OCI Logging, or pick an existing one.
+            2. Open the model deployment and edit it.
+            3. Under **Logging**, select the compartment, log group, and log for access logs.
+            4. Save the change.
+        - id: cli
+          desc: |
+            Point the deployment's access logs at a log in OCI Logging:
+
+            ```bash
+            oci data-science model-deployment update --model-deployment-id <model-deployment-ocid> \
+              --category-log-details '{"access": {"logGroupId": "<log-group-ocid>", "logId": "<log-ocid>"}}'
+            ```
+        - id: terraform
+          desc: |
+            Declare the access log in `category_log_details`:
+
+            ```hcl
+            resource "oci_datascience_model_deployment" "scoring" {
+              compartment_id = var.compartment_ocid
+              project_id     = oci_datascience_project.scoring.id
+
+              category_log_details {
+                access {
+                  log_group_id = oci_logging_log_group.ml.id
+                  log_id       = oci_logging_log.scoring_access.id
+                }
+              }
+
+              model_deployment_configuration_details {
+                deployment_type = "SINGLE_MODEL"
+
+                model_configuration_details {
+                  model_id = oci_datascience_model.scoring.id
+
+                  instance_configuration {
+                    instance_shape_name = "VM.Standard.E4.Flex"
+                  }
+                }
+              }
+            }
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/data-science/using/log-about.htm
+        title: OCI - Logs
+  - uid: mondoo-oci-security-datascience-model-deployment-access-logging-oci
+    filters: asset.platform == "oci"
+    mql: |
+      oci.ai.dataScience.modelDeployments.where(state != "DELETED" && state != "DELETING").all(
+        accessLog != empty
+      )
+  - uid: mondoo-oci-security-datascience-model-deployment-access-logging-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'oci_datascience_model_deployment')
+    mql: |
+      terraform.resources('oci_datascience_model_deployment').all(
+        blocks.where(type == 'category_log_details').any(
+          _.blocks.where(type == 'access').any(arguments['log_id'] != null && arguments['log_id'] != "")
+        )
+      )
+  - uid: mondoo-oci-security-datascience-model-deployment-access-logging-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'oci_datascience_model_deployment')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'oci_datascience_model_deployment').all(
+        change.after['category_log_details'] != empty && change.after['category_log_details'].any(
+          _['access'] != empty && _['access'].any(_['log_id'] != null && _['log_id'] != "")
+        )
+      )
+  - uid: mondoo-oci-security-datascience-model-deployment-access-logging-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'oci_datascience_model_deployment')
+    mql: |
+      terraform.state.resources.where(type == 'oci_datascience_model_deployment').all(
+        values['category_log_details'] != empty && values['category_log_details'].any(
+          _['access'] != empty && _['access'].any(_['log_id'] != null && _['log_id'] != "")
+        )
       )
 
   # ---------------------------------------------------------------------------
