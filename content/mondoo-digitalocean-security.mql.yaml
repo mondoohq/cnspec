@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-digitalocean-security
     name: Mondoo DigitalOcean Security
-    version: 3.0.0
+    version: 3.1.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -35,7 +35,8 @@ policies:
         - App Platform
         - Functions (serverless)
         - Security scanning
-        - GenAI (GradientAI) agents and knowledge bases
+        - GenAI (GradientAI) agents, knowledge bases, and dedicated inference endpoints
+        - Hosted agent connections to external providers
 
         Learn more about scanning DigitalOcean in the [cnspec DigitalOcean documentation](https://mondoo.com/docs/cnspec/cloud/digitalocean).
 
@@ -115,6 +116,10 @@ policies:
           - uid: mondoo-digitalocean-security-gradientai-agent-not-publicly-deployed
           - uid: mondoo-digitalocean-security-gradientai-agent-has-guardrails
           - uid: mondoo-digitalocean-security-gradientai-knowledge-base-not-public
+          - uid: mondoo-digitalocean-security-gradientai-agent-api-key-rotated
+          - uid: mondoo-digitalocean-security-gradientai-dedicated-inference-no-public-endpoint
+          - uid: mondoo-digitalocean-security-hosted-agent-connection-no-admin-scopes
+          - uid: mondoo-digitalocean-security-hosted-agent-connection-grant-not-stale
     scoring_system: highest impact
 queries:
   # No CLI remediation: email verification is a one-time interactive flow — the
@@ -4677,12 +4682,7 @@ queries:
     refs:
       - url: https://docs.digitalocean.com/products/
         title: DigitalOcean product documentation
-  # No Terraform variants: GradientAI agents are managed through the GradientAI API and
-  # control panel; the digitalocean Terraform provider has no resource representing a
-  # GradientAI agent or its deployment visibility, so there is nothing to assert in HCL,
-  # plan, or state.
   - uid: mondoo-digitalocean-security-gradientai-agent-not-publicly-deployed
-    filters: asset.platform == "digitalocean-gradientai-agent"
     title: Ensure GradientAI agents are not deployed with public visibility
     impact: 80
     tags:
@@ -4701,13 +4701,28 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-7-2-1
       compliance/soc2-2017: soc2-control-cc6-1-3
       compliance/vda-isa-5: vda-isa-5-4-2-1
-    mql: |
-      digitalocean.gradientai.agent.deploymentVisibility != "VISIBILITY_PUBLIC"
+    variants:
+      - uid: mondoo-digitalocean-security-gradientai-agent-not-publicly-deployed-digitalocean
+        tags:
+          mondoo.com/filter-title: DigitalOcean GradientAI Agent
+          mondoo.com/filter-icon: digitalocean
+      - uid: mondoo-digitalocean-security-gradientai-agent-not-publicly-deployed-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-digitalocean-security-gradientai-agent-not-publicly-deployed-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-digitalocean-security-gradientai-agent-not-publicly-deployed-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check verifies that no GradientAI agent is deployed with public visibility.
 
-        An agent's deployment visibility controls who can reach its chat endpoint. Deployed as `VISIBILITY_PUBLIC`, that endpoint is open to anyone with the URL and requires no authentication, so unauthenticated users can interact with the agent and with the data and tools it can reach. Visibility is set on the agent's deployment settings in the DigitalOcean Cloud Control Panel.
+        An agent's deployment visibility controls who can reach its chat endpoint. Deployed as `VISIBILITY_PUBLIC`, that endpoint is open to anyone with the URL and requires no authentication, so unauthenticated users can interact with the agent and with the data and tools it can reach. Visibility is set on the agent's deployment settings in the DigitalOcean Cloud Control Panel, or in the `deployment` block of the `digitalocean_agent_platform_agent` Terraform resource.
 
         **Why this matters**
 
@@ -4737,15 +4752,61 @@ queries:
             4. Redeploy the agent.
 
             **Clients that reach the agent through its public endpoint lose access.** Move them to an authenticated integration before switching.
+        - id: terraform
+          desc: |
+            Set the visibility in the `deployment` block of the `digitalocean_agent_platform_agent` resource to `VISIBILITY_PRIVATE`:
+
+            ```hcl
+            resource "digitalocean_agent_platform_agent" "example" {
+              name        = "support-agent"
+              instruction = "Answer questions about the product documentation."
+              model_uuid  = "00000000-0000-0000-0000-000000000000"
+              project_id  = "00000000-0000-0000-0000-000000000000"
+              region      = "tor1"
+
+              deployment {
+                visibility = "VISIBILITY_PRIVATE"
+              }
+            }
+            ```
+
+            **Clients that reach the agent through its public endpoint lose access.** Move them to an authenticated integration before applying the change.
         # No CLI remediation: doctl 1.175.0 removed the agent command tree, so doctl can neither
         # read nor change an agent's deployment visibility.
-        # No Terraform remediation: GradientAI agents have no digitalocean Terraform resource.
     refs:
       - url: https://docs.digitalocean.com/products/inference/
         title: Inference
-  # No Terraform variants: GradientAI agents are managed through the GradientAI API and control
-  # panel; the digitalocean Terraform provider has no resource representing an agent or its
-  # attached guardrails, so there is nothing to assert in HCL, plan, or state.
+      - url: https://docs.digitalocean.com/products/inference/how-to/use-agents/
+        title: How to Use Agents in Your Applications on DigitalOcean Inference
+  - uid: mondoo-digitalocean-security-gradientai-agent-not-publicly-deployed-digitalocean
+    filters: asset.platform == "digitalocean-gradientai-agent"
+    mql: |
+      digitalocean.gradientai.agent.deploymentVisibility != "VISIBILITY_PUBLIC"
+  - uid: mondoo-digitalocean-security-gradientai-agent-not-publicly-deployed-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "digitalocean_agent_platform_agent")
+    mql: |
+      terraform.resources("digitalocean_agent_platform_agent").all(
+        blocks.where(type == "deployment").all(arguments["visibility"] != "VISIBILITY_PUBLIC")
+      )
+  - uid: mondoo-digitalocean-security-gradientai-agent-not-publicly-deployed-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "digitalocean_agent_platform_agent")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "digitalocean_agent_platform_agent").all(
+        change.after["deployment"] == empty ||
+        change.after["deployment"].all(_["visibility"] != "VISIBILITY_PUBLIC")
+      )
+  - uid: mondoo-digitalocean-security-gradientai-agent-not-publicly-deployed-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "digitalocean_agent_platform_agent")
+    mql: |
+      terraform.state.resources.where(type == "digitalocean_agent_platform_agent").all(
+        values["deployment"] == empty ||
+        values["deployment"].all(_["visibility"] != "VISIBILITY_PUBLIC")
+      )
+
+  # No Terraform variants: in the digitalocean_agent_platform_agent resource, whether a
+  # guardrail is attached is the computed is_attached flag inside each agent_guardrail
+  # block, which HCL cannot show. Asserting only that an agent_guardrail block is declared
+  # would pass agents whose guardrail the API never attached.
   - uid: mondoo-digitalocean-security-gradientai-agent-has-guardrails
     filters: asset.platform == "digitalocean-gradientai-agent"
     title: Ensure GradientAI agents have a content guardrail attached
@@ -4803,17 +4864,14 @@ queries:
         # No CLI remediation: doctl 1.175.0 removed the agent command tree, and no earlier release
         # could attach a guardrail; guardrail attachment is performed through the control panel or
         # the GradientAI API.
-        # No Terraform remediation: GradientAI agents have no digitalocean Terraform resource, so
-        # guardrail attachment cannot be expressed in Terraform.
+        # No Terraform remediation: the digitalocean_agent_platform_agent resource documents
+        # agent_guardrail blocks but not how a declared block attaches an existing guardrail,
+        # so the control panel is the documented way to attach one.
     refs:
       - url: https://docs.digitalocean.com/products/inference/
         title: Inference
 
-  # No Terraform variants: GradientAI knowledge bases are managed through the GradientAI
-  # API and control panel; the digitalocean Terraform provider has no resource representing
-  # a knowledge base or its public flag, so there is nothing to assert in HCL, plan, or state.
   - uid: mondoo-digitalocean-security-gradientai-knowledge-base-not-public
-    filters: asset.platform == "digitalocean"
     title: Ensure GradientAI knowledge bases are not public
     impact: 70
     tags:
@@ -4832,13 +4890,28 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-7-2-1
       compliance/soc2-2017: soc2-control-cc6-1-3
       compliance/vda-isa-5: vda-isa-5-4-2-1
-    mql: |
-      digitalocean.gradientai.knowledgeBases.all(isPublic == false)
+    variants:
+      - uid: mondoo-digitalocean-security-gradientai-knowledge-base-not-public-digitalocean
+        tags:
+          mondoo.com/filter-title: DigitalOcean
+          mondoo.com/filter-icon: digitalocean
+      - uid: mondoo-digitalocean-security-gradientai-knowledge-base-not-public-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-digitalocean-security-gradientai-knowledge-base-not-public-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-digitalocean-security-gradientai-knowledge-base-not-public-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
     docs:
       desc: |
         This check verifies that no GradientAI knowledge base is marked public.
 
-        A knowledge base indexes source documents so that agents can retrieve from them at query time. Marking one public makes its indexed content readable beyond the account. The public flag is set on the knowledge base in the GradientAI section of the DigitalOcean Cloud Control Panel.
+        A knowledge base indexes source documents so that agents can retrieve from them at query time. Marking one public makes its indexed content readable beyond the account. The public flag is set on the knowledge base in the GradientAI section of the DigitalOcean Cloud Control Panel, or with the `is_public` argument of the `digitalocean_agent_platform_knowledge_base` Terraform resource.
 
         **Why this matters**
 
@@ -4876,12 +4949,471 @@ queries:
             2. Open the **GradientAI** platform and select the knowledge base.
             3. Disable the **Public** setting.
             4. Save the change.
+        - id: terraform
+          desc: |
+            Set `is_public` to `false` on the `digitalocean_agent_platform_knowledge_base` resource, or omit it, since knowledge bases are private unless the argument enables public access:
+
+            ```hcl
+            resource "digitalocean_agent_platform_knowledge_base" "example" {
+              name                 = "product-docs"
+              project_id           = "00000000-0000-0000-0000-000000000000"
+              region               = "tor1"
+              embedding_model_uuid = "00000000-0000-0000-0000-000000000000"
+              is_public            = false
+
+              datasources {
+                spaces_data_source {
+                  bucket_name = "product-docs"
+                  region      = "tor1"
+                }
+              }
+            }
+            ```
         # No CLI remediation: `doctl knowledge-base update` has no flag for the public setting;
         # use the control panel above.
-        # No Terraform remediation: GradientAI knowledge bases have no digitalocean Terraform resource.
     refs:
       - url: https://docs.digitalocean.com/products/inference/
         title: Inference
+      - url: https://docs.digitalocean.com/products/inference/how-to/create-manage-agent-knowledge-bases/
+        title: How to Create, Edit, and Destroy DigitalOcean Knowledge Bases on DigitalOcean Inference
+  - uid: mondoo-digitalocean-security-gradientai-knowledge-base-not-public-digitalocean
+    filters: asset.platform == "digitalocean"
+    mql: |
+      digitalocean.gradientai.knowledgeBases.all(isPublic == false)
+  - uid: mondoo-digitalocean-security-gradientai-knowledge-base-not-public-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "digitalocean_agent_platform_knowledge_base")
+    mql: |
+      terraform.resources("digitalocean_agent_platform_knowledge_base").all(arguments["is_public"] != true)
+  - uid: mondoo-digitalocean-security-gradientai-knowledge-base-not-public-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "digitalocean_agent_platform_knowledge_base")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "digitalocean_agent_platform_knowledge_base").all(change.after["is_public"] != true)
+  - uid: mondoo-digitalocean-security-gradientai-knowledge-base-not-public-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "digitalocean_agent_platform_knowledge_base")
+    mql: |
+      terraform.state.resources.where(type == "digitalocean_agent_platform_knowledge_base").all(values["is_public"] != true)
+
+  # No Terraform variants: key age is measured from the creation time the GradientAI API
+  # records when it issues the key. Terraform configuration holds no creation time, and the
+  # digitalocean_agent_platform_agent resource reports it only as computed state.
+  - uid: mondoo-digitalocean-security-gradientai-agent-api-key-rotated
+    filters: asset.platform == "digitalocean-gradientai-agent"
+    title: Ensure GradientAI agent endpoint access keys are rotated within 365 days
+    impact: 60
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: false
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-5-17
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
+      compliance/nist-sp-800-171: false
+      compliance/owasp-llm-top-10-2025: owasp-llm-top-10-2025-llm06
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a07
+      compliance/pci-dss-4: pcidss-requirement-8-6-3
+      compliance/soc2-2017: soc2-control-cc6-1-9
+      compliance/vda-isa-5: vda-isa-5-4-1-3
+    mql: |
+      digitalocean.gradientai.agent.apiKeys.where(deletedAt == empty).all(createdAt > time.now - 365 * time.day)
+    docs:
+      desc: |
+        This check verifies that every active endpoint access key on a GradientAI agent was created within the last 365 days.
+
+        An endpoint access key authenticates requests that reach an agent's endpoint from outside DigitalOcean. Any caller holding the key can prompt the agent, which retrieves from the agent's knowledge bases and calls its functions on that caller's behalf. Keys are created in the **Endpoint Access Keys** section of the agent's **Settings** tab and do not expire on their own.
+
+        **Why this matters**
+
+        A key that is never replaced keeps working after the people and systems that held it have moved on. It stays in old application configuration, CI variables, and developer machines, and every one of those copies is a way into a private agent.
+
+        A leaked key gives the holder the same access as the application it was issued to. For a private agent grounded on internal documentation, that means the content of those knowledge bases is available to whoever holds the key, one prompt at a time.
+
+        Agent keys carry no expiry and DigitalOcean does not rotate them, so a key's age is the length of time it has been exposed to that risk. Replacing keys on a fixed schedule bounds the window in which a forgotten or leaked copy stays useful.
+
+        Issue each consuming application its own key, so one can be replaced without coordinating every client, and replace keys at least once a year.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the DigitalOcean [Cloud Control Panel](https://cloud.digitalocean.com/).
+        2. Under **INFERENCE** in the left menu, click **Agent Platform**, then open the workspace that contains the agent.
+        3. Select the agent, open its **Settings** tab, and review the keys in the **Endpoint Access Keys** section and when each was created.
+
+        A passing agent has only endpoint access keys created within the last 365 days. A failing agent has an active key older than 365 days.
+      remediation:
+        - id: console
+          desc: |
+            To replace an old GradientAI agent endpoint access key using the DigitalOcean Cloud Control Panel:
+
+            1. Sign in to the DigitalOcean [Cloud Control Panel](https://cloud.digitalocean.com/).
+            2. Under **INFERENCE** in the left menu, click **Agent Platform**, then open the workspace that contains the agent.
+            3. Select the agent and open its **Settings** tab.
+            4. In the **Endpoint Access Keys** section, click **Create Key**, enter a name, and click **Create**. Copy the secret key, which is shown only once.
+            5. Update every application that uses the old key to send the new one.
+            6. Delete the old key.
+
+            **A deleted key stops working immediately.** Confirm that no client still sends the old key before you delete it.
+
+            Create a new key rather than regenerating the existing one. This check measures a key's age from its creation time.
+        # No CLI remediation: doctl 1.175.0 removed the agent command tree, so doctl can neither
+        # create nor delete an agent endpoint access key.
+        # No Terraform remediation: endpoint access keys are issued by the GradientAI API and
+        # returned once; replacing one on a schedule is an operational action, not a configurable
+        # argument.
+    refs:
+      - url: https://docs.digitalocean.com/products/inference/how-to/use-agents/
+        title: How to Use Agents in Your Applications on DigitalOcean Inference
+
+  - uid: mondoo-digitalocean-security-gradientai-dedicated-inference-no-public-endpoint
+    title: Ensure dedicated inference endpoints do not enable a public endpoint
+    impact: 65
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-06
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/owasp-llm-top-10-2025: owasp-llm-top-10-2025-llm10
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-1-4-1
+      compliance/soc2-2017: soc2-control-cc6-1-5
+      compliance/vda-isa-5: vda-isa-5-5-2-7
+    variants:
+      - uid: mondoo-digitalocean-security-gradientai-dedicated-inference-no-public-endpoint-digitalocean
+        tags:
+          mondoo.com/filter-title: DigitalOcean
+          mondoo.com/filter-icon: digitalocean
+      - uid: mondoo-digitalocean-security-gradientai-dedicated-inference-no-public-endpoint-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-digitalocean-security-gradientai-dedicated-inference-no-public-endpoint-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-digitalocean-security-gradientai-dedicated-inference-no-public-endpoint-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check verifies that no dedicated inference endpoint has its public endpoint enabled.
+
+        A dedicated inference deployment serves a model on GPUs reserved for the account. It always has a private endpoint reachable from inside its VPC network. Enabling the public endpoint adds an HTTPS endpoint reachable from the internet, protected only by the deployment's access tokens. The public endpoint is off by default and can only be chosen when the deployment is created, through the **Enable public endpoint** setting or the `enable_public_endpoint` field of the deployment spec.
+
+        **Why this matters**
+
+        A public endpoint puts the model on the internet with a bearer token as the only control in front of it. Anyone who obtains a token from application configuration, a log, or a developer machine can send inference requests from anywhere.
+
+        Dedicated inference is billed for the reserved GPUs, and a public endpoint lets anyone holding a token consume that capacity. Leaked tokens are used for unmetered inference, for extracting the behavior of a fine-tuned or gated model, and for probing the deployment with prompt-injection payloads.
+
+        The private endpoint removes that path. Requests must originate inside the VPC network, so a leaked token is only useful to someone who already has a foothold on that network, and network controls apply in addition to the token.
+
+        Keep inference traffic on the private endpoint and front it with an application in the same VPC network. Enable the public endpoint only for a deployment that external clients must reach directly.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the DigitalOcean [Cloud Control Panel](https://cloud.digitalocean.com/).
+        2. Open the **Dedicated Inference** page and review the public endpoint listed for each deployment.
+
+        A passing account has no dedicated inference deployment with a public endpoint. A failing account has one or more deployments with a public endpoint.
+
+        ### Audit via CLI
+
+        1. List the dedicated inference endpoints, then retrieve each one and review its endpoints:
+
+        ```bash
+        doctl dedicated-inference list
+        doctl dedicated-inference get <dedicated-inference-id>
+        ```
+
+        A passing deployment reports only a private endpoint. A failing deployment also reports a public endpoint.
+      remediation:
+        - id: console
+          desc: |
+            The public endpoint cannot be turned off on an existing deployment. Replace the deployment with one that uses only the private endpoint:
+
+            1. Sign in to the DigitalOcean [Cloud Control Panel](https://cloud.digitalocean.com/).
+            2. Open the **Dedicated Inference** page and create a deployment with the same model, region, and GPU configuration. Leave **Enable public endpoint** cleared.
+            3. Store the access key shown while the deployment provisions, which is not shown again.
+            4. Move each client to the private endpoint of the new deployment from a resource inside the same VPC network.
+            5. Destroy the deployment that has the public endpoint.
+
+            **Clients outside the VPC network lose access.** Route them through an application inside the network before you destroy the old deployment.
+        - id: cli
+          desc: |
+            The public endpoint cannot be turned off on an existing deployment, so replace it.
+
+            1. Write a spec that leaves the public endpoint disabled, using the model, region, VPC, and GPU configuration of the current deployment:
+
+                ```yaml
+                version: 1
+                name: private-inference
+                region: atl1
+                vpc:
+                  uuid: <vpc-uuid>
+                enable_public_endpoint: false
+                model_deployments:
+                  - model_slug: mistral/mistral-7b-instruct-v3
+                    model_provider: hugging_face
+                    accelerators:
+                      - scale: 1
+                        type: prefill_decode
+                        accelerator_slug: gpu-mi300x1-192gb
+                ```
+
+            2. Create the replacement deployment and store the access key it returns:
+
+                ```bash
+                doctl dedicated-inference create --spec spec.yaml
+                ```
+
+            3. Move each client to the private endpoint of the new deployment, then delete the deployment that has the public endpoint:
+
+                ```bash
+                doctl dedicated-inference delete <dedicated-inference-id>
+                ```
+
+            **Clients outside the VPC network lose access.** Route them through an application inside the network before you delete the old deployment.
+        - id: terraform
+          desc: |
+            Leave `enable_public_endpoint` unset or set it to `false` on the `digitalocean_dedicated_inference` resource. The argument cannot change after creation, so Terraform replaces a deployment that had it enabled:
+
+            ```hcl
+            resource "digitalocean_dedicated_inference" "example" {
+              name                   = "private-inference"
+              region                 = "atl1"
+              vpc_uuid               = "00000000-0000-0000-0000-000000000000"
+              enable_public_endpoint = false
+
+              model_deployments {
+                model_slug     = "mistral/mistral-7b-instruct-v3"
+                model_provider = "hugging_face"
+
+                accelerators {
+                  accelerator_slug = "gpu-mi300x1-192gb"
+                  scale            = 1
+                  type             = "prefill_decode"
+                }
+              }
+            }
+            ```
+
+            **Clients outside the VPC network lose access.** Route them through an application inside the network before you apply the change.
+    refs:
+      - url: https://docs.digitalocean.com/products/inference/how-to/use-dedicated-inference/
+        title: How to Use Dedicated Inference
+  - uid: mondoo-digitalocean-security-gradientai-dedicated-inference-no-public-endpoint-digitalocean
+    filters: asset.platform == "digitalocean"
+    mql: |
+      digitalocean.gradientai.dedicatedInferenceEndpoints.all(publicEndpointFqdn == empty)
+  - uid: mondoo-digitalocean-security-gradientai-dedicated-inference-no-public-endpoint-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "digitalocean_dedicated_inference")
+    mql: |
+      terraform.resources("digitalocean_dedicated_inference").all(arguments["enable_public_endpoint"] != true)
+  - uid: mondoo-digitalocean-security-gradientai-dedicated-inference-no-public-endpoint-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "digitalocean_dedicated_inference")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "digitalocean_dedicated_inference").all(change.after["enable_public_endpoint"] != true)
+  - uid: mondoo-digitalocean-security-gradientai-dedicated-inference-no-public-endpoint-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "digitalocean_dedicated_inference")
+    mql: |
+      terraform.state.resources.where(type == "digitalocean_dedicated_inference").all(values["enable_public_endpoint"] != true)
+
+  # No Terraform variants: hosted agent connections are created through an OAuth consent
+  # flow in the control panel or doctl; the digitalocean Terraform provider has no resource
+  # for a connection or the scopes its grant holds.
+  - uid: mondoo-digitalocean-security-hosted-agent-connection-no-admin-scopes
+    filters: asset.platform == "digitalocean"
+    title: Ensure hosted agent GitHub connections hold no administrative OAuth scopes
+    impact: 60
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-2
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
+      compliance/owasp-llm-top-10-2025: owasp-llm-top-10-2025-llm06
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-7-2-1
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    mql: |
+      digitalocean.hostedAgentConnections.where(provider == "github" && status == "active").all(
+        oauthScopes.none(_ == /^admin:/ || _ == "delete_repo")
+      )
+    docs:
+      desc: |
+        This check verifies that no active hosted agent connection to GitHub holds an administrative OAuth scope.
+
+        A hosted agent connection stores an OAuth grant that DigitalOcean's managed agents act through when they clone, push, and call GitHub on the team's behalf. The scopes are chosen when the connection is created, and DigitalOcean uses the grant as issued without narrowing it. The check fails on any `admin:` scope, such as `admin:org` or `admin:repo_hook`, and on `delete_repo`.
+
+        **Why this matters**
+
+        An agent acts on instructions it reads, and the content it reads includes issues, pull requests, and files written by people outside the team. A prompt injection in any of that content can direct the agent to use whatever its grant allows.
+
+        With an administrative scope, that reaches past the code the agent was meant to work on. `admin:org` lets the agent change organization membership and settings, `admin:repo_hook` lets it add a webhook that sends repository events to an outside server, and `delete_repo` lets it delete repositories outright.
+
+        Coding work needs repository content access and nothing administrative. Keeping administrative scopes out of the grant limits what a compromised or misdirected agent can do to the code it was given.
+
+        Create connections with the narrowest scopes the agent's work requires, such as `repo` and `read:org`.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the DigitalOcean [Cloud Control Panel](https://cloud.digitalocean.com/).
+        2. Open the [**Connections** page](https://cloud.digitalocean.com/managed-agents/action-gateway/connections) and review the permissions of each active GitHub connection.
+
+        A passing team has no active GitHub connection with an administrative scope. A failing team has a connection whose grant includes an `admin:` scope or `delete_repo`.
+
+        ### Audit via CLI
+
+        1. List the active GitHub connections, then show each one to review its scopes:
+
+        ```bash
+        doctl harness-runtime connections list --provider github --status active
+        doctl harness-runtime connections get <connection-id>
+        ```
+
+        A passing connection lists only non-administrative scopes. A failing connection lists an `admin:` scope or `delete_repo`.
+      remediation:
+        - id: console
+          desc: |
+            To replace a GitHub connection that holds administrative scopes using the DigitalOcean Cloud Control Panel:
+
+            1. Sign in to the DigitalOcean [Cloud Control Panel](https://cloud.digitalocean.com/).
+            2. Open the [**Connections** page](https://cloud.digitalocean.com/managed-agents/action-gateway/connections), note the connection's **Actor ID**, and revoke the connection.
+            3. Click **Add connection**, select GitHub, and enter the same **Actor ID**.
+            4. Review the **Permissions** and keep only the scopes the agent needs, then click **Connect** and approve the request in GitHub.
+
+            **Agents that depend on the connection cannot reach GitHub until it is created again.** A connection that a Harness Runtime environment config depends on is deletion protected, so remove that dependency first.
+        - id: cli
+          desc: |
+            Revoking a connection and creating it again under the same actor ID replaces its grant without changing the agents that use it.
+
+            1. Note the actor ID of the connection, then revoke it:
+
+                ```bash
+                doctl harness-runtime connections revoke <connection-id>
+                ```
+
+            2. Create the connection again with only the scopes the agent needs, and approve the request in GitHub:
+
+                ```bash
+                doctl harness-runtime connections create --actor <actor-id> --provider github --scopes repo --scopes read:org
+                ```
+
+            **Agents that depend on the connection cannot reach GitHub until it is created again.**
+        # No Terraform remediation: the digitalocean Terraform provider has no resource for a
+        # hosted agent connection.
+    refs:
+      - url: https://docs.digitalocean.com/products/managed-agents/action-gateway/how-to/manage-connections/
+        title: How to Authorize Providers with Connections
+      - url: https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps
+        title: Scopes for OAuth apps
+
+  # No Terraform variants: the age of a hosted agent connection's grant is the time GitHub
+  # approved it, a runtime value with no digitalocean Terraform resource behind it.
+  - uid: mondoo-digitalocean-security-hosted-agent-connection-grant-not-stale
+    filters: asset.platform == "digitalocean"
+    title: Ensure hosted agent connections are re-authorized within 365 days
+    impact: 45
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-07
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-5-18
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-2
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
+      compliance/owasp-llm-top-10-2025: owasp-llm-top-10-2025-llm06
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-7-2-4
+      compliance/soc2-2017: soc2-control-cc6-2-2
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    mql: |
+      digitalocean.hostedAgentConnections.where(status == "active" && grantedAt != empty).all(grantedAt > time.now - 365 * time.day)
+    docs:
+      desc: |
+        This check verifies that every active hosted agent connection with an OAuth grant was authorized within the last 365 days.
+
+        A hosted agent connection holds an OAuth grant from an external provider such as GitHub, made by the DigitalOcean user who created the connection. The grant authorizes managed agents to act as that user at the provider. GitHub OAuth grants do not expire, so a connection stays active until someone revokes it. Connections without an OAuth grant are not evaluated.
+
+        **Why this matters**
+
+        A grant is authorized by one person at one point in time, and it carries that person's access at the provider. Long after it was made, the agent may still act with access that person no longer has, or that the team would no longer approve.
+
+        People change roles and leave, and repositories and organizations change hands. A grant that outlives those changes keeps an agent working with the access its creator had when the grant was approved, through an account that may no longer be watched.
+
+        Authorizing the connection again puts the grant in front of a current owner. They see the scopes it requests and the account it acts through, and can narrow either or retire the connection.
+
+        Review and reauthorize hosted agent connections at least once a year, and revoke connections no agent uses.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the DigitalOcean [Cloud Control Panel](https://cloud.digitalocean.com/).
+        2. Open the [**Connections** page](https://cloud.digitalocean.com/managed-agents/action-gateway/connections) and review when each active connection was authorized.
+
+        A passing team has no active connection authorized more than 365 days ago. A failing team has one or more connections whose grant is older than that.
+
+        ### Audit via CLI
+
+        1. List the active connections, then show each one to review its grant:
+
+        ```bash
+        doctl harness-runtime connections list --status active
+        doctl harness-runtime connections get <connection-id>
+        ```
+
+        A passing connection was granted within the last 365 days. A failing connection was granted earlier.
+      remediation:
+        - id: console
+          desc: |
+            To reauthorize an old hosted agent connection using the DigitalOcean Cloud Control Panel:
+
+            1. Sign in to the DigitalOcean [Cloud Control Panel](https://cloud.digitalocean.com/) as a current owner of the work the agents perform.
+            2. Open the [**Connections** page](https://cloud.digitalocean.com/managed-agents/action-gateway/connections), note the connection's provider and **Actor ID**, and revoke the connection.
+            3. Click **Add connection**, select the same provider, and enter the same **Actor ID**.
+            4. Review the **Permissions**, keep only the scopes the agents need, then click **Connect** and approve the request with the provider.
+
+            Revoke connections that no agent uses instead of authorizing them again.
+
+            **Agents that depend on the connection cannot reach the provider until it is created again.** A connection that a Harness Runtime environment config depends on is deletion protected, so remove that dependency first.
+        - id: cli
+          desc: |
+            Revoking a connection and creating it again under the same actor ID records a new grant without changing the agents that use it.
+
+            1. Note the provider and actor ID of the connection, then revoke it:
+
+                ```bash
+                doctl harness-runtime connections revoke <connection-id> --provider github
+                ```
+
+            2. Create the connection again and approve the request with the provider:
+
+                ```bash
+                doctl harness-runtime connections create --actor <actor-id> --provider github --scopes repo
+                ```
+
+            **Agents that depend on the connection cannot reach the provider until it is created again.**
+        # No Terraform remediation: the digitalocean Terraform provider has no resource for a
+        # hosted agent connection.
+    refs:
+      - url: https://docs.digitalocean.com/products/managed-agents/action-gateway/how-to/manage-connections/
+        title: How to Authorize Providers with Connections
 
   # No Terraform variants: DigitalOcean Functions are deployed imperatively via
   # `doctl serverless deploy` and a project.yml manifest; there is no digitalocean
