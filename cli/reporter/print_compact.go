@@ -813,7 +813,6 @@ func (r *defaultReporter) printCheck(score simpleScore, query *policy.Mquery, re
 
 // ============================= ^^ ============================================
 
-
 func (r *defaultReporter) printVulns(report *policy.Report, assetMrn string) {
 	print := r.Printer
 
