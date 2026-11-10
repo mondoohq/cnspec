@@ -498,6 +498,8 @@ func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, rep
 		sortedWarnings := []string{}
 		sortedFailed := []string{}
 		sortedExceptions := []string{}
+		sortedErrors := []string{}
+		sortedSkipped := []string{}
 
 		for mrn, query := range matchedByMrn {
 			pscore, ok := report.Scores[mrn]
@@ -535,7 +537,15 @@ func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, rep
 				continue
 			}
 
-			if score.Success {
+			// Only a rated result has a risk the threshold can judge, the same
+			// rule policy.WorstCheckScore applies to the exit code. An error,
+			// a skip or an unfinished check carries a value of 0, which would
+			// otherwise list it as a failure at risk 100.
+			if pscore.Type == policy.ScoreType_Error {
+				sortedErrors = append(sortedErrors, mrn)
+			} else if pscore.Type != policy.ScoreType_Result || score.Rating == policy.ScoreRating_unrated {
+				sortedSkipped = append(sortedSkipped, mrn)
+			} else if score.Success {
 				sortedPassed = append(sortedPassed, mrn)
 			} else if r.RiskThreshold != DEFAULT_RISK_THRESHOLD && (100-score.Value) < uint32(r.RiskThreshold) {
 				sortedWarnings = append(sortedWarnings, mrn)
@@ -588,10 +598,24 @@ func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, rep
 			}
 		}
 
+		byTitle := func(mrns []string) {
+			sort.Slice(mrns, func(i, j int) bool {
+				return matchedByMrn[mrns[i]].Title < matchedByMrn[mrns[j]].Title
+			})
+		}
+
+		if len(sortedSkipped) != 0 {
+			byTitle(sortedSkipped)
+			r.beginAssetSection()
+			r.out("Skipped:" + NewLineCharacter)
+			for _, mrn := range sortedSkipped {
+				r.printCheck(foundChecks[mrn], matchedByMrn[mrn], resolved, report, results, false)
+			}
+		}
+
 		if len(sortedWarnings) != 0 {
 			r.beginAssetSection()
-			// FIXME v12: rename to risk threshold
-			r.out("Warnings (below risk threshold):" + NewLineCharacter)
+			r.out("Warnings (below risk threshold " + strconv.Itoa(r.RiskThreshold) + "):" + NewLineCharacter)
 			for _, mrn := range sortedWarnings {
 				r.printCheck(foundChecks[mrn], matchedByMrn[mrn], resolved, report, results, false)
 			}
@@ -647,10 +671,23 @@ func (r *defaultReporter) printAssetQueries(resolved *policy.ResolvedPolicy, rep
 			}
 		}
 
+		if len(sortedErrors) != 0 {
+			byTitle(sortedErrors)
+			r.beginAssetSection()
+			if r.RiskThreshold != DEFAULT_RISK_THRESHOLD {
+				r.out("Errors (not judged by the risk threshold):" + NewLineCharacter)
+			} else {
+				r.out("Errors:" + NewLineCharacter)
+			}
+			for _, mrn := range sortedErrors {
+				r.printCheck(foundChecks[mrn], matchedByMrn[mrn], resolved, report, results, false)
+			}
+		}
+
 		if len(sortedFailed) != 0 {
 			r.beginAssetSection()
 			if r.RiskThreshold != DEFAULT_RISK_THRESHOLD {
-				r.out("Failures (above risk threshold):" + NewLineCharacter)
+				r.out("Failures (at or above risk threshold " + strconv.Itoa(r.RiskThreshold) + "):" + NewLineCharacter)
 			} else {
 				r.out("Failing:" + NewLineCharacter)
 			}

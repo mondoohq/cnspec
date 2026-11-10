@@ -72,6 +72,9 @@ func TestRiskThresholdExitCodes(t *testing.T) {
 	res = run(t, defaultScenarioTimeout, atRisk...)
 	assert.Equal(t, 1, res.exitCode,
 		"--risk-threshold %d on a scan with risk %d must exit 1\n%s", risk, risk, res.dump())
+	// -o json keeps stdout a report, so the reason for the exit 1 is on stderr.
+	assert.Contains(t, string(res.stderr), fmt.Sprintf("✕ Risk threshold %d met by the worst failing check", risk),
+		"the scan must say which check met the threshold\n%s", res.dump())
 
 	// 3. threshold == risk+1: the comparison just fails, so exit 0. This is the
 	// side that catches an off-by-one; step 2 alone passes even if the
@@ -80,4 +83,8 @@ func TestRiskThresholdExitCodes(t *testing.T) {
 	res = run(t, defaultScenarioTimeout, aboveRisk...)
 	assert.Equal(t, 0, res.exitCode,
 		"--risk-threshold %d on a scan with risk %d must exit 0\n%s", risk+1, risk, res.dump())
+	if risk+1 <= 100 {
+		assert.Contains(t, string(res.stderr), fmt.Sprintf("✓ Risk threshold %d not met", risk+1),
+			"the scan must say the threshold was not met\n%s", res.dump())
+	}
 }
