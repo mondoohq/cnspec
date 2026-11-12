@@ -14,7 +14,6 @@ import (
 	"github.com/spf13/viper"
 	"go.mondoo.com/mql"
 	"go.mondoo.com/mql/cli/config"
-	"go.mondoo.com/mql/logger"
 
 	"go.mondoo.com/cnspec"
 	"go.mondoo.com/cnspec/apps/cnspec/cmd/backgroundjob"
@@ -44,6 +43,7 @@ func init() {
 	serveCmd.Flags().String("inventory-file", "", "Set the path to the inventory file")
 	_ = serveCmd.Flags().String("inventory-template", "", "Set the path to the inventory template")
 	_ = serveCmd.Flags().MarkHidden("inventory-template")
+	serveCmd.Flags().String("log-file", "", "Write service logs to this file instead of stderr (Linux only); overrides log_file in the config file")
 }
 
 var serveCmd = &cobra.Command{
@@ -53,20 +53,8 @@ var serveCmd = &cobra.Command{
 	PreRun: func(cmd *cobra.Command, args []string) {
 		_ = viper.BindPFlag("inventory-file", cmd.Flags().Lookup("inventory-file"))
 		_ = viper.BindPFlag("inventory-template", cmd.Flags().Lookup("inventory-template"))
-		logger.StandardZerologLogger()
-		// environment variables always over-write custom flags
-		envLevel, ok := logger.GetEnvLogLevel()
-		if ok {
-			logger.Set(envLevel)
-			return
-		}
-
-		// retrieve log-level from flags
-		level := viper.GetString("log-level")
-		if v := viper.GetBool("verbose"); v {
-			level = "debug"
-		}
-		logger.Set(level)
+		_ = viper.BindPFlag(logFileKey, cmd.Flags().Lookup("log-file"))
+		configureServeLogging(viper.GetString(logFileKey), viper.GetString("logging-config") != "")
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		prof.InitProfiler()
