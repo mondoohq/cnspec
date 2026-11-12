@@ -19,6 +19,8 @@ cnspec is built on mql (`go.mondoo.com/mql`). mql gives us the MQL query engine,
 
 ## Commands
 
+`make help` (or bare `make`) lists the main targets. A target shows up there when it has a `## description` line directly above it.
+
 ### Build
 
 ```bash

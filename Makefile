@@ -23,7 +23,22 @@ LDFLAGSDIST=-tags production -ldflags ${LDFLAGS}
 GO_WINRES=github.com/tc-hib/go-winres@v0.3.3
 WINRES_VERSION=$(LATEST_VERSION_TAG:v%=%)
 
+.DEFAULT_GOAL := help
+
+# Lists, sorted, every target that has a `## description` line directly above
+# it, then the info/ldflags command. To list a new target, give it one.
+.PHONY: help
+help:
+	@echo "Usage: make <target>"
+	@echo
+	@awk '/^## /{d=substr($$0,4);next} d&&/^[a-zA-Z0-9_\/.-]+:/{split($$0,t,":");printf "  %-28s %s\n",t[1],d} {d=""}' $(MAKEFILE_LIST) | LC_ALL=C sort
+	@echo
+	@echo "Run from source, with the version stamped in:"
+	@echo
+	@$(MAKE) --no-print-directory info/ldflags
+
 .PHONY: info/ldflags
+## Print the go run command with release ldflags
 info/ldflags:
 	$(info go run -ldflags ${LDFLAGS} apps/cnspec/cnspec.go)
 	@:
@@ -34,21 +49,25 @@ clean/proto:
 	find . -not -path './.*' \( -name '*.ranger.go' -or -name '*.pb.go' -or -name '*.actions.go' -or -name '*-packr.go' -or -name '*.swagger.json' \) -delete
 
 .PHONY: version
+## Print the version this tree builds as
 version:
 	@echo $(VERSION)
 
 
 #   🔨 TOOLS       #
 
+## Install the Go tools that test and lint use
 prep: prep/tools
 
 # we need mql due to a few proto files requiring it. proto doesn't resolve dependencies for us
 # or download them from the internet, so we are making sure the repo exists this way.
 # An alternative (especially for local development) is to soft-link a local copy of the repo
 # yourself. We don't pin submodules at this time, but we may want to check if they are up to date here.
+## Clone mql into ./mql (needed for proto compilation)
 prep/repos:
 	test -x mql || git clone https://github.com/mondoohq/mql.git mql
 
+## Update the ./mql checkout to main
 prep/repos/update: prep/repos
 	cd mql; git checkout main && git pull; cd -;
 
@@ -64,6 +83,7 @@ prep/tools:
 
 #   🌙 cnspec   #
 
+## Regenerate proto, policy and reporter code
 cnspec/generate: clean/proto cli/generate policy/generate reporter/generate
 
 .PHONY: cli
@@ -83,14 +103,17 @@ reporter/generate:
 #   🏗 Binary   #
 
 .PHONY: cnspec/build
+## Build ./cnspec for this machine
 cnspec/build:
 	go build -o cnspec ${LDFLAGSDIST} apps/cnspec/cnspec.go
 
 .PHONY: cnspec/build/linux
+## Cross-compile for Linux amd64 (writes ./cnspec)
 cnspec/build/linux:
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build ${LDFLAGSDIST} apps/cnspec/cnspec.go
 
 .PHONY: cnspec/build/linux/arm
+## Cross-compile for Linux arm64 (writes ./cnspec)
 cnspec/build/linux/arm:
 	GOOS=linux GOARCH=arm64 go build ${LDFLAGSDIST} apps/cnspec/cnspec.go
 
@@ -107,10 +130,12 @@ cnspec/winres:
 # only links rsrc_windows_*.syso when building a package directory; passing an
 # explicit .go file silently drops the version resource and manifest.
 .PHONY: cnspec/build/windows
+## Cross-compile for Windows amd64 (writes ./cnspec.exe)
 cnspec/build/windows: cnspec/winres
 	GOOS=windows GOARCH=amd64 go build ${LDFLAGSDIST} ./apps/cnspec
 
 .PHONY: cnspec/install
+## Install cnspec into $GOPATH/bin
 cnspec/install:
 	GOBIN=${GOPATH}/bin go install ${LDFLAGSDIST} apps/cnspec/cnspec.go
 
@@ -123,15 +148,20 @@ cnspec/dist/goreleaser/edge:
 
 #   ⛹🏽‍ Testing   #
 
+## Run golangci-lint
 test/lint: test/lint/golangci-lint/run
 
+## Run the Go tests and the linter
 test: test/go test/lint
 
+## Run the scan benchmarks
 benchmark/go:
 	go test -bench=. -benchmem go.mondoo.com/cnspec/policy/scan/benchmark
 
+## Regenerate code, then run the Go tests
 test/go: cnspec/generate test/go/plain
 
+## Run the Go tests with coverage, without regenerating
 test/go/plain:
 	go test -cover $(shell go list ./...)
 
@@ -163,10 +193,12 @@ VALIDATION := content/validation
 #   test/content/commands    each cloud needs that cloud's CLI on PATH
 #
 # CI runs all of them; locally, run the one that covers what you touched.
+## Lint content/ and run the offline policy validators
 test/content: test/content/lint test/content/scans test/content/compliance test/content/filters test/content/icons
 
 # Structure, MQL compilation, and schema. Catches a check that cannot compile
 # before any suite tries to run it.
+## Lint every policy and query pack
 test/content/lint:
 	cnspec policy lint ./content
 	cnspec policy lint ./content/querypacks
@@ -227,6 +259,7 @@ IAC_TIMEOUT ?= 60m
 # shard jobs bought nothing.
 IAC_TEST := go test -tags iac_variants -parallel $(IAC_VARIANT_PARALLEL) -timeout $(IAC_TIMEOUT) ./$(VALIDATION)/scans
 
+## Run every IaC fixture suite (slow; downloads providers)
 test/content/iac:
 	$(IAC_TEST) -run 'TestTerraformVariants|TestCloudFormationVariants|TestBicepVariants|TestDockerfileVariants|TestKubernetesManifestVariants'
 
@@ -259,6 +292,7 @@ test/content/iac/coverage:
 
 # Remediation code blocks, linted in their own language. Each target needs that
 # language's linter installed; see content/validation/README.md.
+## Lint remediation code blocks (needs each language's linter)
 test/content/remediation: test/content/remediation/terraform test/content/remediation/cloudformation \
 	test/content/remediation/bicep test/content/remediation/ansible test/content/remediation/powershell \
 	test/content/remediation/bash test/content/remediation/chef
@@ -287,6 +321,7 @@ test/content/remediation/chef:
 # Remediation CLI and REST API calls, checked against checked-in grammars and
 # OpenAPI specs. Pass CLOUD=aws (or any name the validator lists) to scope it.
 CLOUD ?= all
+## Validate remediation CLI and API calls (CLOUD=aws to scope)
 test/content/commands:
 	python3 $(VALIDATION)/remediation/commands/validate.py $(CLOUD)
 
@@ -347,15 +382,19 @@ INTEGRATION_TIMEOUT ?= 30m
 INTEGRATION_TEST := go test -tags integration -count=1 -parallel 1 \
 	-timeout $(INTEGRATION_TIMEOUT) -v ./test/integration
 
+## Run every integration tier against a real cnspec binary
 test/integration:
 	$(INTEGRATION_TEST)
 
+## Integration tests against container images
 test/integration/docker:
 	$(INTEGRATION_TEST) -run '^TestDockerTargets$$|^TestRiskThresholdExitCodes$$'
 
+## Integration tests against this machine
 test/integration/local:
 	$(INTEGRATION_TEST) -run '^TestLocalTarget$$'
 
+## Integration tests against a local Kubernetes cluster
 test/integration/k8s:
 	$(INTEGRATION_TEST) -run '^TestKubernetesTarget$$'
 
@@ -402,6 +441,7 @@ skills/generate/check:
 	go run ./scripts/generate-agents --check
 
 .PHONY: install/skills
+## Install the cnspec Claude Code skills into ~/.claude
 install/skills:
 	@echo "Installing cnspec skills to ~/.claude ..."
 	@for skill_dir in skills/*/; do \
@@ -429,9 +469,11 @@ install/skills:
 
 license: license/headers/check
 
+## Report files missing a license header
 license/headers/check:
 	copywrite headers --plan
 
+## Add missing license headers
 license/headers/apply:
 	copywrite headers
 
