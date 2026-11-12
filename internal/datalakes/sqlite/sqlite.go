@@ -127,7 +127,7 @@ func WithServices(ctx context.Context, runtime llx.Runtime, asset *inventory.Ass
 			cs := scanDataStore.WriteChecksumStats()
 			stats.AddDuration(scanstats.MetricChecksumDuration, cs.Duration)
 			stats.AddInt(scanstats.MetricChecksumErrors, "count", cs.Errors)
-			evt := log.Info()
+			evt := log.Debug()
 			if cs.Errors > 0 {
 				evt = log.Warn()
 			}
