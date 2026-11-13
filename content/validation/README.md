@@ -13,7 +13,6 @@ The policies are the product. A check that compiles but never matches an asset, 
 | **[`compliance/`](compliance)** | Are the framework tags internally coherent? | Go, static | `compliance/*_test.go` |
 | **[`filters/`](filters)** | Is every multi-condition filter written so it means what it says? | Go, static | `filters/*_test.go` |
 | **[`icons/`](icons)** | Does every policy and query pack name the icon the console shows for it? | Go, static | `icons/*_test.go` |
-| **[`branches/`](branches)** | Does every snippet that hardcodes a git branch tell the reader to substitute their own? | Go, static | `branches/*_test.go` |
 | **[`remediation/code/`](remediation/code)** | Is the fix we ship well-formed in its own language? | Python + each language's linter | `remediation/code/*.py` |
 | **[`remediation/commands/`](remediation/commands)** | Do the CLI and API calls we ship actually exist? | Python + CLI grammars / OpenAPI specs | `remediation/commands/*.py` |
 | **[`upstream/`](upstream)** | Is what we validate *against* still current? | Python, network | `upstream/*.py` |
@@ -46,9 +45,6 @@ content/validation/
 │
 ├── icons/                     static Go suite over the mondoo.com/icon tag, no providers
 │   └── icons_test.go
-│
-├── branches/                  static Go suite over branch names in audit/remediation snippets
-│   └── branches_test.go
 │
 ├── remediation/
 │   ├── code/                  one validator per remediation language
@@ -97,7 +93,6 @@ Run the one that covers what you touched.
 | `make test/content/compliance` | compliance-tag mappings | Go |
 | `make test/content/filters` | `filters:` shape | Go |
 | `make test/content/icons` | every policy and query pack carries `mondoo.com/icon` | Go |
-| `make test/content/branches` | every hardcoded `main`/`master` branch in a snippet is called out | Go |
 | `make test/content/iac` | all five IaC fixture suites | Go, ~30 min |
 | `make test/content/iac/terraform` | one IaC suite (also `/cloudformation`, `/bicep`, `/dockerfile`, `/kubernetes`) | Go |
 | `make test/content/iac/coverage` | every IaC variant has pass+fail fixtures | Go, no scans |
@@ -137,7 +132,7 @@ python3 content/validation/remediation/commands/validate.py ?     # any unknown 
 | Workflow | Trigger | Runs | Blocking |
 |---|---|---|---|
 | `policies_lint.yaml` | PR + push to main, `content/**` | `cnspec policy lint`, uploaded as SARIF | yes, on `error` findings |
-| `pr-test-lint.yml` (Code Test) | PR + push | `go test ./...`, which includes `scans` (untagged), `compliance`, `filters`, `icons` and `branches` | yes |
+| `pr-test-lint.yml` (Code Test) | PR + push | `go test ./...`, which includes `scans` (untagged), `compliance`, `filters` and `icons` | yes |
 | `content-iac-tests.yaml` | PR + push to main, `content/**` | the five IaC suites, the coverage gate, and the closed loop, as a matrix | yes |
 | `validate-remediation.yaml` | PR + push to main, `content/**` | all seven code-block validators and the command validator, one job each | yes |
 | `spell-check.yaml` | PR | `crate-ci/typos` | yes |
