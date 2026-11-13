@@ -102,11 +102,52 @@ func UploadFindings(ctx context.Context, opts Opts, docs []*fex.FindingDocument,
 		return fmt.Errorf("create http client: %w", err)
 	}
 
-	if err := doUpload(ctx, resolver, httpClient, data, spaceMrn); err != nil {
+	if err := doUpload(ctx, resolver, httpClient, policy.UploadURLKind_UPLOAD_URL_KIND_THIRD_PARTY_FINDINGS, "application/json", data, spaceMrn); err != nil {
 		return err
 	}
 
 	log.Info().Int("findings", len(docs)).Str("source", source).Msg("uploaded findings to Mondoo Platform")
+	return nil
+}
+
+// UploadArtifact uploads an opaque artifact of the given upload kind to Mondoo
+// Platform using the same signed-URL handshake as findings: request a signed
+// object-storage URL for `kind`, PUT `data` with `contentType`, then signal
+// completion. It is the kind-generic core that findings upload builds on, and
+// the entry point for other artifact kinds (e.g. a code-intelligence snapshot,
+// UPLOAD_URL_KIND_CODE_INTELLIGENCE_V0). Returns ErrNoCredentials when no config
+// is found (check with IsNoCredentials).
+func UploadArtifact(ctx context.Context, opts Opts, kind policy.UploadURLKind, data []byte, contentType string) error {
+	if len(data) == 0 {
+		log.Debug().Str("kind", kind.String()).Msg("no artifact to upload")
+		return nil
+	}
+
+	creds, spaceMrn, err := LoadCredentials(opts)
+	if err != nil {
+		return err
+	}
+
+	plugin, err := upstream.NewServiceAccountRangerPlugin(creds)
+	if err != nil {
+		return fmt.Errorf("create auth plugin: %w", err)
+	}
+
+	resolver, err := policy.NewPolicyResolverClient(creds.ApiEndpoint, resolverHTTPClient(opts.HTTPClient), plugin)
+	if err != nil {
+		return fmt.Errorf("create policy resolver client: %w", err)
+	}
+
+	httpClient, err := putHTTPClient(opts.HTTPClient)
+	if err != nil {
+		return fmt.Errorf("create http client: %w", err)
+	}
+
+	if err := doUpload(ctx, resolver, httpClient, kind, contentType, data, spaceMrn); err != nil {
+		return err
+	}
+
+	log.Info().Int("bytes", len(data)).Str("kind", kind.String()).Msg("uploaded artifact to Mondoo Platform")
 	return nil
 }
 
@@ -168,7 +209,7 @@ type uploadResolver interface {
 // doUpload runs the signed-URL upload handshake: request a URL, PUT the payload,
 // then report completion. Split out from UploadFindings so it can be tested
 // against a fake resolver and an httptest server without real credentials.
-func doUpload(ctx context.Context, resolver uploadResolver, httpClient *http.Client, data []byte, spaceMrn string) error {
+func doUpload(ctx context.Context, resolver uploadResolver, httpClient *http.Client, kind policy.UploadURLKind, contentType string, data []byte, spaceMrn string) error {
 	// A fresh signed URL is fetched per attempt (signed URLs expire quickly, so
 	// reusing one across a backoff window would PUT against an expired URL and
 	// 403), so GetUploadURL and the PUT live in the same retry block. The PUT to
@@ -178,7 +219,7 @@ func doUpload(ctx context.Context, resolver uploadResolver, httpClient *http.Cli
 	var uploadSessionID string
 	if err := upstream.WithRetry(ctx, "upload findings", func() (bool, time.Duration, error) {
 		resp, err := resolver.GetUploadURL(ctx, &policy.GetUploadURLReq{
-			Kind:     policy.UploadURLKind_UPLOAD_URL_KIND_THIRD_PARTY_FINDINGS,
+			Kind:     kind,
 			ScopeMrn: spaceMrn,
 		})
 		if err != nil {
@@ -191,7 +232,7 @@ func doUpload(ctx context.Context, resolver uploadResolver, httpClient *http.Cli
 			return false, 0, err
 		}
 		req.ContentLength = int64(len(data))
-		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Content-Type", contentType)
 		for k, v := range uploadURL.GetHeaders() {
 			req.Header.Set(k, v)
 		}

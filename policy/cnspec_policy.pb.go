@@ -657,6 +657,11 @@ const (
 	UploadURLKind_UPLOAD_URL_KIND_SCAN_DATABASE_V0     UploadURLKind = 1
 	UploadURLKind_UPLOAD_URL_KIND_SERVERLESS_LOGS_V0   UploadURLKind = 2
 	UploadURLKind_UPLOAD_URL_KIND_THIRD_PARTY_FINDINGS UploadURLKind = 3
+	// A code-intelligence snapshot uploaded by a code scanner: a versioned
+	// artifact describing a repository (profile, health, architecture,
+	// contributors, timelines, per-finding flow evidence). The platform ingests
+	// it as a non-mql assessment source rather than as findings.
+	UploadURLKind_UPLOAD_URL_KIND_CODE_INTELLIGENCE_V0 UploadURLKind = 4
 )
 
 // Enum value maps for UploadURLKind.
@@ -666,12 +671,14 @@ var (
 		1: "UPLOAD_URL_KIND_SCAN_DATABASE_V0",
 		2: "UPLOAD_URL_KIND_SERVERLESS_LOGS_V0",
 		3: "UPLOAD_URL_KIND_THIRD_PARTY_FINDINGS",
+		4: "UPLOAD_URL_KIND_CODE_INTELLIGENCE_V0",
 	}
 	UploadURLKind_value = map[string]int32{
 		"UPLOAD_URL_KIND_UNSPECIFIED":          0,
 		"UPLOAD_URL_KIND_SCAN_DATABASE_V0":     1,
 		"UPLOAD_URL_KIND_SERVERLESS_LOGS_V0":   2,
 		"UPLOAD_URL_KIND_THIRD_PARTY_FINDINGS": 3,
+		"UPLOAD_URL_KIND_CODE_INTELLIGENCE_V0": 4,
 	}
 )
 
@@ -11932,12 +11939,13 @@ const file_cnspec_policy_proto_rawDesc = "" +
 	"\"ASSET_ACTIVITY_TRIGGER_UNSPECIFIED\x10\x00\x12!\n" +
 	"\x1dASSET_ACTIVITY_TRIGGER_AD_HOC\x10\x01\x12$\n" +
 	" ASSET_ACTIVITY_TRIGGER_SCHEDULED\x10\x02\x12$\n" +
-	" ASSET_ACTIVITY_TRIGGER_TRIGGERED\x10\x03*\xa8\x01\n" +
+	" ASSET_ACTIVITY_TRIGGER_TRIGGERED\x10\x03*\xd2\x01\n" +
 	"\rUploadURLKind\x12\x1f\n" +
 	"\x1bUPLOAD_URL_KIND_UNSPECIFIED\x10\x00\x12$\n" +
 	" UPLOAD_URL_KIND_SCAN_DATABASE_V0\x10\x01\x12&\n" +
 	"\"UPLOAD_URL_KIND_SERVERLESS_LOGS_V0\x10\x02\x12(\n" +
-	"$UPLOAD_URL_KIND_THIRD_PARTY_FINDINGS\x10\x03*N\n" +
+	"$UPLOAD_URL_KIND_THIRD_PARTY_FINDINGS\x10\x03\x12(\n" +
+	"$UPLOAD_URL_KIND_CODE_INTELLIGENCE_V0\x10\x04*N\n" +
 	"\fDownloadKind\x12\x1d\n" +
 	"\x19DOWNLOAD_KIND_UNSPECIFIED\x10\x00\x12\x1f\n" +
 	"\x1bDOWNLOAD_KIND_SCAN_MANIFEST\x10\x01*\xb3\x01\n" +
