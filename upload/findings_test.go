@@ -79,7 +79,7 @@ func TestDoUpload(t *testing.T) {
 	data, err := protojson.Marshal(req)
 	require.NoError(t, err)
 
-	err = doUpload(context.Background(), resolver, srv.Client(), data, req.SpaceMrn)
+	err = doUpload(context.Background(), resolver, srv.Client(), policy.UploadURLKind_UPLOAD_URL_KIND_THIRD_PARTY_FINDINGS, "application/json", data, req.SpaceMrn)
 	require.NoError(t, err)
 
 	// The signed-URL PUT carried the protojson request, content type, and the
@@ -120,6 +120,50 @@ func TestFindingsUploadRequest(t *testing.T) {
 	data, err := protojson.Marshal(one)
 	require.NoError(t, err)
 	assert.Contains(t, string(data), `"completeKinds":["FINDING_KIND_FINDING"]`)
+}
+
+// kindResolver records the kind requested and accepts any kind, so the generic
+// upload path (doUpload with an arbitrary kind) can be exercised.
+type kindResolver struct {
+	uploadURL string
+	gotKind   policy.UploadURLKind
+}
+
+func (r *kindResolver) GetUploadURL(_ context.Context, in *policy.GetUploadURLReq) (*policy.GetUploadURLResp, error) {
+	r.gotKind = in.Kind
+	return &policy.GetUploadURLResp{
+		UploadSessionId: "sess-ci",
+		UploadUrl:       &policy.UploadURL{Url: r.uploadURL},
+	}, nil
+}
+
+func (r *kindResolver) ReportUploadCompleted(_ context.Context, _ *policy.ReportUploadCompletedReq) (*policy.Empty, error) {
+	return &policy.Empty{}, nil
+}
+
+// doUpload carries an arbitrary kind and content type through to the signed-URL
+// PUT — the generic path UploadArtifact uses for a code-intelligence snapshot.
+func TestDoUploadArbitraryKind(t *testing.T) {
+	var gotCType string
+	var gotBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotCType = r.Header.Get("Content-Type")
+		gotBody, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	resolver := &kindResolver{uploadURL: srv.URL}
+	payload := []byte("\x00\x01binary-snapshot")
+
+	err := doUpload(context.Background(), resolver, srv.Client(),
+		policy.UploadURLKind_UPLOAD_URL_KIND_CODE_INTELLIGENCE_V0, "application/octet-stream",
+		payload, "//captain.api.mondoo.app/spaces/test")
+	require.NoError(t, err)
+
+	assert.Equal(t, policy.UploadURLKind_UPLOAD_URL_KIND_CODE_INTELLIGENCE_V0, resolver.gotKind)
+	assert.Equal(t, "application/octet-stream", gotCType)
+	assert.Equal(t, payload, gotBody)
 }
 
 func TestResolverHTTPClient(t *testing.T) {
