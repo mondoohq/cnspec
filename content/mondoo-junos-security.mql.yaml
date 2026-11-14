@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-junos-security
     name: Mondoo Juniper Junos Security
-    version: 1.1.6
+    version: 1.1.7
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -138,15 +138,15 @@ queries:
         To verify the root login setting from the Junos CLI:
 
         1. Open an SSH session to the device and enter operational mode.
-        2. Display the SSH service configuration:
+        2. Display the SSH service configuration, including statements inherited from configuration groups:
 
            ```text
-           show configuration system services ssh
+           show configuration system services ssh | display inheritance
            ```
 
-        3. Inspect the `root-login` statement in the output.
+        3. Inspect the `root-login` statement in the output. A statement marked `inactive` is not applied and counts as absent.
 
-        If `root-login` is set to `deny` or `deny-password`, the check passes. If `root-login` is set to `allow` or the statement is absent (the configuration defaults to allowing root login), the check fails.
+        If `root-login` is set to `deny` or `deny-password`, the check passes. If `root-login` is set to `allow` or the statement is absent, the check fails. The default that applies without the statement depends on the platform and release: most systems default to `deny-password`, and several MX Series routers allowed root login by default before Junos 17.4R1, so the check requires the setting to be explicit.
       remediation:
         - id: cli
           desc: |
@@ -167,6 +167,15 @@ queries:
             ```text
             configure
             set system services ssh root-login deny-password
+            commit confirmed 5
+            ```
+
+            **A deactivated statement stays deactivated when you set it.** If the configuration shows `inactive: root-login`, the device does not apply it, so activate it in the same change:
+
+            ```text
+            configure
+            set system services ssh root-login deny
+            activate system services ssh root-login
             commit confirmed 5
             ```
 
@@ -199,17 +208,27 @@ queries:
       compliance/vda-isa-5: vda-isa-5-5-1-2
     mql: |
       junos.sshConfig.ciphers.containsNone(
-        ["arcfour", "arcfour128", "arcfour256", "3des-cbc", "blowfish-cbc", "cast128-cbc"]
+        [
+          "arcfour",
+          "arcfour128",
+          "arcfour256",
+          "3des-cbc",
+          "blowfish-cbc",
+          "cast128-cbc",
+          "aes128-cbc",
+          "aes192-cbc",
+          "aes256-cbc"
+        ]
       )
     docs:
       desc: |
         This check verifies that the SSH service offers only strong symmetric ciphers for management sessions.
 
-        Ciphers encrypt everything that travels inside an SSH session to the routing engine, including the password typed at login and the full configuration printed by `show configuration`. Junos lets an operator pin the accepted list with `set system services ssh ciphers`, and this check fails when that list contains `arcfour`, `arcfour128`, `arcfour256`, `3des-cbc`, `blowfish-cbc`, or `cast128-cbc`.
+        Ciphers encrypt everything that travels inside an SSH session to the routing engine, including the password typed at login and the full configuration printed by `show configuration`. Junos lets an operator pin the accepted list with `set system services ssh ciphers`, and this check fails when that list contains `arcfour`, `arcfour128`, `arcfour256`, `3des-cbc`, `blowfish-cbc`, `cast128-cbc`, or one of the AES CBC ciphers `aes128-cbc`, `aes192-cbc`, and `aes256-cbc`. Junos 25.2 still accepts `3des-cbc` and the AES CBC ciphers in the configuration, marks them deprecated, and offers them to SSH clients once configured.
 
         **Why this matters**
 
-        Each of those ciphers is broken in a way an attacker on the traffic path can use. RC4, which Junos calls `arcfour`, leaks keystream bias in its early output, so an observer who captures enough sessions recovers plaintext without ever touching the key. Sweet32 exploits the 64-bit block size shared by `3des-cbc`, `blowfish-cbc`, and `cast128-cbc`: after roughly 32 GB inside a single session the birthday bound produces repeated blocks, and management sessions to a router are exactly the kind that stay open for hours.
+        Each of those ciphers is broken in a way an attacker on the traffic path can use. RC4, which Junos calls `arcfour`, leaks keystream bias in its early output, so an observer who captures enough sessions recovers plaintext without ever touching the key. Sweet32 exploits the 64-bit block size shared by `3des-cbc`, `blowfish-cbc`, and `cast128-cbc`: after roughly 32 GB inside a single session the birthday bound produces repeated blocks, and management sessions to a router are exactly the kind that stay open for hours. The AES CBC modes are open to plaintext recovery attacks on SSH that the counter and GCM modes are not.
 
         What leaks is not incidental traffic. The recovered plaintext is a management session, which means the login credential, the running configuration with its community strings and shared secrets, and the commands used to change them. An attacker who reads one such session no longer needs to attack the device, because they can log in the way the operator did.
 
@@ -220,15 +239,15 @@ queries:
         To verify the configured SSH ciphers from the Junos CLI:
 
         1. Open an SSH session to the device and enter operational mode.
-        2. Display the SSH service configuration:
+        2. Display the SSH service configuration, including statements inherited from configuration groups:
 
            ```text
-           show configuration system services ssh
+           show configuration system services ssh | display inheritance
            ```
 
         3. Inspect the `ciphers` statements in the output.
 
-        If no `ciphers` statement lists `arcfour`, `arcfour128`, `arcfour256`, `3des-cbc`, `blowfish-cbc`, or `cast128-cbc`, the check passes. If any of these weak ciphers is configured, the check fails.
+        If no `ciphers` statement lists `arcfour`, `arcfour128`, `arcfour256`, `3des-cbc`, `blowfish-cbc`, `cast128-cbc`, `aes128-cbc`, `aes192-cbc`, or `aes256-cbc`, the check passes. If any of these weak ciphers is configured, the check fails.
       remediation:
         - id: cli
           desc: |
@@ -241,7 +260,6 @@ queries:
             delete system services ssh ciphers
             set system services ssh ciphers aes256-gcm@openssh.com
             set system services ssh ciphers aes128-gcm@openssh.com
-            set system services ssh ciphers chacha20-poly1305@openssh.com
             set system services ssh ciphers aes256-ctr
             set system services ssh ciphers aes128-ctr
             commit confirmed 5
@@ -280,6 +298,7 @@ queries:
           "hmac-md5",
           "hmac-md5-96",
           "hmac-sha1-96",
+          "hmac-sha1-96-etm@openssh.com",
           "hmac-md5-etm@openssh.com",
           "hmac-md5-96-etm@openssh.com"
         ]
@@ -288,13 +307,13 @@ queries:
       desc: |
         This check verifies that SSH uses only strong message authentication codes to protect session integrity.
 
-        The MAC algorithm proves that each SSH packet arrived exactly as it was sent. Junos accepts an explicit list under `set system services ssh macs`, and this check fails when that list contains `hmac-md5`, `hmac-md5-96`, `hmac-sha1-96`, `hmac-md5-etm@openssh.com`, or `hmac-md5-96-etm@openssh.com`.
+        The MAC algorithm proves that each SSH packet arrived exactly as it was sent. Junos accepts an explicit list under `set system services ssh macs`, and this check fails when that list contains `hmac-md5`, `hmac-md5-96`, `hmac-sha1-96`, `hmac-sha1-96-etm@openssh.com`, `hmac-md5-etm@openssh.com`, or `hmac-md5-96-etm@openssh.com`.
 
         **Why this matters**
 
         Encryption without integrity buys less than it appears to. The cipher hides the bytes, and the MAC is the only thing that tells the routing engine those bytes were not altered in flight. When the MAC is weak, an attacker positioned on the management path can attempt to forge or modify packets that the device will then accept as legitimate operator input.
 
-        The two families fail differently. MD5 has practical collision attacks and has been unfit for authentication use for well over a decade. The 96-bit truncations discard a third of the tag, which cuts the work of a forgery attempt by orders of magnitude against the full-length variant, and `hmac-sha1-96` inherits the weakening of SHA-1 on top of the truncation.
+        The two families fail differently. MD5 has practical collision attacks and has been unfit for authentication use for well over a decade. The 96-bit truncations discard a third of the tag, which cuts the work of a forgery attempt by orders of magnitude against the full-length variant, and `hmac-sha1-96` and its encrypt-then-MAC form inherit the weakening of SHA-1 on top of the truncation.
 
         A forged packet on a router session is not a corrupted file, it is a command. Injected text that lands in configuration mode adds a user, rewrites a firewall filter, or removes a screen profile, and the resulting change is committed under the operator's identity and appears in the audit trail as their work.
 
@@ -303,15 +322,15 @@ queries:
         To verify the configured SSH MACs from the Junos CLI:
 
         1. Open an SSH session to the device and enter operational mode.
-        2. Display the SSH service configuration:
+        2. Display the SSH service configuration, including statements inherited from configuration groups:
 
            ```text
-           show configuration system services ssh
+           show configuration system services ssh | display inheritance
            ```
 
         3. Inspect the `macs` statements in the output.
 
-        If no `macs` statement lists `hmac-md5`, `hmac-md5-96`, `hmac-sha1-96`, `hmac-md5-etm@openssh.com`, or `hmac-md5-96-etm@openssh.com`, the check passes. If any of these weak MACs is configured, the check fails.
+        If no `macs` statement lists `hmac-md5`, `hmac-md5-96`, `hmac-sha1-96`, `hmac-sha1-96-etm@openssh.com`, `hmac-md5-etm@openssh.com`, or `hmac-md5-96-etm@openssh.com`, the check passes. If any of these weak MACs is configured, the check fails.
       remediation:
         - id: cli
           desc: |
@@ -384,10 +403,10 @@ queries:
         To verify the configured SSH key exchange algorithms from the Junos CLI:
 
         1. Open an SSH session to the device and enter operational mode.
-        2. Display the SSH service configuration:
+        2. Display the SSH service configuration, including statements inherited from configuration groups:
 
            ```text
-           show configuration system services ssh
+           show configuration system services ssh | display inheritance
            ```
 
         3. Inspect the `key-exchange` statements in the output.
@@ -437,14 +456,14 @@ queries:
       compliance/owasp-top-10-2025: owasp-top-10-2025-a02
       compliance/pci-dss-4: pcidss-requirement-2-2-1
       compliance/soc2-2017: soc2-control-cc6-6-1
-      compliance/vda-isa-5: vda-isa-5-5-2-1
+      compliance/vda-isa-5: vda-isa-5-5-2-7
     mql: |
       junos.sshConfig.tcpForwarding == false
     docs:
       desc: |
         This check verifies that SSH port forwarding is disabled so the device cannot be used as a tunnel into the network.
 
-        An SSH client with forwarding available can ask the server to open arbitrary TCP connections on its behalf and relay them back through the encrypted session. Junos turns this off with `set system services ssh no-tcp-forwarding`, and the check fails when that statement is absent, which is the default state.
+        An SSH client with forwarding available can ask the server to open arbitrary TCP connections on its behalf and relay them back through the encrypted session. Starting in Junos 22.2R1, forwarding is off unless `set system services ssh allow-tcp-forwarding` is configured, and the older `no-tcp-forwarding` and `tcp-forwarding` statements are gone. On earlier releases forwarding is on unless `no-tcp-forwarding` is configured. The check fails when the device permits forwarding under the rules of its release.
 
         **Why this matters**
 
@@ -459,21 +478,31 @@ queries:
         To verify the SSH TCP forwarding setting from the Junos CLI:
 
         1. Open an SSH session to the device and enter operational mode.
-        2. Display the SSH service configuration:
+        2. Display the SSH service configuration, including statements inherited from configuration groups:
 
            ```text
-           show configuration system services ssh
+           show configuration system services ssh | display inheritance
            ```
 
-        3. Inspect the output for the `no-tcp-forwarding` statement.
+        3. Inspect the output for the `allow-tcp-forwarding`, `tcp-forwarding`, and `no-tcp-forwarding` statements.
 
-        If the `no-tcp-forwarding` statement is present, the check passes. If it is absent (the configuration defaults to permitting TCP forwarding), the check fails.
+        On Junos 22.2R1 and later, the check passes when `allow-tcp-forwarding` is absent and fails when it is present. On earlier releases, the check passes when `no-tcp-forwarding` is present and fails when it is absent.
       remediation:
         - id: cli
           desc: |
             **Using the CLI**
 
-            Disabling TCP forwarding can break active tunnels and management workflows that rely on it. Enter configuration mode and disable SSH TCP forwarding, committing with automatic rollback:
+            Disabling TCP forwarding can break active tunnels and management workflows that rely on it.
+
+            On Junos 22.2R1 and later, enter configuration mode and remove the statement that allows forwarding, committing with automatic rollback:
+
+            ```text
+            configure
+            delete system services ssh allow-tcp-forwarding
+            commit confirmed 5
+            ```
+
+            On releases before 22.2R1, disable forwarding explicitly instead:
 
             ```text
             configure
@@ -529,10 +558,10 @@ queries:
         To verify the SSH connection limit from the Junos CLI:
 
         1. Open an SSH session to the device and enter operational mode.
-        2. Display the SSH service configuration:
+        2. Display the SSH service configuration, including statements inherited from configuration groups:
 
            ```text
-           show configuration system services ssh
+           show configuration system services ssh | display inheritance
            ```
 
         3. Inspect the output for the `connection-limit` statement.
@@ -592,10 +621,10 @@ queries:
         To verify the SSH rate limit from the Junos CLI:
 
         1. Open an SSH session to the device and enter operational mode.
-        2. Display the SSH service configuration:
+        2. Display the SSH service configuration, including statements inherited from configuration groups:
 
            ```text
-           show configuration system services ssh
+           show configuration system services ssh | display inheritance
            ```
 
         3. Inspect the output for the `rate-limit` statement.
@@ -658,10 +687,10 @@ queries:
         To verify that every local user has authentication credentials from the Junos CLI:
 
         1. Open an SSH session to the device and enter operational mode.
-        2. Display the login configuration:
+        2. Display the login configuration, including statements inherited from configuration groups:
 
            ```text
-           show configuration system login
+           show configuration system login | display inheritance
            ```
 
         3. For each `user` block, confirm an `authentication` statement is present with either an `encrypted-password` or one or more SSH public keys.
@@ -703,9 +732,17 @@ queries:
             delete system login user <username>
             commit
             ```
+
+            **An account inherited from a configuration group is defined in that group.** The output of `show configuration system login | display inheritance` names the group above each inherited statement, and the account is changed or deleted there. For example, the AWS Marketplace vSRX image creates `ec2-user` in the class `super-user` through its `aws-default` group:
+
+            ```text
+            configure
+            delete groups aws-default system login user ec2-user
+            commit
+            ```
     refs:
       - url: https://www.juniper.net/documentation/us/en/software/junos/user-access/topics/topic-map/junos-os-authentication-order.html
-        title: Authentication Order for RADIUS TACACS+, and Local Password
+        title: Authentication Order for RADIUS, TACACS+, and Local Password
 
   - uid: mondoo-junos-security-no-super-user-class-overuse
     title: Ensure minimal number of users have super-user privileges
@@ -746,10 +783,10 @@ queries:
         To verify how many users hold the super-user login class from the Junos CLI:
 
         1. Open an SSH session to the device and enter operational mode.
-        2. Display the login configuration:
+        2. Display the login configuration, including statements inherited from configuration groups:
 
            ```text
-           show configuration system login
+           show configuration system login | display inheritance
            ```
 
         3. Count the `user` blocks whose `class` statement is set to `super-user`.
@@ -831,10 +868,10 @@ queries:
         To verify that the Telnet service is disabled from the Junos CLI:
 
         1. Open an SSH session to the device and enter operational mode.
-        2. Display the configured system services:
+        2. Display the configured system services, including statements inherited from configuration groups:
 
            ```text
-           show configuration system services
+           show configuration system services | display inheritance
            ```
 
         3. Inspect the output for a `telnet` statement.
@@ -870,7 +907,7 @@ queries:
             ```
     refs:
       - url: https://www.juniper.net/documentation/us/en/software/junos/user-access/topics/topic-map/junos-software-remote-access-overview.html
-        title: Junos Remote Access Configuration
+        title: Remote Access Overview
 
   - uid: mondoo-junos-security-ftp-disabled
     title: Ensure FTP service is disabled
@@ -911,10 +948,10 @@ queries:
         To verify that the FTP service is disabled from the Junos CLI:
 
         1. Open an SSH session to the device and enter operational mode.
-        2. Display the configured system services:
+        2. Display the configured system services, including statements inherited from configuration groups:
 
            ```text
-           show configuration system services
+           show configuration system services | display inheritance
            ```
 
         3. Inspect the output for an `ftp` statement.
@@ -952,7 +989,7 @@ queries:
             ```
     refs:
       - url: https://www.juniper.net/documentation/us/en/software/junos/user-access/topics/topic-map/junos-software-remote-access-overview.html
-        title: Junos Remote Access Configuration
+        title: Remote Access Overview
 
   - uid: mondoo-junos-security-finger-disabled
     title: Ensure finger service is disabled
@@ -993,10 +1030,10 @@ queries:
         To verify that the finger service is disabled from the Junos CLI:
 
         1. Open an SSH session to the device and enter operational mode.
-        2. Display the configured system services:
+        2. Display the configured system services, including statements inherited from configuration groups:
 
            ```text
-           show configuration system services
+           show configuration system services | display inheritance
            ```
 
         3. Inspect the output for a `finger` statement.
@@ -1016,7 +1053,7 @@ queries:
             ```
     refs:
       - url: https://www.juniper.net/documentation/us/en/software/junos/user-access/topics/topic-map/junos-software-remote-access-overview.html
-        title: Junos Remote Access Configuration
+        title: Remote Access Overview
 
   # ==========================================
   # SNMP Security
@@ -1060,10 +1097,10 @@ queries:
         To verify that default SNMP community strings are not configured from the Junos CLI:
 
         1. Open an SSH session to the device and enter operational mode.
-        2. Display the SNMP configuration:
+        2. Display the SNMP configuration, including statements inherited from configuration groups:
 
            ```text
-           show configuration snmp
+           show configuration snmp | display inheritance
            ```
 
         3. Inspect each `community` statement for the names `public` and `private`.
@@ -1107,12 +1144,12 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-3-1
       compliance/vda-isa-5: vda-isa-5-4-2-1
     mql: |
-      junos.snmpCommunities.all(authorization == "read-only")
+      junos.snmpCommunities.all(authorization != "read-write")
     docs:
       desc: |
         This check verifies that no SNMP community grants write access to the device.
 
-        Junos sets the access level per community with `set snmp community <name> authorization`, and the choices are `read-only` and `read-write`. This check requires every configured community to be `read-only`.
+        Junos sets the access level per community with `set snmp community <name> authorization`, and the choices are `read-only` and `read-write`. A community without the statement is `read-only`. This check fails when any configured community is `read-write`.
 
         **Why this matters**
 
@@ -1127,15 +1164,15 @@ queries:
         To verify the authorization level of each SNMP community from the Junos CLI:
 
         1. Open an SSH session to the device and enter operational mode.
-        2. Display the SNMP configuration:
+        2. Display the SNMP configuration, including statements inherited from configuration groups:
 
            ```text
-           show configuration snmp
+           show configuration snmp | display inheritance
            ```
 
         3. Inspect the `authorization` statement under each `community` block.
 
-        If every community has `authorization` set to `read-only`, the check passes. If any community has `authorization read-write`, the check fails.
+        If every community has `authorization` set to `read-only` or has no `authorization` statement, which means read-only, the check passes. If any community has `authorization read-write`, the check fails.
       remediation:
         - id: cli
           desc: |
@@ -1182,7 +1219,7 @@ queries:
       desc: |
         This check verifies that every SNMP community restricts which hosts may use it.
 
-        `set snmp community <name> clients` attaches a list of permitted source addresses or prefixes to a community, and Junos refuses requests from anywhere else. The check fails for any community configured without at least one client entry, since that community is usable by any source able to reach the SNMP port.
+        `set snmp community <name> clients` attaches permitted source addresses or prefixes to a community, and `set snmp community <name> client-list-name` attaches a reusable `snmp client-list` or policy prefix list instead. Junos refuses requests from anywhere else. The check fails for any community that permits no source prefix through either statement, since that community is usable by any source able to reach the SNMP port. Prefixes marked `restrict` deny a source and do not count.
 
         **Why this matters**
 
@@ -1197,15 +1234,15 @@ queries:
         To verify that SNMP communities restrict client access from the Junos CLI:
 
         1. Open an SSH session to the device and enter operational mode.
-        2. Display the SNMP configuration:
+        2. Display the SNMP configuration, including statements inherited from configuration groups:
 
            ```text
-           show configuration snmp
+           show configuration snmp | display inheritance
            ```
 
-        3. Inspect each `community` block for `clients` statements that list permitted source addresses or prefixes.
+        3. Inspect each `community` block for `clients` statements, or for a `client-list-name` statement naming a `client-list` or a `policy-options prefix-list` that holds the permitted prefixes.
 
-        If every community has at least one `clients` entry, the check passes. If any community has no `clients` restriction, the check fails.
+        If every community permits at least one source prefix through either statement, the check passes. If any community has neither, the check fails.
       remediation:
         - id: cli
           desc: |
@@ -1217,6 +1254,15 @@ queries:
             configure
             set snmp community <community-name> clients <management-host>/32
             set snmp community <community-name> clients <management-network>/24
+            commit confirmed 5
+            ```
+
+            To share one set of pollers across communities, define a client list and reference it instead:
+
+            ```text
+            configure
+            set snmp client-list <list-name> <management-network>/24
+            set snmp community <community-name> client-list-name <list-name>
             commit confirmed 5
             ```
 
@@ -1271,10 +1317,10 @@ queries:
         To verify that a remote syslog host is configured from the Junos CLI:
 
         1. Open an SSH session to the device and enter operational mode.
-        2. Display the syslog configuration:
+        2. Display the syslog configuration, including statements inherited from configuration groups:
 
            ```text
-           show configuration system syslog
+           show configuration system syslog | display inheritance
            ```
 
         3. Inspect the output for one or more `host` statements.
@@ -1317,12 +1363,13 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-7-1
       compliance/vda-isa-5: vda-isa-5-5-1-2
     mql: |
+      junos.syslogHosts != empty
       junos.syslogHosts.all(transport == "tcp" || transport == "tls")
     docs:
       desc: |
         This check verifies that log messages leave the device over a reliable and protected transport.
 
-        The `transport` statement under `set system syslog host <address>` selects `udp`, `tcp`, or `tls`, and UDP is the default. This check requires TCP or TLS on every configured host.
+        The `transport` statement under `set system syslog host <address>` selects `udp`, `tcp`, or `tls`, and UDP is the default. This check requires TCP or TLS on every configured host, and it fails when no remote host is configured at all, since no log message leaves the device over a protected transport then.
 
         **Why this matters**
 
@@ -1337,15 +1384,15 @@ queries:
         To verify the transport protocol of each syslog host from the Junos CLI:
 
         1. Open an SSH session to the device and enter operational mode.
-        2. Display the syslog configuration:
+        2. Display the syslog configuration, including statements inherited from configuration groups:
 
            ```text
-           show configuration system syslog
+           show configuration system syslog | display inheritance
            ```
 
         3. Inspect the `transport` statement under each `host` block.
 
-        If every syslog host uses `transport tcp` or `transport tls`, the check passes. If any host uses UDP transport (the default when no `transport` statement is present), the check fails.
+        If at least one `host` is configured and every one uses `transport tcp` or `transport tls`, the check passes. If any host uses UDP, which is the default when no `transport` statement is present, or no host is configured, the check fails.
       remediation:
         - id: cli
           desc: |
@@ -1406,7 +1453,7 @@ queries:
       desc: |
         This check verifies that every security policy records the sessions it acts on.
 
-        On an SRX firewall a policy decides what passes between zones, and the `then log session-init` and `then log session-close` statements under `set security policies` are what turn that decision into a record. This check requires at least one of the two on every configured policy.
+        On an SRX firewall a policy decides what passes between zones, and the `then log session-init` and `then log session-close` statements under `set security policies` are what turn that decision into a record. This check requires at least one of the two on every configured policy, both the zone-pair policies and the global policies under `set security policies global`.
 
         **Why this matters**
 
@@ -1421,13 +1468,13 @@ queries:
         To verify that security policies have session logging enabled from the Junos CLI:
 
         1. Open an SSH session to the device and enter operational mode.
-        2. Display the security policy configuration:
+        2. Display the security policy configuration, including statements inherited from configuration groups:
 
            ```text
-           show configuration security policies
+           show configuration security policies | display inheritance
            ```
 
-        3. Inspect the `then` action of each policy for a `log session-init` or `log session-close` statement.
+        3. Inspect the `then` action of each policy, including each policy under `global`, for a `log session-init` or `log session-close` statement.
 
         If every policy has at least `session-init` or `session-close` logging configured, the check passes. If any policy has no logging statement, the check fails.
       remediation:
@@ -1441,6 +1488,15 @@ queries:
             configure
             set security policies from-zone <src> to-zone <dst> policy <name> then log session-init
             set security policies from-zone <src> to-zone <dst> policy <name> then log session-close
+            commit
+            ```
+
+            For a global policy:
+
+            ```text
+            configure
+            set security policies global policy <name> then log session-init
+            set security policies global policy <name> then log session-close
             commit
             ```
     refs:
@@ -1466,7 +1522,7 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-6-1
       compliance/vda-isa-5: vda-isa-5-5-2-7
     mql: |
-      junos.securityZones.where(name == "untrust").all(screen != "")
+      junos.securityZones.where(name == "untrust").all(screen != empty)
     docs:
       desc: |
         This check verifies that the untrust security zone has a screen profile bound to it.
@@ -1486,15 +1542,15 @@ queries:
         To verify that untrust security zones have a screen profile applied from the Junos CLI:
 
         1. Open an SSH session to the device and enter operational mode.
-        2. Display the security zone configuration:
+        2. Display the security zone configuration, including statements inherited from configuration groups:
 
            ```text
-           show configuration security zones
+           show configuration security zones | display inheritance
            ```
 
         3. Inspect the `untrust` zone block for a `screen` statement.
 
-        If every zone named `untrust` has a `screen` profile assigned, the check passes. If an untrust zone has no `screen` statement, the check fails.
+        If every zone named `untrust` has a `screen` profile assigned, the check passes. If an untrust zone has no `screen` statement, or the statement is marked `inactive`, the check fails.
       remediation:
         - id: cli
           desc: |
@@ -1509,6 +1565,14 @@ queries:
             set security screen ids-option untrust-screen tcp syn-flood
             set security screen ids-option untrust-screen tcp land
             set security zones security-zone untrust screen untrust-screen
+            commit
+            ```
+
+            **A deactivated binding stays deactivated when you set it.** If the zone shows `inactive: screen`, the device does not apply it, so activate it:
+
+            ```text
+            configure
+            activate security zones security-zone untrust screen
             commit
             ```
     refs:
@@ -1532,22 +1596,37 @@ queries:
       compliance/owasp-top-10-2025: owasp-top-10-2025-a01
       compliance/pci-dss-4: pcidss-requirement-2-2-1
       compliance/soc2-2017: soc2-control-cc6-6-1
-      compliance/vda-isa-5: vda-isa-5-5-2-1
+      compliance/vda-isa-5: vda-isa-5-5-2-7
     mql: |
       junos.securityZones.where(name == "untrust").all(
-        hostInboundServices.containsNone(["telnet", "ftp", "finger", "http", "snmp", "all"])
+        hostInboundServices.containsNone(
+          [
+            "all",
+            "telnet",
+            "reverse-telnet",
+            "rlogin",
+            "rsh",
+            "ftp",
+            "tftp",
+            "finger",
+            "http",
+            "webapi-clear-text",
+            "xnm-clear-text",
+            "snmp"
+          ]
+        )
       )
     docs:
       desc: |
         This check verifies that the untrust zone does not accept insecure management protocols aimed at the device itself.
 
-        Host-inbound traffic controls what the routing engine will answer on an interface, separately from the policies that govern transit traffic. This check reads the `host-inbound-traffic system-services` statements under `set security zones security-zone untrust` and fails when they include `telnet`, `ftp`, `finger`, `http`, `snmp`, or `all`.
+        Host-inbound traffic controls what the routing engine will answer on an interface, separately from the policies that govern transit traffic. This check reads the `host-inbound-traffic system-services` statements of the `untrust` zone and of its interfaces under `set security zones security-zone untrust`, and fails when they include `all` or one of the clear-text services `telnet`, `reverse-telnet`, `rlogin`, `rsh`, `ftp`, `tftp`, `finger`, `http`, `webapi-clear-text`, `xnm-clear-text`, or `snmp`.
 
         **Why this matters**
 
         These statements govern the control plane, not traffic passing through. A service listed here answers packets addressed to the firewall's own untrust interface, which is to say packets from the internet, and no security policy stands in front of it. An operator who has written the zone policies carefully can still be publishing a login prompt to every scanner on the internet through a single line in the wrong place.
 
-        The listed services are the ones with nothing behind them. Telnet and FTP surrender their credentials to anyone watching, and on an untrust interface the observers include every network between the attacker and the device. J-Web over plain `http` submits the administrative password unencrypted and has a long record of remotely exploitable vulnerabilities, several of them used in the wild against internet-exposed SRX devices. SNMP under v2c is a clear-text community string that yields the topology.
+        The listed services are the ones with nothing behind them. Telnet, rlogin, rsh, FTP, and the clear-text Junos XML and web API services surrender their credentials to anyone watching, and on an untrust interface the observers include every network between the attacker and the device. J-Web over plain `http` submits the administrative password unencrypted and has a long record of remotely exploitable vulnerabilities, several of them used in the wild against internet-exposed SRX devices. SNMP under v2c is a clear-text community string that yields the topology.
 
         The `all` keyword is the worst case in a single word. It enables every host-inbound service the platform supports, including the ones an operator would never turn on individually, and because it reads as one short statement it survives configuration reviews that would have caught the same services listed by name.
 
@@ -1556,15 +1635,15 @@ queries:
         To verify the host-inbound services on the untrust zone from the Junos CLI:
 
         1. Open an SSH session to the device and enter operational mode.
-        2. Display the security zone configuration:
+        2. Display the security zone configuration, including statements inherited from configuration groups:
 
            ```text
-           show configuration security zones
+           show configuration security zones | display inheritance
            ```
 
-        3. Inspect the `host-inbound-traffic system-services` statements under the `untrust` zone block.
+        3. Inspect the `host-inbound-traffic system-services` statements under the `untrust` zone block and under each of its `interfaces`.
 
-        If the untrust zone exposes none of `telnet`, `ftp`, `finger`, `http`, `snmp`, or `all`, the check passes. If any of these insecure services is permitted, the check fails.
+        If the untrust zone exposes none of `all`, `telnet`, `reverse-telnet`, `rlogin`, `rsh`, `ftp`, `tftp`, `finger`, `http`, `webapi-clear-text`, `xnm-clear-text`, or `snmp`, the check passes. If any of these services is permitted, the check fails.
       remediation:
         - id: cli
           desc: |
@@ -1582,9 +1661,17 @@ queries:
             delete security zones security-zone untrust host-inbound-traffic system-services finger
             delete security zones security-zone untrust host-inbound-traffic system-services http
             delete security zones security-zone untrust host-inbound-traffic system-services snmp
+            delete security zones security-zone untrust host-inbound-traffic system-services reverse-telnet
+            delete security zones security-zone untrust host-inbound-traffic system-services rlogin
+            delete security zones security-zone untrust host-inbound-traffic system-services rsh
+            delete security zones security-zone untrust host-inbound-traffic system-services tftp
+            delete security zones security-zone untrust host-inbound-traffic system-services webapi-clear-text
+            delete security zones security-zone untrust host-inbound-traffic system-services xnm-clear-text
             set security zones security-zone untrust host-inbound-traffic system-services ssh
             commit confirmed 5
             ```
+
+            Run the same deletions under `security zones security-zone untrust interfaces <interface> host-inbound-traffic` for every interface of the zone that sets its own host-inbound services.
 
             Verify management access still works, then make the change permanent:
 
@@ -1593,7 +1680,7 @@ queries:
             ```
     refs:
       - url: https://www.juniper.net/documentation/us/en/software/junos/security-policies/topics/topic-map/security-zone-configuration.html
-        title: Junos Security Zone Configuration
+        title: Security Zones
 
   # ==========================================
   # IDS/IPS Screen Profiles
@@ -1637,10 +1724,10 @@ queries:
         To verify that screen profiles have TCP SYN flood protection from the Junos CLI:
 
         1. Open an SSH session to the device and enter operational mode.
-        2. Display the screen configuration:
+        2. Display the screen configuration, including statements inherited from configuration groups:
 
            ```text
-           show configuration security screen
+           show configuration security screen | display inheritance
            ```
 
         3. Inspect each `ids-option` block for a `tcp syn-flood` statement.
@@ -1703,10 +1790,10 @@ queries:
         To verify that screen profiles have ICMP ping-of-death protection from the Junos CLI:
 
         1. Open an SSH session to the device and enter operational mode.
-        2. Display the screen configuration:
+        2. Display the screen configuration, including statements inherited from configuration groups:
 
            ```text
-           show configuration security screen
+           show configuration security screen | display inheritance
            ```
 
         3. Inspect each `ids-option` block for an `icmp ping-death` statement.
@@ -1767,10 +1854,10 @@ queries:
         To verify that screen profiles block the IP source route option from the Junos CLI:
 
         1. Open an SSH session to the device and enter operational mode.
-        2. Display the screen configuration:
+        2. Display the screen configuration, including statements inherited from configuration groups:
 
            ```text
-           show configuration security screen
+           show configuration security screen | display inheritance
            ```
 
         3. Inspect each `ids-option` block for an `ip source-route-option` statement.
@@ -1831,10 +1918,10 @@ queries:
         To verify that screen profiles have TCP land attack protection from the Junos CLI:
 
         1. Open an SSH session to the device and enter operational mode.
-        2. Display the screen configuration:
+        2. Display the screen configuration, including statements inherited from configuration groups:
 
            ```text
-           show configuration security screen
+           show configuration security screen | display inheritance
            ```
 
         3. Inspect each `ids-option` block for a `tcp land` statement.
@@ -1895,10 +1982,10 @@ queries:
         To verify that screen profiles have IP teardrop protection from the Junos CLI:
 
         1. Open an SSH session to the device and enter operational mode.
-        2. Display the screen configuration:
+        2. Display the screen configuration, including statements inherited from configuration groups:
 
            ```text
-           show configuration security screen
+           show configuration security screen | display inheritance
            ```
 
         3. Inspect each `ids-option` block for an `ip tear-drop` statement.
@@ -1959,10 +2046,10 @@ queries:
         To verify that screen profiles have TCP WinNuke protection from the Junos CLI:
 
         1. Open an SSH session to the device and enter operational mode.
-        2. Display the screen configuration:
+        2. Display the screen configuration, including statements inherited from configuration groups:
 
            ```text
-           show configuration security screen
+           show configuration security screen | display inheritance
            ```
 
         3. Inspect each `ids-option` block for a `tcp winnuke` statement.
