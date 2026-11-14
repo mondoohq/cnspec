@@ -179,7 +179,11 @@ type Job struct {
 	// Number of assets to scan in parallel. Zero (or unset) lets the scanner pick
 	// a default from the providers behind the root assets, capped by the CPUs
 	// available on the machine. Use 1 for sequential.
-	Parallelism   int32 `protobuf:"varint,24,opt,name=parallelism,proto3" json:"parallelism,omitempty"`
+	Parallelism int32 `protobuf:"varint,24,opt,name=parallelism,proto3" json:"parallelism,omitempty"`
+	// Name the user asked for with --asset-name. Providers name the asset they
+	// connect to, so the name on the inventory asset does not survive
+	// connecting; the scanner sets this one back on the root asset afterwards.
+	AssetName     string `protobuf:"bytes,25,opt,name=asset_name,json=assetName,proto3" json:"asset_name,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -261,6 +265,13 @@ func (x *Job) GetParallelism() int32 {
 		return x.Parallelism
 	}
 	return 0
+}
+
+func (x *Job) GetAssetName() string {
+	if x != nil {
+		return x.AssetName
+	}
+	return ""
 }
 
 type AdmissionReviewJob struct {
@@ -756,7 +767,7 @@ const file_scan_proto_rawDesc = "" +
 	"\n" +
 	"\n" +
 	"scan.proto\x12\x12cnspec.policy.scan\x1a*providers-sdk/v1/inventory/inventory.proto\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1apolicy/cnspec_policy.proto\"\a\n" +
-	"\x05Empty\"\x91\x03\n" +
+	"\x05Empty\"\xb0\x03\n" +
 	"\x03Job\x12=\n" +
 	"\tinventory\x18\x01 \x01(\v2\x1f.cnquery.providers.v1.InventoryR\tinventory\x120\n" +
 	"\x06bundle\x18\x02 \x01(\v2\x18.cnspec.policy.v1.BundleR\x06bundle\x12\x1b\n" +
@@ -765,7 +776,9 @@ const file_scan_proto_rawDesc = "" +
 	"\x05props\x18\x17 \x03(\v2\".cnspec.policy.scan.Job.PropsEntryR\x05props\x12?\n" +
 	"\vreport_type\x18\x16 \x01(\x0e2\x1e.cnspec.policy.scan.ReportTypeR\n" +
 	"reportType\x12 \n" +
-	"\vparallelism\x18\x18 \x01(\x05R\vparallelism\x1a8\n" +
+	"\vparallelism\x18\x18 \x01(\x05R\vparallelism\x12\x1d\n" +
+	"\n" +
+	"asset_name\x18\x19 \x01(\tR\tassetName\x1a8\n" +
 	"\n" +
 	"PropsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +

@@ -340,6 +340,8 @@ type scanConfig struct {
 	IsIncognito   bool
 	RiskThreshold int
 	Parallelism   int
+	// AssetName is --asset-name, reapplied to the root asset after connecting.
+	AssetName string
 
 	DoRecord bool
 	AgentMrn string
@@ -471,6 +473,7 @@ func getCobraScanConfig(cmd *cobra.Command, runtime *providers.Runtime, cliRes *
 		OutputTarget:  viper.GetString("output-target"),
 		OutputScanDB:  viper.GetString("output-scan-db"),
 		Parallelism:   viper.GetInt("parallelism"),
+		AssetName:     assetName,
 	}
 
 	// Resource recording (UploadResourcesData) is NOT armed here: the
@@ -757,6 +760,7 @@ func RunScanResult(parentCtx context.Context, config *scanConfig, scannerOpts ..
 				PolicyFilters: config.PolicyNames,
 				Props:         config.Props,
 				Parallelism:   int32(config.Parallelism),
+				AssetName:     config.AssetName,
 			})
 	} else {
 		res, err = scanner.Run(
@@ -767,6 +771,7 @@ func RunScanResult(parentCtx context.Context, config *scanConfig, scannerOpts ..
 				PolicyFilters: config.PolicyNames,
 				Props:         config.Props,
 				Parallelism:   int32(config.Parallelism),
+				AssetName:     config.AssetName,
 			})
 	}
 
