@@ -1,0 +1,2446 @@
+# Copyright Mondoo, Inc. 2024, 2026
+# SPDX-License-Identifier: BUSL-1.1
+policies:
+  - uid: mondoo-checkpoint-security
+    name: Mondoo Check Point Security
+    version: 1.0.0
+    license: BUSL-1.1
+    tags:
+      mondoo.com/category: security
+      mondoo.com/platform: checkpoint,networkdevice
+      mondoo.com/icon: check-point
+    require:
+      - provider: checkpoint
+    authors:
+      - name: Mondoo, Inc.
+        email: hello@mondoo.com
+    summary: Secure Check Point Security Management servers, their access policy, gateways, VPN communities, and Gaia
+    docs:
+      desc: |
+        The Mondoo Check Point Security policy identifies misconfigurations on Check Point Security Management Servers and the gateways, access policy, and VPN communities they manage. It helps organizations find gaps that let traffic through the firewall unexamined, expose the management plane to the network, or leave the operating system of the management server weaker than its role demands.
+
+        This policy provides security checks across these areas:
+
+        - **Access Control policy**: Catch-all accept rules, logging on accept rules, and logged cleanup rules
+        - **Global properties**: Implied rules, stateful inspection of out-of-state packets, and security event tracking
+        - **Management access**: Management API exposure and SmartConsole trusted clients
+        - **Gateways**: Anti-spoofing, IPS, Anti-Bot and Anti-Virus blades, and supported software versions
+        - **Site-to-site VPN**: IKEv2 for VPN communities
+        - **Gaia operating system**: Telnet, SNMP, allowed clients, password and lockout rules, session timeouts, login banner, NTP, audit logging, backups, and saved configuration
+
+        The Gaia checks read the management server's operating system over SSH and need a Gaia user, given with `--gaia-user`. A user with the read-only `monitorRole` role is enough.
+
+        Learn more about scanning Check Point in the [cnspec documentation](https://mondoo.com/docs/cnspec/).
+
+        Have suggestions for new checks in this policy? Visit our [cnspec repository](https://github.com/mondoohq/cnspec).
+    groups:
+      - title: Access Control Policy
+        filters: asset.platform == "checkpoint-smartconsole"
+        checks:
+          - uid: mondoo-checkpoint-security-access-rule-no-any-any-accept
+          - uid: mondoo-checkpoint-security-access-rule-accept-logged
+          - uid: mondoo-checkpoint-security-access-layer-cleanup-rule-logged
+      - title: Global Properties
+        filters: asset.platform == "checkpoint-smartconsole"
+        checks:
+          - uid: mondoo-checkpoint-security-global-properties-log-implied-rules
+          - uid: mondoo-checkpoint-security-global-properties-no-implied-rip
+          - uid: mondoo-checkpoint-security-global-properties-no-implied-dns-tcp
+          - uid: mondoo-checkpoint-security-global-properties-no-implied-dns-udp
+          - uid: mondoo-checkpoint-security-global-properties-no-implied-icmp
+          - uid: mondoo-checkpoint-security-global-properties-drop-out-of-state-tcp
+          - uid: mondoo-checkpoint-security-global-properties-drop-out-of-state-icmp
+          - uid: mondoo-checkpoint-security-global-properties-track-security-events
+      - title: Management Access
+        filters: asset.platform == "checkpoint-smartconsole"
+        checks:
+          - uid: mondoo-checkpoint-security-management-api-access-restricted
+          - uid: mondoo-checkpoint-security-management-trusted-clients-restricted
+      - title: Gateways
+        filters: asset.platform == "checkpoint-smartconsole"
+        checks:
+          - uid: mondoo-checkpoint-security-gateway-anti-spoofing-prevent
+          - uid: mondoo-checkpoint-security-gateway-ips-enabled
+          - uid: mondoo-checkpoint-security-gateway-anti-bot-anti-virus-enabled
+          - uid: mondoo-checkpoint-security-gateway-supported-version
+      - title: Site-to-Site VPN
+        filters: asset.platform == "checkpoint-smartconsole"
+        checks:
+          - uid: mondoo-checkpoint-security-vpn-community-ikev2-only
+      # Gaia is read over SSH with the separate --gaia-user credential. A scan
+      # without it cannot read checkpoint.gaia, so this group applies only to
+      # scans that can.
+      - title: Gaia Operating System
+        filters: |
+          asset.platform == "checkpoint-smartconsole" &&
+          checkpoint.gaia != null
+        checks:
+          - uid: mondoo-checkpoint-security-gaia-telnet-disabled
+          - uid: mondoo-checkpoint-security-gaia-snmp-v3-only
+          - uid: mondoo-checkpoint-security-gaia-allowed-clients-restricted
+          - uid: mondoo-checkpoint-security-gaia-password-min-length
+          - uid: mondoo-checkpoint-security-gaia-password-complexity
+          - uid: mondoo-checkpoint-security-gaia-password-history
+          - uid: mondoo-checkpoint-security-gaia-account-lockout
+          - uid: mondoo-checkpoint-security-gaia-lock-unused-accounts
+          - uid: mondoo-checkpoint-security-gaia-cli-inactivity-timeout
+          - uid: mondoo-checkpoint-security-gaia-web-session-timeout
+          - uid: mondoo-checkpoint-security-gaia-login-banner
+          - uid: mondoo-checkpoint-security-gaia-ntp-enabled
+          - uid: mondoo-checkpoint-security-gaia-audit-log-permanent
+          - uid: mondoo-checkpoint-security-gaia-audit-logs-to-management
+          - uid: mondoo-checkpoint-security-gaia-scheduled-backup
+          - uid: mondoo-checkpoint-security-gaia-configuration-saved
+queries:
+  - uid: mondoo-checkpoint-security-access-rule-no-any-any-accept
+    title: Ensure no access rule accepts any source, destination, and service
+    impact: 95
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-4
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-3
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-1-3-1
+      compliance/soc2-2017: soc2-control-cc6-6-4
+      compliance/vda-isa-5: vda-isa-5-5-2-7
+    mql: |
+      inlineLayers = checkpoint.accessRules.where(inlineLayerName != empty).map(inlineLayerName)
+      checkpoint.accessRules.where(enabled == true && action == "Accept").none(
+        source.contains("Any") && sourceNegate == false &&
+        destination.contains("Any") && destinationNegate == false &&
+        service.contains("Any") && serviceNegate == false &&
+        layerName.in(inlineLayers) == false
+      )
+    docs:
+      desc: |
+        This check verifies that no enabled access rule accepts traffic from any source to any destination on any service.
+
+        Access Control rules are evaluated top down and the first match decides. A rule whose Source, Destination, and Services & Applications columns are all Any with the action Accept matches every connection that reaches it. The check looks at every access layer except inline layers, whose rules only see the traffic their parent rule already matched.
+
+        **Why this matters**
+
+        An any to any accept rule ends the policy for everything below it. Every specific rule further down the layer, including the cleanup rule, is shadowed, and the gateway forwards whatever arrives on any interface in any direction. An attacker who reaches any host behind the gateway can move to every other host on every port, and the logs record each step as permitted.
+
+        Rules like this are usually added to restore service during an outage or a migration and then never removed, because nothing breaks while they are in place.
+
+        An ordered layer placed below the Network layer that only filters applications commonly ends in an any to any Accept, because the Network layer above it has already decided what may pass. Such a rule is reported as well. Review it, and narrow the rule if the layer is not a pure application filter.
+      audit: |
+        ### Audit via SmartConsole
+
+        1. Log in to SmartConsole and open **Security Policies**, then **Access Control**.
+        2. For each policy package, review every enabled rule whose **Action** is **Accept**.
+
+        If no enabled Accept rule outside an inline layer has **Any** in Source, Destination, and Services & Applications at once, the check passes. If one does, the check fails.
+
+        ### Audit via the Management API
+
+        1. On the management server, run:
+
+           ```bash
+           mgmt_cli -r true show access-rulebase name "Network" details-level full --format json
+           ```
+
+        2. Repeat for every access layer listed by `mgmt_cli -r true show access-layers`.
+
+        The check fails if any enabled rule with action `Accept` has `Any` as its source, destination, and service, none of them negated.
+      remediation:
+        - id: console
+          desc: |
+            To replace a catch-all Accept rule using SmartConsole:
+
+            1. Open **Security Policies**, then **Access Control**, and select the rule.
+            2. Replace **Any** in Source, Destination, or Services & Applications with the objects the traffic actually needs.
+            3. If the rule was a temporary placeholder, split it into specific rules for each required flow, or disable it.
+            4. Click **Publish**, then **Install Policy** on the gateways that use the package.
+        - id: cli
+          desc: |
+            To narrow a catch-all Accept rule with the Management API:
+
+            1. Log in with `mgmt_cli login` and save the session.
+            2. Set specific objects on the rule, then publish and install the policy:
+
+            ```bash
+            mgmt_cli login user admin > id.txt
+            mgmt_cli set access-rule layer "Network" rule-number 1 source "Internal_Net" destination "Web_Servers" service "https" -s id.txt
+            mgmt_cli publish -s id.txt
+            mgmt_cli install-policy policy-package "Standard" targets "<gateway-name>" -s id.txt
+            mgmt_cli logout -s id.txt
+            ```
+
+            Replace the layer name, rule number, objects, package, and gateway with your own.
+    refs:
+      - url: https://sc1.checkpoint.com/documents/R82/WebAdminGuides/EN/CP_R82_SecurityManagement_AdminGuide/Content/Topics-SECMG/Creating-Access-Control-Policy.htm
+        title: Creating an Access Control Policy
+  - uid: mondoo-checkpoint-security-access-rule-accept-logged
+    title: Ensure access rules that accept traffic log it
+    impact: 75
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-log-08
+      compliance/dora: dora-art-10
+      compliance/hipaa: hipaa-security-ss164-312-b-audit-controls
+      compliance/iso-27001-2022: iso-27001-2022-a-8-15
+      compliance/nis-2: nis-2-21-2-b
+      compliance/nist-csf-1: nist-csf-1-pr-pt-1
+      compliance/nist-csf-2: nist-csf-2-pr-ps-04
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-au-12
+      compliance/nist-sp-800-171: nist-sp-800-171--3-3-1
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a09
+      compliance/pci-dss-4: pcidss-requirement-10-2-1
+      compliance/soc2-2017: soc2-control-cc7-2-1
+      compliance/vda-isa-5: vda-isa-5-5-2-4
+    mql: |
+      checkpoint.accessRules.where(enabled == true && action == "Accept").all(
+        track != empty && track != "None"
+      )
+    docs:
+      desc: |
+        This check verifies that every enabled access rule that accepts traffic writes a log.
+
+        The **Track** column of an Access Control rule decides whether a match is recorded. Log, Detailed Log, and Extended Log all write a record to the management or log server; None writes nothing. The check requires every enabled rule with the action Accept to use a Track option other than None.
+
+        **Why this matters**
+
+        Accepted connections are the ones that carry an intrusion. When a rule that permits traffic does not log, an investigation cannot show which hosts talked to an attacker's address, when the connection started, or how much left the network, and a compromised host's traffic is indistinguishable from nothing at all.
+
+        Logs from accept rules also show which rules are still used, which is what makes a rule review possible.
+
+        Where a rule matches very high volumes of traffic that are already logged elsewhere, keep the log and filter at the log server instead of setting Track to None.
+      audit: |
+        ### Audit via SmartConsole
+
+        1. Open **Security Policies**, then **Access Control**, for each policy package.
+        2. Review the **Track** column of every enabled rule whose **Action** is **Accept**.
+
+        If every such rule shows Log, Detailed Log, or Extended Log, the check passes. If any shows None, the check fails.
+
+        ### Audit via the Management API
+
+        ```bash
+        mgmt_cli -r true show access-rulebase name "Network" details-level full --format json
+        ```
+
+        The check fails if an enabled rule with action `Accept` has a track type of `None`.
+      remediation:
+        - id: console
+          desc: |
+            To enable logging on accept rules using SmartConsole:
+
+            1. Open **Security Policies**, then **Access Control**.
+            2. Right-click the **Track** cell of each Accept rule that shows None and select **Log**.
+            3. Click **Publish**, then **Install Policy**.
+        - id: cli
+          desc: |
+            To enable logging on an accept rule with the Management API:
+
+            ```bash
+            mgmt_cli login user admin > id.txt
+            mgmt_cli set access-rule layer "Network" rule-number 1 track.type "Log" -s id.txt
+            mgmt_cli publish -s id.txt
+            mgmt_cli install-policy policy-package "Standard" targets "<gateway-name>" -s id.txt
+            mgmt_cli logout -s id.txt
+            ```
+
+            Replace the layer name, rule number, package, and gateway with your own.
+    refs:
+      - url: https://sc1.checkpoint.com/documents/R82/WebAdminGuides/EN/CP_R82_SecurityManagement_AdminGuide/Content/Topics-SECMG/Best-Practices-for-Access-Control-Rules.htm
+        title: Best Practices for Access Control Rules
+  - uid: mondoo-checkpoint-security-access-layer-cleanup-rule-logged
+    title: Ensure every access layer ends with a cleanup rule that logs
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-log-08
+      compliance/dora: dora-art-10
+      compliance/hipaa: hipaa-security-ss164-312-b-audit-controls
+      compliance/iso-27001-2022: iso-27001-2022-a-8-15
+      compliance/nis-2: nis-2-21-2-b
+      compliance/nist-csf-1: nist-csf-1-pr-pt-1
+      compliance/nist-csf-2: nist-csf-2-pr-ps-04
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-au-12
+      compliance/nist-sp-800-171: nist-sp-800-171--3-3-1
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a09
+      compliance/pci-dss-4: pcidss-requirement-10-2-1
+      compliance/soc2-2017: soc2-control-cc7-2-1
+      compliance/vda-isa-5: vda-isa-5-5-2-4
+    mql: |
+      layers = checkpoint.accessRules.map(layerName)
+      loggedCleanup = checkpoint.accessRules.where(
+        enabled == true &&
+        source.contains("Any") && sourceNegate == false &&
+        destination.contains("Any") && destinationNegate == false &&
+        service.contains("Any") && serviceNegate == false &&
+        track != empty && track != "None"
+      ).map(layerName)
+      layers.all(_.in(loggedCleanup))
+    docs:
+      desc: |
+        This check verifies that every access layer has an explicit cleanup rule that logs the traffic it matches.
+
+        A cleanup rule is an enabled rule with Any in Source, Destination, and Services & Applications. It catches every connection no earlier rule matched, so nothing below it is ever evaluated. Without one, traffic that matches no rule falls to the layer's implicit cleanup action, which drops it without a log entry. A new policy package ships with a cleanup rule whose Track is None. The check requires every layer to contain an enabled catch-all rule whose Track is Log, Detailed Log, or Extended Log.
+
+        **Why this matters**
+
+        Dropped traffic is where reconnaissance shows up. Port scans against the gateway, a compromised host probing for a way out, and a misconfigured application all end at the cleanup rule. When that rule does not log, those signals never reach the log server and nobody can alert on them.
+
+        An explicit, logged cleanup rule also makes the layer's default visible in SmartConsole, so a reviewer does not have to remember what the implicit action is.
+      audit: |
+        ### Audit via SmartConsole
+
+        1. Open **Security Policies**, then **Access Control**, and review each layer, including inline and ordered layers.
+        2. Find the last rule of each layer.
+
+        If the last rule of every layer has **Any** in Source, Destination, and Services & Applications and a **Track** other than None, the check passes. If a layer has no such rule, or its Track is None, the check fails.
+
+        ### Audit via the Management API
+
+        ```bash
+        mgmt_cli -r true show access-layers
+        mgmt_cli -r true show access-rulebase name "Network" details-level full --format json
+        ```
+
+        Repeat the second command for every layer. The check fails if a layer has no enabled rule with `Any` source, destination, and service and a track type other than `None`.
+      remediation:
+        - id: console
+          desc: |
+            To add or fix the cleanup rule using SmartConsole:
+
+            1. Open **Security Policies**, then **Access Control**, and select the layer.
+            2. If the layer has no cleanup rule, add a rule at the bottom with **Any** in Source, Destination, and Services & Applications and the action **Drop**.
+            3. Right-click the **Track** cell of the cleanup rule and select **Log**.
+            4. Click **Publish**, then **Install Policy**.
+        - id: cli
+          desc: |
+            To log the cleanup rule with the Management API:
+
+            ```bash
+            mgmt_cli login user admin > id.txt
+            mgmt_cli set access-rule layer "Network" name "Cleanup rule" track.type "Log" -s id.txt
+            mgmt_cli publish -s id.txt
+            mgmt_cli install-policy policy-package "Standard" targets "<gateway-name>" -s id.txt
+            mgmt_cli logout -s id.txt
+            ```
+
+            To add a cleanup rule to a layer without one:
+
+            ```bash
+            mgmt_cli add access-rule layer "Network" position "bottom" name "Cleanup rule" source "Any" destination "Any" service "Any" action "Drop" track.type "Log" -s id.txt
+            ```
+    refs:
+      - url: https://sc1.checkpoint.com/documents/R82/WebAdminGuides/EN/CP_R82_SecurityManagement_AdminGuide/Content/Topics-SECMG/Creating-Access-Control-Policy.htm
+        title: Creating an Access Control Policy
+  - uid: mondoo-checkpoint-security-global-properties-log-implied-rules
+    title: Ensure traffic matched by implied rules is logged
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-log-08
+      compliance/dora: dora-art-10
+      compliance/hipaa: hipaa-security-ss164-312-b-audit-controls
+      compliance/iso-27001-2022: iso-27001-2022-a-8-15
+      compliance/nis-2: nis-2-21-2-b
+      compliance/nist-csf-1: nist-csf-1-pr-pt-1
+      compliance/nist-csf-2: nist-csf-2-pr-ps-04
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-au-12
+      compliance/nist-sp-800-171: nist-sp-800-171--3-3-1
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a09
+      compliance/pci-dss-4: pcidss-requirement-10-2-1
+      compliance/soc2-2017: soc2-control-cc7-2-1
+      compliance/vda-isa-5: vda-isa-5-5-2-4
+    mql: |
+      checkpoint.management.globalProperties.logImpliedRules == true
+    docs:
+      desc: |
+        This check verifies that connections matched by the implied rules are logged.
+
+        Implied rules are rules the gateway enforces in addition to the rulebase, built from settings in Global Properties: control connections between Check Point components, RIP, DNS, ICMP, and others. They do not appear in the Access Control policy and do not log by default. SmartConsole calls the setting **Log Implied Rules**, under Global Properties, Firewall. The check requires it to be selected.
+
+        **Why this matters**
+
+        Traffic accepted by an implied rule bypasses every rule an administrator can see in the rulebase. Without logging, that traffic leaves no record at all, so a host abusing an implied DNS or ICMP accept to tunnel data out, or a peer talking to the gateway's control ports, never appears in the logs.
+
+        Logging the implied rules is also the only way to see which of them are used before turning them off.
+      audit: |
+        ### Audit via SmartConsole
+
+        1. Open the SmartConsole menu and select **Global properties**.
+        2. Select **Firewall**.
+
+        If **Log Implied Rules** is selected, the check passes. If it is cleared, the check fails.
+
+        ### Audit via the Management API
+
+        ```bash
+        mgmt_cli -r true show global-properties --format json
+        ```
+
+        The check passes if `firewall.log-implied-rules` is `true`.
+      remediation:
+        - id: console
+          desc: |
+            To log implied rules using SmartConsole:
+
+            1. Open the SmartConsole menu and select **Global properties**, then **Firewall**.
+            2. Select **Log Implied Rules** and click **OK**.
+            3. Click **Publish**, then **Install Policy** on every gateway.
+        - id: cli
+          desc: |
+            To log implied rules with the Management API:
+
+            ```bash
+            mgmt_cli login user admin > id.txt
+            mgmt_cli set global-properties firewall.log-implied-rules true -s id.txt
+            mgmt_cli publish -s id.txt
+            mgmt_cli install-policy policy-package "Standard" targets "<gateway-name>" -s id.txt
+            mgmt_cli logout -s id.txt
+            ```
+    refs:
+      - url: https://sc1.checkpoint.com/documents/R82/WebAdminGuides/EN/CP_R82_SecurityManagement_AdminGuide/Content/Topics-SECMG/Implied_Rules.htm
+        title: Implied Rules
+      - url: https://sc1.checkpoint.com/documents/Check_Point_Gateway_and_Management_Hardening/Hardening_GW_and_MGMT/Decreasing-Security-Gateway-Exposure-with-Policy.html
+        title: Decreasing Security Gateway Exposure with Policy
+  - uid: mondoo-checkpoint-security-global-properties-no-implied-rip
+    title: Ensure implied rules do not accept RIP
+    impact: 60
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a02
+      compliance/pci-dss-4: pcidss-requirement-1-2-5
+      compliance/soc2-2017: soc2-control-cc6-6-1
+      compliance/vda-isa-5: vda-isa-5-5-2-7
+    mql: |
+      checkpoint.management.globalProperties.acceptRip == false
+    docs:
+      desc: |
+        This check verifies that the implied rules do not accept the Routing Information Protocol.
+
+        SmartConsole calls the setting **Accept RIP**, under Global Properties, Firewall. When it is selected, every gateway accepts RIP updates from any source, outside the Access Control policy. The check requires it to be cleared.
+
+        **Why this matters**
+
+        RIP versions 1 and 2 without authentication accept route updates from anyone who can send them. An attacker on a connected segment can advertise routes that pull traffic through a host they control, or black-hole a network. An implied accept means no rule in the rulebase limits who may send those updates.
+
+        Where a gateway genuinely exchanges routes over RIP, accept it with an explicit rule that names the routing peers.
+      audit: |
+        ### Audit via SmartConsole
+
+        1. Open the SmartConsole menu and select **Global properties**, then **Firewall**.
+
+        If **Accept RIP** is cleared, the check passes. If it is selected, the check fails.
+
+        ### Audit via the Management API
+
+        ```bash
+        mgmt_cli -r true show global-properties --format json
+        ```
+
+        The check passes if `firewall.accept-rip` is `false`.
+      remediation:
+        - id: console
+          desc: |
+            To stop accepting RIP in the implied rules using SmartConsole:
+
+            1. Open the SmartConsole menu and select **Global properties**, then **Firewall**.
+            2. Clear **Accept RIP** and click **OK**.
+            3. Click **Publish**, then **Install Policy** on every gateway.
+        - id: cli
+          desc: |
+            To stop accepting RIP in the implied rules with the Management API:
+
+            ```bash
+            mgmt_cli login user admin > id.txt
+            mgmt_cli set global-properties firewall.accept-rip false -s id.txt
+            mgmt_cli publish -s id.txt
+            mgmt_cli install-policy policy-package "Standard" targets "<gateway-name>" -s id.txt
+            mgmt_cli logout -s id.txt
+            ```
+    refs:
+      - url: https://sc1.checkpoint.com/documents/R82/WebAdminGuides/EN/CP_R82_SecurityManagement_AdminGuide/Content/Topics-SECMG/Implied_Rules.htm
+        title: Implied Rules
+  - uid: mondoo-checkpoint-security-global-properties-no-implied-dns-tcp
+    title: Ensure implied rules do not accept DNS zone transfers
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a02
+      compliance/pci-dss-4: pcidss-requirement-1-2-5
+      compliance/soc2-2017: soc2-control-cc6-6-1
+      compliance/vda-isa-5: vda-isa-5-5-2-7
+    mql: |
+      checkpoint.management.globalProperties.acceptDomainNameOverTcp == false
+    docs:
+      desc: |
+        This check verifies that the implied rules do not accept DNS over TCP.
+
+        SmartConsole calls the setting **Accept Domain Name over TCP (Zone Transfer)**, under Global Properties, Firewall. When it is selected, every gateway accepts TCP port 53 from any source to any destination, outside the Access Control policy. The check requires it to be cleared.
+
+        **Why this matters**
+
+        DNS over TCP carries zone transfers. An implied accept lets anyone reach any DNS server behind the gateway on TCP 53, so a server that allows transfers hands an attacker the full list of internal host names and addresses. Because the accept is implied, no rule in the rulebase shows that this traffic is permitted.
+
+        Where DNS servers do need TCP 53, allow it with an explicit rule between the servers and their resolvers or secondaries.
+      audit: |
+        ### Audit via SmartConsole
+
+        1. Open the SmartConsole menu and select **Global properties**, then **Firewall**.
+
+        If **Accept Domain Name over TCP (Zone Transfer)** is cleared, the check passes. If it is selected, the check fails.
+
+        ### Audit via the Management API
+
+        ```bash
+        mgmt_cli -r true show global-properties --format json
+        ```
+
+        The check passes if `firewall.accept-domain-name-over-tcp` is `false`.
+      remediation:
+        - id: console
+          desc: |
+            To stop accepting DNS over TCP in the implied rules using SmartConsole:
+
+            1. Open the SmartConsole menu and select **Global properties**, then **Firewall**.
+            2. Clear **Accept Domain Name over TCP (Zone Transfer)** and click **OK**.
+            3. Click **Publish**, then **Install Policy** on every gateway.
+        - id: cli
+          desc: |
+            To stop accepting DNS over TCP in the implied rules with the Management API:
+
+            ```bash
+            mgmt_cli login user admin > id.txt
+            mgmt_cli set global-properties firewall.accept-domain-name-over-tcp false -s id.txt
+            mgmt_cli publish -s id.txt
+            mgmt_cli install-policy policy-package "Standard" targets "<gateway-name>" -s id.txt
+            mgmt_cli logout -s id.txt
+            ```
+    refs:
+      - url: https://sc1.checkpoint.com/documents/R82/WebAdminGuides/EN/CP_R82_SecurityManagement_AdminGuide/Content/Topics-SECMG/Implied_Rules.htm
+        title: Implied Rules
+  - uid: mondoo-checkpoint-security-global-properties-no-implied-dns-udp
+    title: Ensure implied rules do not accept DNS queries
+    impact: 60
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a02
+      compliance/pci-dss-4: pcidss-requirement-1-2-5
+      compliance/soc2-2017: soc2-control-cc6-6-1
+      compliance/vda-isa-5: vda-isa-5-5-2-7
+    mql: |
+      checkpoint.management.globalProperties.acceptDomainNameOverUdp == false
+    docs:
+      desc: |
+        This check verifies that the implied rules do not accept DNS over UDP.
+
+        SmartConsole calls the setting **Accept Domain Name over UDP (Queries)**, under Global Properties, Firewall. When it is selected, every gateway accepts UDP port 53 from any source to any destination, outside the Access Control policy. The check requires it to be cleared.
+
+        **Why this matters**
+
+        DNS is the most common covert channel out of a network. Malware encodes data and command traffic in queries to a domain the attacker controls, and an implied accept lets any internal host send those queries straight to any resolver on the internet, bypassing the internal resolvers where DNS filtering and logging usually happen. Because the accept is implied, the rulebase gives no sign that this traffic is permitted.
+
+        Allow DNS with explicit rules from clients to the internal resolvers, and from the resolvers to the internet.
+      audit: |
+        ### Audit via SmartConsole
+
+        1. Open the SmartConsole menu and select **Global properties**, then **Firewall**.
+
+        If **Accept Domain Name over UDP (Queries)** is cleared, the check passes. If it is selected, the check fails.
+
+        ### Audit via the Management API
+
+        ```bash
+        mgmt_cli -r true show global-properties --format json
+        ```
+
+        The check passes if `firewall.accept-domain-name-over-udp` is `false`.
+      remediation:
+        - id: console
+          desc: |
+            To stop accepting DNS over UDP in the implied rules using SmartConsole:
+
+            1. Add explicit Access Control rules for the DNS traffic your resolvers need, and install them.
+            2. Open the SmartConsole menu and select **Global properties**, then **Firewall**.
+            3. Clear **Accept Domain Name over UDP (Queries)** and click **OK**.
+            4. Click **Publish**, then **Install Policy** on every gateway.
+        - id: cli
+          desc: |
+            To stop accepting DNS over UDP in the implied rules with the Management API, after adding explicit rules for the DNS traffic you need:
+
+            ```bash
+            mgmt_cli login user admin > id.txt
+            mgmt_cli set global-properties firewall.accept-domain-name-over-udp false -s id.txt
+            mgmt_cli publish -s id.txt
+            mgmt_cli install-policy policy-package "Standard" targets "<gateway-name>" -s id.txt
+            mgmt_cli logout -s id.txt
+            ```
+    refs:
+      - url: https://sc1.checkpoint.com/documents/R82/WebAdminGuides/EN/CP_R82_SecurityManagement_AdminGuide/Content/Topics-SECMG/Implied_Rules.htm
+        title: Implied Rules
+  - uid: mondoo-checkpoint-security-global-properties-no-implied-icmp
+    title: Ensure implied rules do not accept ICMP requests
+    impact: 50
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a02
+      compliance/pci-dss-4: pcidss-requirement-1-2-5
+      compliance/soc2-2017: soc2-control-cc6-6-1
+      compliance/vda-isa-5: vda-isa-5-5-2-7
+    mql: |
+      checkpoint.management.globalProperties.acceptIcmpRequests == false
+    docs:
+      desc: |
+        This check verifies that the implied rules do not accept ICMP requests.
+
+        SmartConsole calls the setting **Accept ICMP requests**, under Global Properties, Firewall. When it is selected, every gateway accepts ICMP requests from any source to any destination, outside the Access Control policy. The check requires it to be cleared.
+
+        **Why this matters**
+
+        ICMP echo and the other request types are how an attacker maps a network: which addresses answer, which hosts sit behind which gateway, and how they are routed. ICMP payloads are also used as a tunnel. An implied accept permits all of it everywhere, and the rulebase gives no sign that it does.
+
+        Allow the ICMP types your monitoring and path MTU discovery need with explicit rules.
+      audit: |
+        ### Audit via SmartConsole
+
+        1. Open the SmartConsole menu and select **Global properties**, then **Firewall**.
+
+        If **Accept ICMP requests** is cleared, the check passes. If it is selected, the check fails.
+
+        ### Audit via the Management API
+
+        ```bash
+        mgmt_cli -r true show global-properties --format json
+        ```
+
+        The check passes if `firewall.accept-icmp-requests` is `false`.
+      remediation:
+        - id: console
+          desc: |
+            To stop accepting ICMP requests in the implied rules using SmartConsole:
+
+            1. Add explicit Access Control rules for the ICMP traffic you need, and install them.
+            2. Open the SmartConsole menu and select **Global properties**, then **Firewall**.
+            3. Clear **Accept ICMP requests** and click **OK**.
+            4. Click **Publish**, then **Install Policy** on every gateway.
+        - id: cli
+          desc: |
+            To stop accepting ICMP requests in the implied rules with the Management API:
+
+            ```bash
+            mgmt_cli login user admin > id.txt
+            mgmt_cli set global-properties firewall.accept-icmp-requests false -s id.txt
+            mgmt_cli publish -s id.txt
+            mgmt_cli install-policy policy-package "Standard" targets "<gateway-name>" -s id.txt
+            mgmt_cli logout -s id.txt
+            ```
+    refs:
+      - url: https://sc1.checkpoint.com/documents/R82/WebAdminGuides/EN/CP_R82_SecurityManagement_AdminGuide/Content/Topics-SECMG/Implied_Rules.htm
+        title: Implied Rules
+  - uid: mondoo-checkpoint-security-global-properties-drop-out-of-state-tcp
+    title: Ensure out-of-state TCP packets are dropped and logged
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a02
+      compliance/pci-dss-4: pcidss-requirement-1-4-2
+      compliance/soc2-2017: soc2-control-cc6-6-4
+      compliance/vda-isa-5: vda-isa-5-5-2-7
+    mql: |
+      checkpoint.management.globalProperties.dropOutOfStateTcpPackets == true
+      checkpoint.management.globalProperties.logOnDropOutOfStateTcpPackets == true
+    docs:
+      desc: |
+        This check verifies that gateways drop TCP packets that do not belong to an established connection, and log the drops.
+
+        Stateful inspection tracks each TCP connection from its handshake on. A packet that arrives for a connection the gateway never saw open is out of state. SmartConsole calls the settings **Drop out of state TCP packets** and its **Log on drop** option, under Global Properties, Stateful Inspection. The check requires both to be selected.
+
+        **Why this matters**
+
+        Out-of-state packets are how ACK and FIN scans map hosts and rules through a firewall that does not track state, and how some evasion techniques slip data past inspection. Dropping them keeps the gateway a stateful firewall rather than a packet filter. Logging the drops records the scan.
+      audit: |
+        ### Audit via SmartConsole
+
+        1. Open the SmartConsole menu and select **Global properties**, then **Stateful Inspection**.
+
+        If **Drop out of state TCP packets** and its **Log on drop** option are both selected, the check passes. If either is cleared, the check fails.
+
+        ### Audit via the Management API
+
+        ```bash
+        mgmt_cli -r true show global-properties --format json
+        ```
+
+        The check passes if `stateful-inspection.drop-out-of-state-tcp-packets` and `stateful-inspection.log-on-drop-out-of-state-tcp-packets` are both `true`.
+      remediation:
+        - id: console
+          desc: |
+            To drop and log out-of-state TCP packets using SmartConsole:
+
+            1. Open the SmartConsole menu and select **Global properties**, then **Stateful Inspection**.
+            2. Select **Drop out of state TCP packets** and its **Log on drop** option, then click **OK**.
+            3. Click **Publish**, then **Install Policy** on every gateway.
+        - id: cli
+          desc: |
+            To drop and log out-of-state TCP packets with the Management API:
+
+            ```bash
+            mgmt_cli login user admin > id.txt
+            mgmt_cli set global-properties stateful-inspection.drop-out-of-state-tcp-packets true stateful-inspection.log-on-drop-out-of-state-tcp-packets true -s id.txt
+            mgmt_cli publish -s id.txt
+            mgmt_cli install-policy policy-package "Standard" targets "<gateway-name>" -s id.txt
+            mgmt_cli logout -s id.txt
+            ```
+    refs:
+      - url: https://sc1.checkpoint.com/documents/latest/APIs/index.html#cli/set-global-properties
+        title: Check Point Management API reference
+  - uid: mondoo-checkpoint-security-global-properties-drop-out-of-state-icmp
+    title: Ensure out-of-state ICMP packets are dropped and logged
+    impact: 60
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a02
+      compliance/pci-dss-4: pcidss-requirement-1-4-2
+      compliance/soc2-2017: soc2-control-cc6-6-4
+      compliance/vda-isa-5: vda-isa-5-5-2-7
+    mql: |
+      checkpoint.management.globalProperties.dropOutOfStateIcmpPackets == true
+      checkpoint.management.globalProperties.logOnDropOutOfStateIcmpPackets == true
+    docs:
+      desc: |
+        This check verifies that gateways drop ICMP replies and errors that do not match a request they forwarded, and log the drops.
+
+        The gateway tracks ICMP requests and expects the matching reply or error. A reply that matches nothing is out of state. SmartConsole calls the settings **Drop out of state ICMP packets** and its **Log on drop** option, under Global Properties, Stateful Inspection. The check requires both to be selected.
+
+        **Why this matters**
+
+        Unsolicited ICMP echo replies are a common transport for tunnels and covert command channels, because a filter that only inspects requests lets every reply through. Dropping out-of-state ICMP closes that path, and logging the drops makes the attempt visible.
+      audit: |
+        ### Audit via SmartConsole
+
+        1. Open the SmartConsole menu and select **Global properties**, then **Stateful Inspection**.
+
+        If **Drop out of state ICMP packets** and its **Log on drop** option are both selected, the check passes. If either is cleared, the check fails.
+
+        ### Audit via the Management API
+
+        ```bash
+        mgmt_cli -r true show global-properties --format json
+        ```
+
+        The check passes if `stateful-inspection.drop-out-of-state-icmp-packets` and `stateful-inspection.log-on-drop-out-of-state-icmp-packets` are both `true`.
+      remediation:
+        - id: console
+          desc: |
+            To drop and log out-of-state ICMP packets using SmartConsole:
+
+            1. Open the SmartConsole menu and select **Global properties**, then **Stateful Inspection**.
+            2. Select **Drop out of state ICMP packets** and its **Log on drop** option, then click **OK**.
+            3. Click **Publish**, then **Install Policy** on every gateway.
+        - id: cli
+          desc: |
+            To drop and log out-of-state ICMP packets with the Management API:
+
+            ```bash
+            mgmt_cli login user admin > id.txt
+            mgmt_cli set global-properties stateful-inspection.drop-out-of-state-icmp-packets true stateful-inspection.log-on-drop-out-of-state-icmp-packets true -s id.txt
+            mgmt_cli publish -s id.txt
+            mgmt_cli install-policy policy-package "Standard" targets "<gateway-name>" -s id.txt
+            mgmt_cli logout -s id.txt
+            ```
+    refs:
+      - url: https://sc1.checkpoint.com/documents/latest/APIs/index.html#cli/set-global-properties
+        title: Check Point Management API reference
+  - uid: mondoo-checkpoint-security-global-properties-track-security-events
+    title: Ensure security events in global properties are tracked
+    impact: 60
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-log-08
+      compliance/dora: dora-art-10
+      compliance/hipaa: hipaa-security-ss164-312-b-audit-controls
+      compliance/iso-27001-2022: iso-27001-2022-a-8-15
+      compliance/nis-2: nis-2-21-2-b
+      compliance/nist-csf-1: nist-csf-1-pr-pt-1
+      compliance/nist-csf-2: nist-csf-2-pr-ps-04
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-au-12
+      compliance/nist-sp-800-171: nist-sp-800-171--3-3-1
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a09
+      compliance/pci-dss-4: pcidss-requirement-10-2-1
+      compliance/soc2-2017: soc2-control-cc7-2-1
+      compliance/vda-isa-5: vda-isa-5-5-2-4
+    mql: |
+      gp = checkpoint.management.globalProperties
+      gp.ipOptionsDrop != empty && gp.ipOptionsDrop != "none"
+      gp.vpnPacketHandlingError != empty && gp.vpnPacketHandlingError != "none"
+      gp.vpnConfAndKeyExchangeErrors != empty && gp.vpnConfAndKeyExchangeErrors != "none"
+      gp.administrativeNotifications != empty && gp.administrativeNotifications != "none"
+    docs:
+      desc: |
+        This check verifies that the gateway events that are tracked in Global Properties rather than in a rule are logged.
+
+        Under Global Properties, Log and Alert, each of these events has a tracking option of None, Log, or one of the alerts:
+
+        - **IP Options drop**: packets dropped because they carry IP options such as source routing
+        - **VPN packet handling errors**: packets a VPN tunnel could not decrypt or verify
+        - **VPN configuration & key exchange errors**: failed IKE negotiations
+        - **Administrative notifications**: notices such as an expiring license or certificate
+
+        The check requires none of them to be set to None.
+
+        **Why this matters**
+
+        These events are the only record of their kind. Packets carrying source routing options are a spoofing technique, repeated VPN decryption errors point to a tampered or replayed tunnel, and a stream of failed key exchanges is what an attacker guessing a pre-shared key looks like. Set to None, each happens without a trace.
+      audit: |
+        ### Audit via SmartConsole
+
+        1. Open the SmartConsole menu and select **Global properties**, then **Log and Alert**.
+
+        If **IP Options drop**, **VPN packet handling errors**, **VPN configuration & key exchange errors**, and **Administrative notifications** are all set to something other than None, the check passes. If any is None, the check fails.
+
+        ### Audit via the Management API
+
+        ```bash
+        mgmt_cli -r true show global-properties --format json
+        ```
+
+        The check fails if `log-and-alert.ip-options-drop`, `log-and-alert.vpn-packet-handling-error`, `log-and-alert.vpn-conf-and-key-exchange-errors`, or `log-and-alert.administrative-notifications` is `none`.
+      remediation:
+        - id: console
+          desc: |
+            To track these events using SmartConsole:
+
+            1. Open the SmartConsole menu and select **Global properties**, then **Log and Alert**.
+            2. Set **IP Options drop**, **VPN packet handling errors**, **VPN configuration & key exchange errors**, and **Administrative notifications** to **Log** or an alert, then click **OK**.
+            3. Click **Publish**, then **Install Policy** on every gateway.
+        - id: cli
+          desc: |
+            To track these events with the Management API:
+
+            ```bash
+            mgmt_cli login user admin > id.txt
+            mgmt_cli set global-properties log-and-alert.ip-options-drop "log" log-and-alert.vpn-packet-handling-error "log" log-and-alert.vpn-conf-and-key-exchange-errors "log" log-and-alert.administrative-notifications "log" -s id.txt
+            mgmt_cli publish -s id.txt
+            mgmt_cli install-policy policy-package "Standard" targets "<gateway-name>" -s id.txt
+            mgmt_cli logout -s id.txt
+            ```
+    refs:
+      - url: https://sc1.checkpoint.com/documents/latest/APIs/index.html#cli/set-global-properties
+        title: Check Point Management API reference
+  - uid: mondoo-checkpoint-security-management-api-access-restricted
+    title: Ensure the Management API does not accept calls from all IP addresses
+    impact: 85
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-3
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-17
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-12
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/vda-isa-5: vda-isa-5-4-1-2
+    mql: |
+      checkpoint.management.apiSettings.accessibleFrom.downcase.in(["management server only", "all ip addresses that can be used for gui clients"])
+    docs:
+      desc: |
+        This check verifies that the Management API accepts calls only from the management server itself or from the SmartConsole trusted clients.
+
+        The Management API can change everything the management server controls: rules, objects, administrators, and the policy installed on every gateway. Its **Accessible by the following IP addresses** setting, under Manage & Settings, Blades, Management API, Advanced Settings, offers three choices: Management server only, All IP addresses that can be used for GUI clients, and All IP addresses. The check accepts the first two.
+
+        **Why this matters**
+
+        With All IP addresses, any host that can reach the server's HTTPS port can attempt to log in to the API, whatever the trusted clients list says. Every leaked or guessed administrator password and every API key then works from anywhere, and the API takes automated attempts without the friction of a GUI login.
+
+        Restricting the API to the trusted clients ties automation to the same set of administration hosts SmartConsole is limited to.
+      audit: |
+        ### Audit via SmartConsole
+
+        1. Open **Manage & Settings**, then **Blades**.
+        2. Under **Management API**, click **Advanced Settings**.
+
+        If **Accessible by the following IP addresses** is **Management server only** or **All IP addresses that can be used for GUI clients**, the check passes. If it is **All IP addresses**, the check fails.
+
+        ### Audit via the Management API
+
+        ```bash
+        mgmt_cli -r true -d "System Data" show api-settings --format json
+        ```
+
+        The check fails if `accepted-api-calls-from` is `all ip addresses`.
+      remediation:
+        - id: console
+          desc: |
+            To restrict the Management API using SmartConsole:
+
+            1. Make sure the hosts that run API automation are in the trusted clients list, under **Manage & Settings**, **Permissions & Administrators**, **Trusted Clients**.
+            2. Open **Manage & Settings**, then **Blades**, and under **Management API** click **Advanced Settings**.
+            3. Select **All IP addresses that can be used for GUI clients** or **Management server only** and click **OK**.
+            4. Click **Publish**.
+            5. On the management server, run `api restart` in Expert mode.
+        - id: cli
+          desc: |
+            To restrict the Management API from the management server's command line:
+
+            ```bash
+            mgmt_cli -r true -d "System Data" login > id.txt
+            mgmt_cli set api-settings accepted-api-calls-from "all ip addresses that can be used for gui clients" -s id.txt
+            mgmt_cli publish -s id.txt
+            mgmt_cli logout -s id.txt
+            api restart
+            ```
+
+            **Run this on the management server.** A session opened from a host that is not a trusted client loses access to the API when the setting takes effect.
+    refs:
+      - url: https://sc1.checkpoint.com/documents/latest/APIs/index.html#cli/set-api-settings
+        title: Check Point Management API reference
+      - url: https://sc1.checkpoint.com/documents/Check_Point_Gateway_and_Management_Hardening/Hardening_GW_and_MGMT/Management-Plane-Protection.html
+        title: Management Plane Protection
+  - uid: mondoo-checkpoint-security-management-trusted-clients-restricted
+    title: Ensure SmartConsole trusted clients do not allow any host
+    impact: 85
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-3
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-17
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-12
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/vda-isa-5: vda-isa-5-4-1-2
+    mql: |
+      checkpoint.management.trustedClients != empty
+      checkpoint.management.trustedClients.none(
+        type == "any" ||
+        type == "ipv4 netmask" && ipv4MaskLength == 0 ||
+        type == "ipv6 netmask" && ipv6MaskLength == 0 ||
+        type == "ipv4 address range" && ipv4AddressFirst == "0.0.0.0" && ipv4AddressLast == "255.255.255.255"
+      )
+    docs:
+      desc: |
+        This check verifies that the management server accepts SmartConsole connections only from listed administration hosts.
+
+        Trusted clients are the hosts and networks allowed to connect to the management server with SmartConsole. They are listed under Manage & Settings, Permissions & Administrators, Trusted Clients. An entry of type Any, or a network or range covering every address, admits every host. The check requires at least one trusted client and no entry that covers all addresses.
+
+        **Why this matters**
+
+        SmartConsole access is full administrative access to the policy of every managed gateway. When any host may connect, a stolen administrator password works from wherever the attacker is, and the management server has to fend off password guessing from the whole network.
+
+        Limit trusted clients to the workstations or jump hosts administrators actually use, and pair the list with restricted Management API access.
+      audit: |
+        ### Audit via SmartConsole
+
+        1. Open **Manage & Settings**, then **Permissions & Administrators**, then **Trusted Clients**.
+        2. Review the type and addresses of each entry.
+
+        If there is at least one entry and none is of type Any or covers every address, the check passes. Otherwise the check fails.
+
+        ### Audit via the Management API
+
+        ```bash
+        mgmt_cli -r true -d "System Data" show trusted-clients details-level full --format json
+        ```
+
+        The check fails if the list is empty or an entry has type `any`, a mask length of 0, or a range from `0.0.0.0` to `255.255.255.255`.
+      remediation:
+        - id: console
+          desc: |
+            To restrict trusted clients using SmartConsole:
+
+            1. Open **Manage & Settings**, then **Permissions & Administrators**, then **Trusted Clients**.
+            2. Add an entry for each administration workstation or jump host, by IPv4 address or a narrow network.
+            3. Delete the entries that admit any host.
+            4. Click **Publish**.
+        - id: cli
+          desc: |
+            To restrict trusted clients from the management server's command line:
+
+            ```bash
+            mgmt_cli -r true -d "System Data" login > id.txt
+            mgmt_cli add trusted-client name "admin-jump-host" type "ipv4 address" ipv4-address "192.0.2.10" -s id.txt
+            mgmt_cli delete trusted-client name "Any" -s id.txt
+            mgmt_cli publish -s id.txt
+            mgmt_cli logout -s id.txt
+            ```
+
+            Replace the name and address with your administration host, and the deleted name with the entry that admits any host.
+
+            **Add your own host first.** Removing the entry you connect through ends your next SmartConsole login.
+    refs:
+      - url: https://sc1.checkpoint.com/documents/R82/WebAdminGuides/EN/CP_R82_SecurityManagement_AdminGuide/Content/Topics-SECMG/Defining-Trusted-Clients.htm
+        title: Defining Trusted Clients
+      - url: https://sc1.checkpoint.com/documents/Check_Point_Gateway_and_Management_Hardening/Hardening_GW_and_MGMT/Management-Plane-Protection.html
+        title: Management Plane Protection
+  - uid: mondoo-checkpoint-security-gateway-anti-spoofing-prevent
+    title: Ensure external gateway interfaces enforce anti-spoofing in Prevent mode
+    impact: 85
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a02
+      compliance/pci-dss-4: pcidss-requirement-1-4-3
+      compliance/soc2-2017: soc2-control-cc6-6-4
+      compliance/vda-isa-5: vda-isa-5-5-2-7
+    mql: |
+      checkpoint.gateways.where(interfaces != empty).all(
+        interfaces.where(topology == "external").all(antiSpoofing == true && antiSpoofingAction == "prevent")
+      )
+    docs:
+      desc: |
+        This check verifies that every external gateway and cluster interface drops packets whose source address does not belong behind it.
+
+        Anti-spoofing compares the source address of each packet with the networks the interface's topology says are behind it. In Prevent mode a mismatch is dropped; in Detect mode it is only logged. The setting is on each interface, under the gateway object's Network Management, Topology. The check requires anti-spoofing with the action Prevent on every interface whose topology is External, on every gateway and cluster.
+
+        **Why this matters**
+
+        Rules that trust internal source addresses only mean something if packets claiming those addresses really came from inside. Without anti-spoofing, a host on the internet side can send packets with an internal source address, slip past rules written for internal networks, and use the gateway to reflect traffic at internal hosts.
+
+        Detect mode is useful while an interface's topology is being verified, but it blocks nothing. Enable Prevent mode on internal interfaces as well, so one internal segment cannot impersonate another. Cluster Sync interfaces carry only cluster state and are left out.
+      audit: |
+        ### Audit via SmartConsole
+
+        1. Open **Gateways & Servers** and double-click each gateway or cluster.
+        2. Open **Network Management**, select each interface, and click **Edit**.
+        3. Under **Topology**, click **Modify** and review the anti-spoofing settings.
+
+        If every interface with an External topology has **Perform Anti-Spoofing based on interface topology** selected with the action **Prevent**, the check passes. Otherwise the check fails.
+
+        ### Audit via the Management API
+
+        ```bash
+        mgmt_cli -r true show simple-gateway name "<gateway-name>" --format json
+        mgmt_cli -r true show simple-cluster name "<cluster-name>" --format json
+        ```
+
+        The check fails if an interface with `topology` set to `external` has `anti-spoofing` set to `false`, or `anti-spoofing-settings.action` set to `detect`.
+      remediation:
+        - id: console
+          desc: |
+            To enforce anti-spoofing using SmartConsole:
+
+            1. Open **Gateways & Servers** and double-click the gateway or cluster.
+            2. Open **Network Management**, select the interface, and click **Edit**.
+            3. Under **Topology**, click **Modify**, select **Perform Anti-Spoofing based on interface topology**, and set **Anti-Spoofing action** to **Prevent**.
+            4. Repeat for every external interface, click **OK**, then **Publish** and **Install Policy**.
+
+            **Check the topology before switching to Prevent.** An interface whose topology omits a network behind it drops that network's legitimate traffic. Run in Detect mode and review the spoofing logs first if the topology is uncertain.
+        - id: cli
+          desc: |
+            To enforce anti-spoofing with the Management API:
+
+            1. Find the UID of the gateway or cluster with `mgmt_cli show simple-gateway name "<gateway-name>"` or `mgmt_cli show simple-cluster name "<cluster-name>"`.
+            2. Set anti-spoofing on each external interface, then publish and install the policy:
+
+            ```bash
+            mgmt_cli login user admin > id.txt
+            mgmt_cli set interface name "eth0" gateway-uid "<gateway-uid>" anti-spoofing true anti-spoofing-settings.action "prevent" -s id.txt
+            mgmt_cli publish -s id.txt
+            mgmt_cli install-policy policy-package "Standard" targets "<gateway-name>" -s id.txt
+            mgmt_cli logout -s id.txt
+            ```
+
+            Use `set interface` rather than `set simple-gateway` with `interfaces`, which replaces the gateway's whole interface list.
+    refs:
+      - url: https://sc1.checkpoint.com/documents/R82/WebAdminGuides/EN/CP_R82_SecurityManagement_AdminGuide/Content/Topics-SECMG/Preventing-IP-Spoofing.htm
+        title: Preventing IP Spoofing
+  - uid: mondoo-checkpoint-security-gateway-ips-enabled
+    title: Ensure the IPS blade is enabled on gateways
+    impact: 75
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-09
+      compliance/dora: dora-art-10
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-16
+      compliance/nis-2: false
+      compliance/nist-csf-1: nist-csf-1-de-cm-1
+      compliance/nist-csf-2: nist-csf-2-de-cm-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-4
+      compliance/nist-sp-800-171: nist-sp-800-171--3-14-6
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a02
+      compliance/pci-dss-4: pcidss-requirement-11-5-1
+      compliance/soc2-2017: soc2-control-cc6-6-4
+      compliance/vda-isa-5: false
+    mql: |
+      checkpoint.gateways.where(blades != empty).all(blades.ips == true)
+    docs:
+      desc: |
+        This check verifies that every gateway and cluster has the Intrusion Prevention System blade enabled.
+
+        The IPS blade inspects permitted traffic for exploits of known vulnerabilities and protocol anomalies, and blocks or logs them according to the Threat Prevention policy. It is turned on per gateway, under the gateway object's General Properties, Network Security tab. The check requires it on every gateway and cluster that reports its blades.
+
+        **Why this matters**
+
+        An Accept rule decides that a connection may happen, not that its content is harmless. Without IPS, an exploit for a vulnerable web server, VPN appliance, or file share travels through the gateway on an allowed port without inspection. IPS is also how virtual patching protects a system that cannot be updated yet.
+
+        Enabling the blade requires an IPS license, and protections only apply once a Threat Prevention policy is installed on the gateway.
+      audit: |
+        ### Audit via SmartConsole
+
+        1. Open **Gateways & Servers** and double-click each gateway or cluster.
+        2. Open **General Properties** and select the **Network Security** tab.
+
+        If **IPS** is selected on every gateway and cluster, the check passes. If it is cleared on any, the check fails.
+
+        ### Audit via the Management API
+
+        ```bash
+        mgmt_cli -r true show simple-gateway name "<gateway-name>" --format json
+        ```
+
+        The check fails if `ips` is `false`.
+      remediation:
+        - id: console
+          desc: |
+            To enable IPS using SmartConsole:
+
+            1. Open **Gateways & Servers** and double-click the gateway or cluster.
+            2. Open **General Properties**, select the **Network Security** tab, and select **IPS**.
+            3. Click **OK**, then **Publish**.
+            4. Install both the Access Control and the Threat Prevention policy on the gateway.
+        - id: cli
+          desc: |
+            To enable IPS with the Management API:
+
+            ```bash
+            mgmt_cli login user admin > id.txt
+            mgmt_cli set simple-gateway name "<gateway-name>" ips true -s id.txt
+            mgmt_cli publish -s id.txt
+            mgmt_cli install-policy policy-package "Standard" targets "<gateway-name>" access true threat-prevention true -s id.txt
+            mgmt_cli logout -s id.txt
+            ```
+
+            For a cluster, use `set simple-cluster` instead.
+    refs:
+      - url: https://sc1.checkpoint.com/documents/R82/WebAdminGuides/EN/CP_R82_ThreatPrevention_AdminGuide/Content/Topics-TPG/The_Check_Point_Threat_Prevention_Solution.htm
+        title: The Check Point Threat Prevention Solution
+  - uid: mondoo-checkpoint-security-gateway-anti-bot-anti-virus-enabled
+    title: Ensure the Anti-Bot and Anti-Virus blades are enabled on gateways
+    impact: 65
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: false
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-308-a-5-ii-b-security-awareness-training-and-tools-protection-from-malicious-software
+      compliance/iso-27001-2022: iso-27001-2022-a-8-7
+      compliance/nis-2: false
+      compliance/nist-csf-1: nist-csf-1-de-cm-4
+      compliance/nist-csf-2: nist-csf-2-de-cm-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-14-2
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a02
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: soc2-control-cc6-8-4
+      compliance/vda-isa-5: vda-isa-5-5-2-3
+    mql: |
+      checkpoint.gateways.where(blades != empty).all(blades.antiBot == true)
+      checkpoint.gateways.where(blades != empty).all(blades.antiVirus == true)
+    docs:
+      desc: |
+        This check verifies that every gateway and cluster has the Anti-Bot and Anti-Virus blades enabled.
+
+        Anti-Virus scans files carried in permitted traffic for known malware. Anti-Bot detects hosts that are already infected by recognizing their command-and-control traffic and blocks it. Both are turned on per gateway, under the gateway object's General Properties, Threat Prevention tab. The check requires both on every gateway and cluster that reports its blades.
+
+        **Why this matters**
+
+        Most intrusions arrive as a file over a permitted connection: an email attachment, a download, a file copied from a share. Anti-Virus stops the known ones at the gateway. When one gets through, the infected host has to call home for instructions, and Anti-Bot is the control that notices and cuts that channel, turning a silent compromise into an alert.
+
+        Both blades require their licenses and take effect once a Threat Prevention policy is installed on the gateway.
+      audit: |
+        ### Audit via SmartConsole
+
+        1. Open **Gateways & Servers** and double-click each gateway or cluster.
+        2. Open **General Properties** and select the **Threat Prevention** tab.
+
+        If **Anti-Bot** and **Anti-Virus** are selected on every gateway and cluster, the check passes. If either is cleared on any, the check fails.
+
+        ### Audit via the Management API
+
+        ```bash
+        mgmt_cli -r true show simple-gateway name "<gateway-name>" --format json
+        ```
+
+        The check fails if `anti-bot` or `anti-virus` is `false`.
+      remediation:
+        - id: console
+          desc: |
+            To enable Anti-Bot and Anti-Virus using SmartConsole:
+
+            1. Open **Gateways & Servers** and double-click the gateway or cluster.
+            2. Open **General Properties**, select the **Threat Prevention** tab, and select **Anti-Bot** and **Anti-Virus**.
+            3. Click **OK**, then **Publish**.
+            4. Install both the Access Control and the Threat Prevention policy on the gateway.
+        - id: cli
+          desc: |
+            To enable Anti-Bot and Anti-Virus with the Management API:
+
+            ```bash
+            mgmt_cli login user admin > id.txt
+            mgmt_cli set simple-gateway name "<gateway-name>" anti-bot true anti-virus true -s id.txt
+            mgmt_cli publish -s id.txt
+            mgmt_cli install-policy policy-package "Standard" targets "<gateway-name>" access true threat-prevention true -s id.txt
+            mgmt_cli logout -s id.txt
+            ```
+
+            For a cluster, use `set simple-cluster` instead.
+    refs:
+      - url: https://sc1.checkpoint.com/documents/R82/WebAdminGuides/EN/CP_R82_ThreatPrevention_AdminGuide/Content/Topics-TPG/The_Check_Point_Threat_Prevention_Solution.htm
+        title: The Check Point Threat Prevention Solution
+  # Support dates from the Check Point Support Life Cycle Policy, checked 2026-11-14.
+  # The page gives a month; each date below is the last day of that month.
+  - uid: mondoo-checkpoint-security-gateway-supported-version
+    title: Ensure gateways and management servers run a supported software version
+    impact: 90
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-tvm-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-8
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-id-ra-1
+      compliance/nist-csf-2: nist-csf-2-pr-ps-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sa-22
+      compliance/nist-sp-800-171: nist-sp-800-171--3-16-2
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a03
+      compliance/pci-dss-4: pcidss-requirement-12-3-4
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: vda-isa-5-5-2-5
+    mql: |
+      checkpoint.gateways.where(version != empty).all(
+        version == "R81.20" && time.now < parse.date("2027-05-31") ||
+        version == "R82" && time.now < parse.date("2029-04-30") ||
+        version == "R82.10" && time.now < parse.date("2030-06-30") ||
+        version == "R82.20" && time.now < parse.date("2030-09-30")
+      )
+    docs:
+      desc: |
+        This check verifies that every gateway, cluster, and management server the management server knows of runs a Check Point software version that still receives support.
+
+        Check Point supports each major version of its gateway and management software for a fixed period after its release, published in the Support Life Cycle Policy. The check compares the version recorded on each object under Gateways & Servers with those published end-of-support dates, and fails for a version that is past its date or not listed.
+
+        **Why this matters**
+
+        Once a version leaves support, Check Point no longer ships hotfixes for it. A gateway on such a version keeps every vulnerability found afterward, including in the VPN and portal services that face the internet, which are the components attackers target first.
+
+        The version recorded on the object is what policy installation targets. If it differs from what a gateway actually runs, update the object as well as the gateway.
+      audit: |
+        ### Audit via SmartConsole
+
+        1. Open **Gateways & Servers** and review the **Version** column.
+        2. Compare each version with the [Check Point Support Life Cycle Policy](https://www.checkpoint.com/support-services/support-life-cycle-policy/).
+
+        If every version is still within its support period, the check passes. If any is past its end of support, the check fails.
+
+        ### Audit via the Management API
+
+        ```bash
+        mgmt_cli -r true show gateways-and-servers details-level full --format json
+        ```
+
+        Compare the `version` of each object with the published end-of-support dates.
+      remediation:
+        - id: console
+          desc: |
+            To move a gateway or management server to a supported version:
+
+            1. Pick a target version from the Check Point Support Life Cycle Policy and read its release notes and upgrade paths.
+            2. Back up the machine and take a Gaia snapshot.
+            3. Upgrade the management server first, then the gateways, with Central Deployment in SmartConsole or with CPUSE in the Gaia Portal under **Upgrades (CPUSE)**.
+            4. In SmartConsole, update the **Version** on each upgraded gateway object, then **Publish** and **Install Policy**.
+        - id: cli
+          desc: |
+            To upgrade a gateway with CPUSE from clish:
+
+            ```bash
+            installer check-for-updates
+            installer download <package-number>
+            installer verify <package-number>
+            installer upgrade <package-number>
+            ```
+
+            Upgrade the management server before the gateways it manages, and update each gateway object's version in SmartConsole afterward.
+    refs:
+      - url: https://www.checkpoint.com/support-services/support-life-cycle-policy/
+        title: Support Life Cycle Policy
+      - url: https://sc1.checkpoint.com/documents/Check_Point_Gateway_and_Management_Hardening/Hardening_GW_and_MGMT/Updates-Health-Ongoing-Protection.html
+        title: Updates, Health, and Ongoing Protection
+  - uid: mondoo-checkpoint-security-vpn-community-ikev2-only
+    title: Ensure site-to-site VPN communities use IKEv2 only
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-04
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a04
+      compliance/pci-dss-4: pcidss-requirement-4-2-1
+      compliance/soc2-2017: soc2-control-cc6-7-2
+      compliance/vda-isa-5: vda-isa-5-5-1-2
+    mql: |
+      checkpoint.vpn.communities.all(encryptionMethod == "ikev2 only")
+    docs:
+      desc: |
+        This check verifies that every meshed and star VPN community negotiates its tunnels with IKEv2 only.
+
+        The **Encryption Method** of a VPN community, under the community's Encryption page, decides which key exchange protocol its gateways use: IKEv2 only, Prefer IKEv2 but support IKEv1, or IKEv1 for IPv4 and IKEv2 for IPv6 only. The check requires IKEv2 only.
+
+        **Why this matters**
+
+        IKEv1 is the older protocol, and its weaknesses are documented: aggressive mode exposes a hash of the pre-shared key to offline cracking, and its negotiation offers more ways to fall back to weak parameters. A community that still allows IKEv1 lets any peer, or an attacker posing as one, negotiate the weaker protocol even when both ends support IKEv2.
+
+        Every peer in the community must support IKEv2 before the change, or its tunnels stop coming up.
+      audit: |
+        ### Audit via SmartConsole
+
+        1. Open **Objects**, then **Object Explorer**, and filter for **VPN Communities**.
+        2. Open each community and select **Encryption**.
+
+        If **Encryption Method** is **IKEv2 only** for every community, the check passes. Otherwise the check fails.
+
+        ### Audit via the Management API
+
+        ```bash
+        mgmt_cli -r true show vpn-communities-meshed details-level full --format json
+        mgmt_cli -r true show vpn-communities-star details-level full --format json
+        ```
+
+        The check fails if any community's `encryption-method` is not `ikev2 only`.
+      remediation:
+        - id: console
+          desc: |
+            To set a VPN community to IKEv2 only using SmartConsole:
+
+            1. Confirm every gateway and external peer in the community supports IKEv2.
+            2. Open the community, select **Encryption**, and set **Encryption Method** to **IKEv2 only**.
+            3. Click **OK**, then **Publish** and **Install Policy** on the community's gateways.
+        - id: cli
+          desc: |
+            To set a VPN community to IKEv2 only with the Management API:
+
+            ```bash
+            mgmt_cli login user admin > id.txt
+            mgmt_cli set vpn-community-meshed name "<community-name>" encryption-method "ikev2 only" -s id.txt
+            mgmt_cli publish -s id.txt
+            mgmt_cli install-policy policy-package "Standard" targets "<gateway-name>" -s id.txt
+            mgmt_cli logout -s id.txt
+            ```
+
+            For a star community, use `set vpn-community-star` instead.
+    refs:
+      - url: https://sc1.checkpoint.com/documents/R82/WebAdminGuides/EN/CP_R82_SitetoSiteVPN_AdminGuide/Content/Topics-VPNSG/IPsec-and-IKE.htm
+        title: IPsec and IKE
+  - uid: mondoo-checkpoint-security-gaia-telnet-disabled
+    title: Ensure Telnet access to Gaia is disabled
+    impact: 90
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a04
+      compliance/pci-dss-4: pcidss-requirement-2-2-7
+      compliance/soc2-2017: soc2-control-cc6-6-2
+      compliance/vda-isa-5: vda-isa-5-5-1-2
+    mql: |
+      checkpoint.gaia.telnetEnabled == false
+    docs:
+      desc: |
+        This check verifies that the management server's Gaia operating system does not accept Telnet logins.
+
+        Gaia can accept command-line logins over SSH and over Telnet. The Telnet setting is under System Management, Network Access, in the Gaia Portal. The check requires Telnet access to be off.
+
+        **Why this matters**
+
+        Telnet sends the username, the password, and every command in clear text. Anyone who can observe traffic between an administrator and the management server, on a shared segment, a compromised switch, or a hop on the path, reads the credentials of an account that controls every gateway's policy.
+
+        SSH provides the same command line with an encrypted session.
+      audit: |
+        ### Audit via the Gaia Portal
+
+        1. Log in to the Gaia Portal of the management server.
+        2. Open **System Management**, then **Network Access**.
+
+        If **Enable Telnet** is cleared, the check passes. If it is selected, the check fails.
+
+        ### Audit via clish
+
+        ```bash
+        show net-access telnet
+        ```
+
+        The check passes if the output is `telnet off`.
+      remediation:
+        - id: console
+          desc: |
+            To disable Telnet using the Gaia Portal:
+
+            1. Open **System Management**, then **Network Access**.
+            2. Clear **Enable Telnet** and click **Apply**.
+        - id: cli
+          desc: |
+            To disable Telnet from clish:
+
+            ```bash
+            set net-access telnet off
+            save config
+            ```
+    refs:
+      - url: https://sc1.checkpoint.com/documents/R82/WebAdminGuides/EN/CP_R82_Gaia_AdminGuide/Content/Topics-GAG/Network-Access.htm
+        title: Network Access
+  - uid: mondoo-checkpoint-security-gaia-snmp-v3-only
+    title: Ensure the Gaia SNMP agent accepts SNMPv3 only
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a04
+      compliance/pci-dss-4: pcidss-requirement-2-2-7
+      compliance/soc2-2017: soc2-control-cc6-6-2
+      compliance/vda-isa-5: vda-isa-5-5-1-2
+    mql: |
+      checkpoint.gaia.snmp.agentEnabled == false || checkpoint.gaia.snmp.agentVersion == "v3-Only"
+    docs:
+      desc: |
+        This check verifies that the management server's SNMP agent, when it runs, accepts only SNMPv3.
+
+        The Gaia SNMP agent answers SNMPv1, v2c, and v3 requests unless its version is set to v3-Only, under System Management, SNMP, in the Gaia Portal. The check passes when the agent is disabled or set to v3-Only.
+
+        **Why this matters**
+
+        SNMPv1 and v2c authenticate with a community string sent in clear text, and that string is often left at a well-known default. Anyone who sees or guesses it can read the machine's interfaces, routes, processes, and installed software, which is a detailed map for an attacker. SNMPv3 adds user authentication and encryption.
+      audit: |
+        ### Audit via the Gaia Portal
+
+        1. Open **System Management**, then **SNMP**.
+
+        If the SNMP agent is disabled, or its version is set to v3-Only, the check passes. Otherwise the check fails.
+
+        ### Audit via clish
+
+        ```bash
+        show snmp agent
+        show snmp agent-version
+        ```
+
+        The check passes if the first command prints `SNMP Agent Disabled` or the second prints `v3-Only`.
+      remediation:
+        - id: console
+          desc: |
+            To restrict SNMP to version 3 using the Gaia Portal:
+
+            1. Open **System Management**, then **SNMP**.
+            2. Add an SNMPv3 user with authentication and privacy.
+            3. Set the agent version to v3-Only and click **Apply**.
+            4. Update the monitoring system to poll with the SNMPv3 user.
+        - id: cli
+          desc: |
+            To restrict SNMP to version 3 from clish:
+
+            ```bash
+            add snmp usm user <user-name> security-level authPriv auth-pass-phrase <auth-pass-phrase> privacy-pass-phrase <privacy-pass-phrase> authentication-protocol SHA256 privacy-protocol AES
+            set snmp agent-version v3-Only
+            save config
+            ```
+
+            If nothing polls the machine over SNMP, turn the agent off instead with `set snmp agent off`.
+    refs:
+      - url: https://sc1.checkpoint.com/documents/R82/WebAdminGuides/EN/CP_R82_Gaia_AdminGuide/Content/Topics-GAG/SNMP.htm
+        title: SNMP
+      - url: https://sc1.checkpoint.com/documents/Check_Point_Gateway_and_Management_Hardening/Hardening_GW_and_MGMT/Gaia-OS-Hardening.html
+        title: Gaia OS Hardening
+  - uid: mondoo-checkpoint-security-gaia-allowed-clients-restricted
+    title: Ensure Gaia allowed clients do not include any host
+    impact: 85
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-3
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-17
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-12
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/vda-isa-5: vda-isa-5-4-1-2
+    mql: |
+      checkpoint.gaia.allowedClients != empty
+      checkpoint.gaia.allowedClients.none(_ == "any-host")
+    docs:
+      desc: |
+        This check verifies that only listed hosts and networks may connect to the management server's Gaia Portal and SSH.
+
+        Gaia's allowed clients, under System Management, Host Access, in the Gaia Portal, list the hosts and networks permitted to reach its web portal and command line. A fresh installation lists Any host. The check requires the list to name specific hosts or networks, without Any host among them.
+
+        **Why this matters**
+
+        SSH and the Gaia Portal give root-equivalent control of the management server, and through it every gateway. With Any host allowed, every machine that can route to the server can try passwords against those services and reach any vulnerability in them.
+
+        Limit the list to the administration workstations and jump hosts that need it, alongside the SmartConsole trusted clients.
+      audit: |
+        ### Audit via the Gaia Portal
+
+        1. Open **System Management**, then **Host Access**.
+
+        If the list names specific hosts or networks and does not include **Any host**, the check passes. Otherwise the check fails.
+
+        ### Audit via clish
+
+        ```bash
+        show allowed-client all
+        ```
+
+        The check fails if the output includes `any-host`.
+      remediation:
+        - id: console
+          desc: |
+            To restrict allowed clients using the Gaia Portal:
+
+            1. Open **System Management**, then **Host Access**.
+            2. Click **Add** and enter each administration host or network.
+            3. Select the **Any** entry and click **Delete**.
+
+            **Add your own host first.** Removing Any host before your workstation is listed ends your session and blocks the next login.
+        - id: cli
+          desc: |
+            To restrict allowed clients from clish:
+
+            ```bash
+            add allowed-client host ipv4-address 192.0.2.10
+            add allowed-client network ipv4-address 192.0.2.0 mask-length 24
+            delete allowed-client host any-host
+            save config
+            ```
+
+            Replace the addresses with your administration hosts and networks. **Add your own host first.**
+    refs:
+      - url: https://sc1.checkpoint.com/documents/R82/WebAdminGuides/EN/CP_R82_Gaia_AdminGuide/Content/Topics-GAG/Host-Access.htm
+        title: Host Access
+      - url: https://sc1.checkpoint.com/documents/Check_Point_Gateway_and_Management_Hardening/Hardening_GW_and_MGMT/Management-Plane-Protection.html
+        title: Management Plane Protection
+  - uid: mondoo-checkpoint-security-gaia-password-min-length
+    title: Ensure Gaia passwords are at least 12 characters long
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-02
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-308-a-5-ii-d-security-awareness-training-and-tools-password-management
+      compliance/iso-27001-2022: iso-27001-2022-a-5-17
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-7
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a07
+      compliance/pci-dss-4: pcidss-requirement-8-3-6
+      compliance/soc2-2017: soc2-control-cc6-1-8
+      compliance/vda-isa-5: vda-isa-5-4-1-3
+    mql: |
+      checkpoint.gaia.passwordControls.minPasswordLength >= 12
+    docs:
+      desc: |
+        This check verifies that Gaia refuses local passwords shorter than 12 characters.
+
+        Gaia's password policy, under User Management, Password Policy, in the Gaia Portal, sets the minimum length for local account passwords. The default is 6. The check requires at least 12, the minimum PCI DSS 4.0 sets.
+
+        **Why this matters**
+
+        Password length is what makes guessing expensive. A short password falls quickly to an offline attack once a password hash leaves the machine, as it does in every backup and snapshot, and to online guessing when lockout is weak. Local Gaia accounts administer the management server, so their passwords protect every gateway's policy.
+
+        Check Point's Gaia hardening guidance recommends at least 10 characters. Gaia also checks SNMPv3 pass phrases against this policy.
+      audit: |
+        ### Audit via the Gaia Portal
+
+        1. Open **User Management**, then **Password Policy**.
+
+        If **Minimum Password Length** is 12 or more, the check passes. Otherwise the check fails.
+
+        ### Audit via clish
+
+        ```bash
+        show password-controls min-password-length
+        ```
+
+        The check passes if the value is 12 or more.
+      remediation:
+        - id: console
+          desc: |
+            To raise the minimum password length using the Gaia Portal:
+
+            1. Open **User Management**, then **Password Policy**.
+            2. Set **Minimum Password Length** to 12 or more and click **Apply**.
+        - id: cli
+          desc: |
+            To raise the minimum password length from clish:
+
+            ```bash
+            set password-controls min-password-length 12
+            save config
+            ```
+
+            The new length applies when a password is next changed.
+    refs:
+      - url: https://sc1.checkpoint.com/documents/R82/WebAdminGuides/EN/CP_R82_Gaia_AdminGuide/Content/Topics-GAG/Password-Policy.htm
+        title: Password Policy
+      - url: https://sc1.checkpoint.com/documents/Check_Point_Gateway_and_Management_Hardening/Hardening_GW_and_MGMT/Gaia-OS-Hardening.html
+        title: Gaia OS Hardening
+  - uid: mondoo-checkpoint-security-gaia-password-complexity
+    title: Ensure Gaia passwords require at least three character types
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-02
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-308-a-5-ii-d-security-awareness-training-and-tools-password-management
+      compliance/iso-27001-2022: iso-27001-2022-a-5-17
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-7
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a07
+      compliance/pci-dss-4: pcidss-requirement-8-3-6
+      compliance/soc2-2017: soc2-control-cc6-1-8
+      compliance/vda-isa-5: vda-isa-5-4-1-3
+    mql: |
+      checkpoint.gaia.passwordControls.complexity >= 3
+    docs:
+      desc: |
+        This check verifies that Gaia requires local passwords to mix at least three character types.
+
+        Gaia's **Password Complexity**, under User Management, Password Policy, sets how many of the four character types a password must contain: uppercase letters, lowercase letters, digits, and other characters. It ranges from 1 to 4, and the default is 2. The check requires at least 3. Check Point's Gaia hardening guidance recommends 4.
+
+        **Why this matters**
+
+        Requiring more character types removes the dictionary words and simple word-plus-digit passwords that guessing tools try first. Combined with a long minimum length, it keeps local administrator passwords out of reach of the wordlists attackers run against stolen hashes.
+      audit: |
+        ### Audit via the Gaia Portal
+
+        1. Open **User Management**, then **Password Policy**.
+
+        If **Password Complexity** is 3 or 4, the check passes. Otherwise the check fails.
+
+        ### Audit via clish
+
+        ```bash
+        show password-controls complexity
+        ```
+
+        The check passes if the value is 3 or more.
+      remediation:
+        - id: console
+          desc: |
+            To require more character types using the Gaia Portal:
+
+            1. Open **User Management**, then **Password Policy**.
+            2. Set **Password Complexity** to 3 or more and click **Apply**.
+        - id: cli
+          desc: |
+            To require more character types from clish:
+
+            ```bash
+            set password-controls complexity 3
+            save config
+            ```
+    refs:
+      - url: https://sc1.checkpoint.com/documents/R82/WebAdminGuides/EN/CP_R82_Gaia_AdminGuide/Content/Topics-GAG/Password-Policy.htm
+        title: Password Policy
+      - url: https://sc1.checkpoint.com/documents/Check_Point_Gateway_and_Management_Hardening/Hardening_GW_and_MGMT/Gaia-OS-Hardening.html
+        title: Gaia OS Hardening
+  - uid: mondoo-checkpoint-security-gaia-password-history
+    title: Ensure Gaia refuses reuse of recent passwords
+    impact: 60
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-02
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-308-a-5-ii-d-security-awareness-training-and-tools-password-management
+      compliance/iso-27001-2022: iso-27001-2022-a-5-17
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-7
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a07
+      compliance/pci-dss-4: pcidss-requirement-8-3-7
+      compliance/soc2-2017: soc2-control-cc6-1-8
+      compliance/vda-isa-5: vda-isa-5-4-1-3
+    mql: |
+      checkpoint.gaia.passwordControls.historyChecking == true
+      checkpoint.gaia.passwordControls.historyLength >= 4
+    docs:
+      desc: |
+        This check verifies that Gaia refuses a new password that matches one of the account's recent passwords.
+
+        Gaia's password history, under User Management, Password Policy, keeps a number of earlier passwords per account and refuses them when the password is changed. The check requires history checking to be on with a history of at least 4 passwords, the minimum PCI DSS 4.0 sets.
+
+        **Why this matters**
+
+        A password change is meant to end the use of a password that may be known. If the old password can be set again, an administrator forced to change a compromised password can put it straight back, and the change achieves nothing.
+      audit: |
+        ### Audit via the Gaia Portal
+
+        1. Open **User Management**, then **Password Policy**.
+
+        If password history checking is enabled and the history length is 4 or more, the check passes. Otherwise the check fails.
+
+        ### Audit via clish
+
+        ```bash
+        show password-controls history-checking
+        show password-controls history-length
+        ```
+
+        The check passes if the output shows `Password History Checking on` and a `Password History Length` of 4 or more.
+      remediation:
+        - id: console
+          desc: |
+            To refuse reused passwords using the Gaia Portal:
+
+            1. Open **User Management**, then **Password Policy**.
+            2. Enable password history checking, set the history length to 4 or more, and click **Apply**.
+        - id: cli
+          desc: |
+            To refuse reused passwords from clish:
+
+            ```bash
+            set password-controls history-checking true
+            set password-controls history-length 10
+            save config
+            ```
+    refs:
+      - url: https://sc1.checkpoint.com/documents/R82/WebAdminGuides/EN/CP_R82_Gaia_AdminGuide/Content/Topics-GAG/Password-Policy.htm
+        title: Password Policy
+      - url: https://sc1.checkpoint.com/documents/Check_Point_Gateway_and_Management_Hardening/Hardening_GW_and_MGMT/Gaia-OS-Hardening.html
+        title: Gaia OS Hardening
+  - uid: mondoo-checkpoint-security-gaia-account-lockout
+    title: Ensure Gaia locks accounts after repeated failed logins
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-02
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-d-person-or-entity-authentication
+      compliance/iso-27001-2022: iso-27001-2022-a-8-5
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-7
+      compliance/nist-csf-2: nist-csf-2-pr-aa-03
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-8
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a07
+      compliance/pci-dss-4: pcidss-requirement-8-3-4
+      compliance/soc2-2017: soc2-control-cc6-1-8
+      compliance/vda-isa-5: vda-isa-5-4-1-2
+    mql: |
+      checkpoint.gaia.passwordControls.denyOnFail == true
+      checkpoint.gaia.passwordControls.failuresAllowed > 0 && checkpoint.gaia.passwordControls.failuresAllowed <= 10
+      checkpoint.gaia.passwordControls.allowAfter >= 1800
+    docs:
+      desc: |
+        This check verifies that Gaia locks a local account after a small number of failed logins, for long enough to stop password guessing.
+
+        Gaia's **Deny access after failed login attempts**, under User Management, Password Policy, locks an account after the set number of failures and unlocks it after the set number of seconds. It is off by default. The check requires it on, with at most 10 failures allowed and a lock of at least 1,800 seconds, the limits PCI DSS 4.0 sets.
+
+        **Why this matters**
+
+        Without a lockout, an attacker who can reach SSH or the Gaia Portal can try passwords against the admin account indefinitely. A lockout of 30 minutes after 10 failures limits a guessing attack to a few hundred attempts a day, which a reasonable password outlasts.
+
+        Pair the lockout with allowed clients, so the accounts cannot be locked out from arbitrary hosts.
+      audit: |
+        ### Audit via the Gaia Portal
+
+        1. Open **User Management**, then **Password Policy**.
+
+        If **Deny access after failed login attempts** is selected, the maximum number of failed attempts is 10 or fewer, and access is allowed again after 1800 seconds or more, the check passes. Otherwise the check fails.
+
+        ### Audit via clish
+
+        ```bash
+        show password-controls deny-on-fail enable
+        show password-controls deny-on-fail failures-allowed
+        show password-controls deny-on-fail allow-after
+        ```
+
+        The check passes if the output shows `Deny Access After Failed Attempts on`, a `Maximum Failed Attempts` of 10 or fewer, and an `Unlock User After Seconds` of 1800 or more.
+      remediation:
+        - id: console
+          desc: |
+            To lock accounts after failed logins using the Gaia Portal:
+
+            1. Open **User Management**, then **Password Policy**.
+            2. Select **Deny access after failed login attempts**.
+            3. Set the maximum number of failed attempts to 10 or fewer and the time until access is allowed again to 1800 seconds or more, then click **Apply**.
+        - id: cli
+          desc: |
+            To lock accounts after failed logins from clish:
+
+            ```bash
+            set password-controls deny-on-fail enable true
+            set password-controls deny-on-fail failures-allowed 5
+            set password-controls deny-on-fail allow-after 1800
+            save config
+            ```
+    refs:
+      - url: https://sc1.checkpoint.com/documents/R82/WebAdminGuides/EN/CP_R82_Gaia_AdminGuide/Content/Topics-GAG/Password-Policy.htm
+        title: Password Policy
+      - url: https://sc1.checkpoint.com/documents/Check_Point_Gateway_and_Management_Hardening/Hardening_GW_and_MGMT/Gaia-OS-Hardening.html
+        title: Gaia OS Hardening
+  - uid: mondoo-checkpoint-security-gaia-lock-unused-accounts
+    title: Ensure Gaia locks accounts unused for 90 days
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-07
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-5-18
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-2
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a07
+      compliance/pci-dss-4: pcidss-requirement-8-2-6
+      compliance/soc2-2017: soc2-control-cc6-2-2
+      compliance/vda-isa-5: vda-isa-5-4-1-3
+    mql: |
+      checkpoint.gaia.passwordControls.denyOnNonuse == true
+      checkpoint.gaia.passwordControls.nonuseAllowedDays > 0 && checkpoint.gaia.passwordControls.nonuseAllowedDays <= 90
+    docs:
+      desc: |
+        This check verifies that Gaia locks local accounts that have not logged in for 90 days.
+
+        Gaia's **Deny access to unused accounts**, under User Management, Password Policy, locks an account once it has gone the set number of days without a login. It is off by default. The check requires it on with at most 90 days, the limit PCI DSS 4.0 sets for inactive accounts.
+
+        **Why this matters**
+
+        Accounts of administrators who changed role or left, and accounts created for a one-off task, keep working until someone removes them. Nobody notices when such an account is used, because nobody uses it legitimately. Locking unused accounts closes them automatically.
+      audit: |
+        ### Audit via the Gaia Portal
+
+        1. Open **User Management**, then **Password Policy**.
+
+        If **Deny access to unused accounts** is selected and **Days of non-use before lock-out** is 90 or fewer, the check passes. Otherwise the check fails.
+
+        ### Audit via clish
+
+        ```bash
+        show password-controls deny-on-nonuse enable
+        show password-controls deny-on-nonuse allowed-days
+        ```
+
+        The check passes if the output shows `Deny Access to Unused Accounts on` and a `Days Nonuse Before Lockout` of 90 or fewer.
+      remediation:
+        - id: console
+          desc: |
+            To lock unused accounts using the Gaia Portal:
+
+            1. Open **User Management**, then **Password Policy**.
+            2. Select **Deny access to unused accounts**, set **Days of non-use before lock-out** to 90 or fewer, and click **Apply**.
+        - id: cli
+          desc: |
+            To lock unused accounts from clish:
+
+            ```bash
+            set password-controls deny-on-nonuse enable true
+            set password-controls deny-on-nonuse allowed-days 90
+            save config
+            ```
+
+            **Keep a break-glass account in use.** An emergency account nobody logs in to is locked after the same period, so log in with it on a schedule shorter than the limit.
+    refs:
+      - url: https://sc1.checkpoint.com/documents/R82/WebAdminGuides/EN/CP_R82_Gaia_AdminGuide/Content/Topics-GAG/Password-Policy.htm
+        title: Password Policy
+      - url: https://sc1.checkpoint.com/documents/Check_Point_Gateway_and_Management_Hardening/Hardening_GW_and_MGMT/Gaia-OS-Hardening.html
+        title: Gaia OS Hardening
+  - uid: mondoo-checkpoint-security-gaia-cli-inactivity-timeout
+    title: Ensure Gaia ends idle command-line sessions within 15 minutes
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: false
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-2-iii-access-control-automatic-logoff
+      compliance/iso-27001-2022: iso-27001-2022-a-8-5
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-7
+      compliance/nist-csf-2: nist-csf-2-pr-aa-03
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-12
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-11
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a07
+      compliance/pci-dss-4: pcidss-requirement-8-2-8
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/vda-isa-5: vda-isa-5-4-1-2
+    mql: |
+      checkpoint.gaia.cliInactivityTimeout > 0 && checkpoint.gaia.cliInactivityTimeout <= 15
+    docs:
+      desc: |
+        This check verifies that Gaia ends an idle command-line session within 15 minutes.
+
+        The clish inactivity timeout, under System Management, Session, in the Gaia Portal, sets how many minutes an SSH or console session may sit idle before Gaia logs it out. The check requires a value from 1 to 15 minutes, the limit PCI DSS 4.0 sets for idle sessions.
+
+        **Why this matters**
+
+        An administrator session left open on an unattended workstation or a forgotten terminal window is a logged-in root shell on the management server. Anyone who reaches that screen, or takes over the workstation, inherits it without a password. A short timeout limits how long that window stays open.
+      audit: |
+        ### Audit via the Gaia Portal
+
+        1. Open **System Management**, then **Session**.
+
+        If the **Command Line Shell** inactivity timeout is between 1 and 15 minutes, the check passes. Otherwise the check fails.
+
+        ### Audit via clish
+
+        ```bash
+        show inactivity-timeout
+        ```
+
+        The check passes if the value is between 1 and 15.
+      remediation:
+        - id: console
+          desc: |
+            To set the command-line inactivity timeout using the Gaia Portal:
+
+            1. Open **System Management**, then **Session**.
+            2. Set the **Command Line Shell** inactivity timeout to 15 minutes or less and click **Apply**.
+        - id: cli
+          desc: |
+            To set the command-line inactivity timeout from clish:
+
+            ```bash
+            set inactivity-timeout 10
+            save config
+            ```
+    refs:
+      - url: https://sc1.checkpoint.com/documents/R82/WebAdminGuides/EN/CP_R82_Gaia_AdminGuide/Content/Topics-GAG/Session.htm
+        title: Session
+  - uid: mondoo-checkpoint-security-gaia-web-session-timeout
+    title: Ensure Gaia ends idle Gaia Portal sessions within 15 minutes
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: false
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-2-iii-access-control-automatic-logoff
+      compliance/iso-27001-2022: iso-27001-2022-a-8-5
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-7
+      compliance/nist-csf-2: nist-csf-2-pr-aa-03
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-12
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-11
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a07
+      compliance/pci-dss-4: pcidss-requirement-8-2-8
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/vda-isa-5: vda-isa-5-4-1-2
+    mql: |
+      checkpoint.gaia.webSessionTimeout > 0 && checkpoint.gaia.webSessionTimeout <= 15
+    docs:
+      desc: |
+        This check verifies that Gaia ends an idle Gaia Portal session within 15 minutes.
+
+        The web session timeout, under System Management, Session, in the Gaia Portal, sets how many minutes a browser session may sit idle before Gaia logs it out. The check requires a value from 1 to 15 minutes, the limit PCI DSS 4.0 sets for idle sessions.
+
+        **Why this matters**
+
+        A Gaia Portal session left open in a browser tab is administrative access to the management server for whoever uses that browser next. A short timeout limits how long a forgotten session can be reused.
+      audit: |
+        ### Audit via the Gaia Portal
+
+        1. Open **System Management**, then **Session**.
+
+        If the **Web UI** inactivity timeout is between 1 and 15 minutes, the check passes. Otherwise the check fails.
+
+        ### Audit via clish
+
+        ```bash
+        show web session-timeout
+        ```
+
+        The check passes if `WebSessionTimeout` is between 1 and 15.
+      remediation:
+        - id: console
+          desc: |
+            To set the Gaia Portal session timeout using the Gaia Portal:
+
+            1. Open **System Management**, then **Session**.
+            2. Set the **Web UI** inactivity timeout to 15 minutes or less and click **Apply**.
+        - id: cli
+          desc: |
+            To set the Gaia Portal session timeout from clish:
+
+            ```bash
+            set web session-timeout 10
+            save config
+            ```
+    refs:
+      - url: https://sc1.checkpoint.com/documents/R82/WebAdminGuides/EN/CP_R82_Gaia_AdminGuide/Content/Topics-GAG/Session.htm
+        title: Session
+  - uid: mondoo-checkpoint-security-gaia-login-banner
+    title: Ensure the Gaia login banner is enabled
+    impact: 40
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: false
+      compliance/dora: false
+      compliance/hipaa: false
+      compliance/iso-27001-2022: false
+      compliance/nis-2: false
+      compliance/nist-csf-1: false
+      compliance/nist-csf-2: false
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-9
+      compliance/owasp-top-10-2025: false
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: false
+    mql: |
+      checkpoint.gaia.bannerEnabled == true
+    docs:
+      desc: |
+        This check verifies that Gaia shows a login banner before SSH and Gaia Portal logins.
+
+        The banner message, under System Management, Messages, in the Gaia Portal, is shown to anyone who connects before they authenticate. It is enabled by default with the text "This system is for authorized use only", which an organization can replace with its own. The check requires the banner to be enabled.
+
+        **Why this matters**
+
+        A banner states that the system is for authorized use only and that activity is monitored. In many jurisdictions that notice is what makes unauthorized access clearly unauthorized and supports acting on the logs. It also avoids telling a visitor anything about the system before login.
+      audit: |
+        ### Audit via the Gaia Portal
+
+        1. Open **System Management**, then **Messages**.
+
+        If **Banner message** is selected, the check passes. Otherwise the check fails.
+
+        In clish, `show message banner status` prints `Banner message status on` when it passes.
+
+        ### Audit via clish
+
+        ```bash
+        show message banner status
+        ```
+      remediation:
+        - id: console
+          desc: |
+            To enable the login banner using the Gaia Portal:
+
+            1. Open **System Management**, then **Messages**.
+            2. Select **Banner message**, enter your organization's text, and click **Apply**.
+        - id: cli
+          desc: |
+            To enable the login banner from clish:
+
+            ```bash
+            set message banner on msgvalue "Authorized use only. Activity is monitored and logged."
+            save config
+            ```
+    refs:
+      - url: https://sc1.checkpoint.com/documents/R82/WebAdminGuides/EN/CP_R82_Gaia_AdminGuide/Content/Topics-GAG/Messages.htm
+        title: Messages
+  - uid: mondoo-checkpoint-security-gaia-ntp-enabled
+    title: Ensure Gaia synchronizes time with NTP
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-log-06
+      compliance/dora: dora-art-10
+      compliance/hipaa: hipaa-security-ss164-312-b-audit-controls
+      compliance/iso-27001-2022: iso-27001-2022-a-8-17
+      compliance/nis-2: nis-2-21-2-b
+      compliance/nist-csf-1: nist-csf-1-pr-pt-1
+      compliance/nist-csf-2: nist-csf-2-pr-ps-04
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-au-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-3-7
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a09
+      compliance/pci-dss-4: pcidss-requirement-10-6-1
+      compliance/soc2-2017: soc2-control-cc7-2-1
+      compliance/vda-isa-5: vda-isa-5-5-2-4
+    mql: |
+      checkpoint.gaia.ntpEnabled == true
+      checkpoint.gaia.ntpServers != empty
+    docs:
+      desc: |
+        This check verifies that the management server sets its clock from NTP servers.
+
+        NTP is configured under System Management, Time, in the Gaia Portal. The check requires NTP to be active with at least one server.
+
+        **Why this matters**
+
+        The management server stamps every log and audit record it collects from the gateways it manages. When its clock drifts, those times stop lining up with the gateways, the SIEM, and the systems under attack, and reconstructing the order of events in an incident becomes guesswork. Certificate validity checks between the management server and its gateways also depend on a correct clock.
+      audit: |
+        ### Audit via the Gaia Portal
+
+        1. Open **System Management**, then **Time**.
+
+        If NTP is enabled with at least one server, the check passes. Otherwise the check fails.
+
+        ### Audit via clish
+
+        ```bash
+        show ntp active
+        show ntp servers
+        ```
+
+        The check passes if NTP is active and at least one server is listed.
+      remediation:
+        - id: console
+          desc: |
+            To synchronize time with NTP using the Gaia Portal:
+
+            1. Open **System Management**, then **Time**.
+            2. Enable NTP, add your NTP servers, and click **Apply**.
+        - id: cli
+          desc: |
+            To synchronize time with NTP from clish:
+
+            ```bash
+            add ntp server address 192.0.2.123 type server
+            set ntp active on
+            save config
+            ```
+
+            Replace the address with your NTP server.
+    refs:
+      - url: https://sc1.checkpoint.com/documents/R82/WebAdminGuides/EN/CP_R82_Gaia_AdminGuide/Content/Topics-GAG/Time.htm
+        title: Time
+  - uid: mondoo-checkpoint-security-gaia-audit-log-permanent
+    title: Ensure Gaia keeps a permanent audit log of configuration changes
+    impact: 75
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-log-08
+      compliance/dora: dora-art-10
+      compliance/hipaa: hipaa-security-ss164-312-b-audit-controls
+      compliance/iso-27001-2022: iso-27001-2022-a-8-15
+      compliance/nis-2: nis-2-21-2-b
+      compliance/nist-csf-1: nist-csf-1-pr-pt-1
+      compliance/nist-csf-2: nist-csf-2-pr-ps-04
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-au-12
+      compliance/nist-sp-800-171: nist-sp-800-171--3-3-1
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a09
+      compliance/pci-dss-4: pcidss-requirement-10-2-1-2
+      compliance/soc2-2017: soc2-control-cc7-2-1
+      compliance/vda-isa-5: vda-isa-5-5-2-4
+    mql: |
+      checkpoint.gaia.syslogAuditLog == "permanent"
+    docs:
+      desc: |
+        This check verifies that Gaia records configuration changes in an audit log that survives a reboot.
+
+        Gaia's audit log records each change made through clish and the Gaia Portal, with the user who made it. It is set under System Management, System Logging, in the Gaia Portal, or with `set syslog auditlog` in clish, which on R82 accepts `permanent` or `disable`. The check requires permanent.
+
+        **Why this matters**
+
+        After an incident, the first question about the management server is who changed what. Without the audit log, operating system changes such as new users, altered allowed clients, or a re-enabled Telnet leave no record. A permanent log keeps that trail on disk across reboots, available for investigation.
+      audit: |
+        ### Audit via the Gaia Portal
+
+        1. Open **System Management**, then **System Logging**.
+
+        If the audit log is set to permanent, the check passes. Otherwise the check fails.
+
+        ### Audit via clish
+
+        ```bash
+        show syslog auditlog
+        ```
+
+        The check passes if the output is `permanent`.
+      remediation:
+        - id: console
+          desc: |
+            To keep a permanent audit log using the Gaia Portal:
+
+            1. Open **System Management**, then **System Logging**.
+            2. Set the audit log to permanent and click **Apply**.
+        - id: cli
+          desc: |
+            To keep a permanent audit log from clish:
+
+            ```bash
+            set syslog auditlog permanent
+            save config
+            ```
+    refs:
+      - url: https://sc1.checkpoint.com/documents/R82/WebAdminGuides/EN/CP_R82_Gaia_AdminGuide/Content/Topics-GAG/System-Logging.htm
+        title: System Logging
+  - uid: mondoo-checkpoint-security-gaia-audit-logs-to-management
+    title: Ensure Gaia sends its audit logs to the management server
+    impact: 60
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-log-08
+      compliance/dora: dora-art-10
+      compliance/hipaa: hipaa-security-ss164-312-b-audit-controls
+      compliance/iso-27001-2022: iso-27001-2022-a-8-15
+      compliance/nis-2: nis-2-21-2-b
+      compliance/nist-csf-1: nist-csf-1-pr-pt-1
+      compliance/nist-csf-2: nist-csf-2-pr-ps-04
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-au-12
+      compliance/nist-sp-800-171: nist-sp-800-171--3-3-1
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a09
+      compliance/pci-dss-4: pcidss-requirement-10-2-1-2
+      compliance/soc2-2017: soc2-control-cc7-2-1
+      compliance/vda-isa-5: vda-isa-5-5-2-4
+    mql: |
+      checkpoint.gaia.syslogManagementAuditLogs == true
+    docs:
+      desc: |
+        This check verifies that Gaia forwards its audit logs into the Check Point log system.
+
+        With the setting on, Gaia sends the audit records of configuration changes to the management server's log system, where they appear in SmartConsole Logs & Events next to the policy and traffic logs and are forwarded wherever those logs go. The setting is under System Management, System Logging, in the Gaia Portal. The check requires it to be on.
+
+        **Why this matters**
+
+        Audit records that live only on the machine are lost or altered along with it, and nobody reviews them unless they go looking. Sending them into the central log system puts changes to the operating system in front of the people who already watch the firewall logs, and into the SIEM.
+      audit: |
+        ### Audit via the Gaia Portal
+
+        1. Open **System Management**, then **System Logging**.
+
+        If sending audit logs to the management server is enabled, the check passes. Otherwise the check fails.
+
+        ### Audit via clish
+
+        ```bash
+        show syslog mgmtauditlogs
+        ```
+
+        The check passes if the output says that sending audit logs to the management server is enabled.
+      remediation:
+        - id: console
+          desc: |
+            To send Gaia audit logs to the management server using the Gaia Portal:
+
+            1. Open **System Management**, then **System Logging**.
+            2. Enable sending audit logs to the management server and click **Apply**.
+        - id: cli
+          desc: |
+            To send Gaia audit logs to the management server from clish:
+
+            ```bash
+            set syslog mgmtauditlogs on
+            save config
+            ```
+    refs:
+      - url: https://sc1.checkpoint.com/documents/R82/WebAdminGuides/EN/CP_R82_Gaia_AdminGuide/Content/Topics-GAG/System-Logging.htm
+        title: System Logging
+  - uid: mondoo-checkpoint-security-gaia-scheduled-backup
+    title: Ensure a scheduled Gaia backup is configured
+    impact: 65
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-bcr-08
+      compliance/dora: dora-art-12
+      compliance/hipaa: hipaa-security-ss164-308-a-7-ii-a-contingency-plan-data-backup-plan
+      compliance/iso-27001-2022: iso-27001-2022-a-8-13
+      compliance/nis-2: nis-2-21-2-c
+      compliance/nist-csf-1: nist-csf-1-pr-ip-4
+      compliance/nist-csf-2: nist-csf-2-pr-ds-11
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cp-9
+      compliance/nist-sp-800-171: false
+      compliance/owasp-top-10-2025: false
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: false
+    mql: |
+      checkpoint.gaia.scheduledBackups != empty
+    docs:
+      desc: |
+        This check verifies that the management server has at least one scheduled backup with a recurrence.
+
+        A Gaia backup captures the operating system configuration and the management database: every rule, object, administrator, and certificate the server holds. Scheduled backups are configured under Maintenance, System Backup, in the Gaia Portal. The check requires at least one schedule that recurs.
+
+        **Why this matters**
+
+        The management database is the only full copy of the security policy of every gateway it manages and of the internal certificate authority they trust. Losing it to a disk failure, a botched upgrade, or ransomware means rebuilding every rule and re-establishing trust with every gateway by hand. A recurring backup keeps the loss to the time since the last run.
+
+        Send backups to a remote server, so the copy does not share the fate of the machine.
+      audit: |
+        ### Audit via the Gaia Portal
+
+        1. Open **Maintenance**, then **System Backup**.
+
+        If at least one scheduled backup has a recurrence, the check passes. Otherwise the check fails.
+
+        In clish, the check passes if the output includes a `set backup-scheduled name <name> recurrence` line.
+
+        ### Audit via clish
+
+        ```bash
+        show configuration backup-scheduled
+        ```
+      remediation:
+        - id: console
+          desc: |
+            To schedule a backup using the Gaia Portal:
+
+            1. Open **Maintenance**, then **System Backup**.
+            2. Add a scheduled backup.
+            3. Choose a remote destination such as an SCP server, set a recurrence, and save it.
+        - id: cli
+          desc: |
+            To schedule a backup from clish:
+
+            ```bash
+            add backup-scheduled name weekly_backup scp ip 192.0.2.20 path /backups/ username backup password <password>
+            set backup-scheduled name weekly_backup recurrence weekly days 1 time 02:00
+            save config
+            ```
+
+            Replace the server, path, and credentials with your own backup destination. A schedule name takes only letters, digits, and underscores, and Gaia checks that it can reach the destination before it saves the schedule.
+    refs:
+      - url: https://sc1.checkpoint.com/documents/R82/WebAdminGuides/EN/CP_R82_Gaia_AdminGuide/Content/Topics-GAG/System-Backup.htm
+        title: System Backup
+  - uid: mondoo-checkpoint-security-gaia-configuration-saved
+    title: Ensure the Gaia running configuration is saved
+    impact: 50
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: false
+      compliance/dora: false
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-9
+      compliance/nis-2: false
+      compliance/nist-csf-1: nist-csf-1-pr-ip-1
+      compliance/nist-csf-2: nist-csf-2-pr-ps-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-2
+      compliance/nist-sp-800-171: nist-sp-800-171--3-4-1
+      compliance/owasp-top-10-2025: false
+      compliance/pci-dss-4: pcidss-requirement-1-2-8
+      compliance/soc2-2017: soc2-control-cc8-1-12
+      compliance/vda-isa-5: false
+    mql: |
+      checkpoint.gaia.configurationSaved == true
+    docs:
+      desc: |
+        This check verifies that the management server's running Gaia configuration has been saved.
+
+        Changes made in clish take effect at once but are written to the startup configuration only by `save config`. Until then, Gaia reports the configuration state as unsaved. The check requires the state to be saved.
+
+        **Why this matters**
+
+        Unsaved changes disappear at the next reboot. A hardening change, such as disabling Telnet or removing Any host from the allowed clients, that was never saved quietly reverts after a restart or an upgrade, and the server comes back with the weaker setting while everyone believes it was fixed.
+      audit: |
+        ### Audit via clish
+
+        ```bash
+        show config-state
+        ```
+
+        If the output is `saved`, the check passes. If it is `unsaved`, the check fails.
+      remediation:
+        - id: cli
+          desc: |
+            To save the running configuration from clish:
+
+            1. Review the pending changes with `show configuration`.
+            2. Save them:
+
+            ```bash
+            save config
+            ```
+        # No Gaia Portal remediation: the Gaia Portal saves each change as it is applied, so an unsaved state only arises from clish.
+    refs:
+      - url: https://sc1.checkpoint.com/documents/R82/WebAdminGuides/EN/CP_R82_Gaia_AdminGuide/Content/Topics-GAG/Working-with-System-Configuration-Gaia-Clish.htm
+        title: Working with System Configuration in Gaia Clish
