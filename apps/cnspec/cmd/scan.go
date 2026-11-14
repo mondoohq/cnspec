@@ -38,6 +38,34 @@ import (
 	"go.mondoo.com/mql/providers-sdk/v1/upstream"
 )
 
+// installPolicyRequirementsFlag installs every provider that the scanned
+// policies name under require: before the scan, for a bundle fetched from
+// Mondoo Platform and for the registry bundles of an incognito scan. Off (the
+// default), such a scan installs only the providers its assets connect with,
+// plus their declared dependencies. A bundle fetched from Mondoo Platform still
+// scans fully: it is not compiled here, and filter evaluation skips the filters
+// that need a provider that is not installed.
+//
+// Policy bundles passed with -f always have their requirements installed, with
+// or without this flag: they are compiled here, and a filter that needs a
+// provider that is not installed would fail that compile.
+const installPolicyRequirementsFlag = "install-policy-requirements"
+
+// installPolicyRequirementsEnabled reports whether a scan installs every
+// provider its policies require before it starts.
+//
+// Precedence, highest first:
+//  1. the --install-policy-requirements flag on scan, when given
+//  2. the MONDOO_INSTALL_POLICY_REQUIREMENTS environment variable, which is how
+//     `serve` (no such flag) turns it on
+//  3. install-policy-requirements in mondoo.yml
+//  4. off
+//
+// A value that does not parse as a boolean counts as off.
+func installPolicyRequirementsEnabled() bool {
+	return viper.GetBool(installPolicyRequirementsFlag)
+}
+
 func init() {
 	rootCmd.AddCommand(scanCmd)
 
@@ -90,6 +118,7 @@ func init() {
 	_ = scanCmd.Flags().MarkHidden("output-scan-db")
 	_ = scanCmd.Flags().Bool("collect-support-bundle", false, "Collect a support bundle (debug logs, asset bundle, inventory, resolved policy, report, provider versions) for sharing with Mondoo support. By default writes to a timestamped directory in the current working dir; override with --support-bundle-dir.")
 	_ = scanCmd.Flags().String("support-bundle-dir", "", "Directory to write the support bundle into. Only used when --collect-support-bundle is set. Defaults to ./cnspec-support-bundle-<timestamp>/.")
+	_ = scanCmd.Flags().Bool(installPolicyRequirementsFlag, false, "Install every provider the scanned policies list under require: before scanning, not only the providers the scanned assets connect with. Always on for policy bundles passed with --policy-bundle. Also set with MONDOO_INSTALL_POLICY_REQUIREMENTS")
 	_ = scanCmd.Flags().String("exceptions-submit", "auto", "Preview: When to submit exceptions from mondoo.yml files to Mondoo Platform: auto (a CI run on the default branch; set MONDOO_DEFAULT_BRANCH on Jenkins, Azure Pipelines or CircleCI if they cannot tell it), always, or never")
 }
 
@@ -154,6 +183,7 @@ To manually configure a policy, use this:
 		_ = viper.BindPFlag("output-scan-db", cmd.Flags().Lookup("output-scan-db"))
 		_ = viper.BindPFlag("collect-support-bundle", cmd.Flags().Lookup("collect-support-bundle"))
 		_ = viper.BindPFlag("support-bundle-dir", cmd.Flags().Lookup("support-bundle-dir"))
+		_ = viper.BindPFlag(installPolicyRequirementsFlag, cmd.Flags().Lookup(installPolicyRequirementsFlag))
 	},
 	ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		if len(args) == 0 {
@@ -734,6 +764,7 @@ func RunScanResult(parentCtx context.Context, config *scanConfig, scannerOpts ..
 	// this file, so this reads the per-scan value deliberately.
 	opts = append(opts, scan.WithStrict(config.Strict))
 	opts = append(opts, scan.WithExceptions(config.Exceptions, config.ExceptionsConfigPath, config.SubmitExceptions))
+	opts = append(opts, scan.WithInstallPolicyRequirements(installPolicyRequirementsEnabled()))
 
 	scanner := scan.NewLocalScanner(opts...)
 	// parentCtx carries scandump.WithRun (when debug dumping is on) plus

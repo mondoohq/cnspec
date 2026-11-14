@@ -698,11 +698,18 @@ func TestNewLocalScannerWithOptions(t *testing.T) {
 
 		assert.True(t, scanner.autoUpdate)
 		assert.Zero(t, scanner.refreshInterval)
+		// Policy requirements are not pre-installed unless asked.
+		assert.False(t, scanner.installPolicyRequirements)
 
 		rt, ok := scanner.runtime.(*providers.Runtime)
 		require.True(t, ok)
 		assert.True(t, rt.AutoUpdate.Enabled)
 		assert.Equal(t, defaultRefreshInterval, rt.AutoUpdate.RefreshInterval)
+	})
+
+	t.Run("with policy requirements installed", func(t *testing.T) {
+		assert.True(t, NewLocalScanner(WithInstallPolicyRequirements(true)).installPolicyRequirements)
+		assert.False(t, NewLocalScanner(WithInstallPolicyRequirements(false)).installPolicyRequirements)
 	})
 
 	t.Run("with auto update disabled", func(t *testing.T) {
