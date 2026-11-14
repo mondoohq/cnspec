@@ -32,6 +32,16 @@ The parts you can't infer from reading a policy file:
 - **A check that can only read its data as root runs only in a root scan.** Some sources are closed to other users: `/etc/sudoers`, a 0600 config file, `systemsetup`, `profiles`. In a non-root scan the check can't reach a verdict and scores `error`. Filter it with `command("id -u").stdout.trim == 0` so a non-root scan skips it instead. Don't filter on the file existing: it exists, it just isn't readable.
 - **A check's `mql:` can hold several top-level statements.** Each is scored as its own datapoint and the check passes only if all of them pass. It is *not* "last expression wins". Use it when you want each assertion to surface separately in scan output; collapse to one `&&`-joined expression if you want a single datapoint.
 - **`summary:` is required, 130 chars max.** See below.
+- **`version:` follows semver, judged by what the change does to the policy.** One PR gets one bump, at the highest level that applies:
+
+  | Change | Bump | Example |
+  |---|---|---|
+  | Bug fix or minor improvement: query logic, prose, refs, remediation, compliance tags | PATCH | `1.4.2` → `1.4.3` |
+  | New check, or new variants on existing checks | MINOR | `1.4.2` → `1.5.0` |
+  | A new policy | MINOR | starts at `1.0.0`, matching the template above |
+  | Breaking change, such as a removed or renamed check UID, or significant new additions | MAJOR | `1.4.2` → `2.0.0` |
+
+  A PR that adds checks and also fixes existing ones is a MINOR bump, not a PATCH.
 - **Every policy names its console icon with `mondoo.com/icon`** (ADR 0042), next to `mondoo.com/category` and `mondoo.com/platform`. The value is a member of the Mondoo GraphQL API's `ICON_IDS` enum written in lowercase kebab-case, such as `aws`, `postgresql`, `hetzner` (`PALO_ALTO_NETWORKS` becomes `palo-alto-networks`). Use a name that exists in that enum; do not derive one from a product name or an SVG file. Name the product's mark where the enum has one and the vendor's otherwise. Use `policy` when neither has a member, and for a policy that covers no single product. The key goes on the policy only; a variant's mark is `mondoo.com/filter-icon`. `content/validation/icons` rejects a policy without the tag and the key anywhere below the policy.
 
 ## Formatting requirements
