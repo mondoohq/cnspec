@@ -79,6 +79,7 @@ Our comprehensive collection of security policies covers major platforms and ser
 - **Cisco NX-OS** - `mondoo-cisco-nxos-security.mql.yaml` - Cisco NX-OS security configuration and hardening
 - **F5 BIG-IP** - `mondoo-bigip-security.mql.yaml` - F5 BIG-IP security configuration assessment
 - **Fortinet FortiOS** - `mondoo-fortios-security.mql.yaml` - Fortinet FortiOS firewall and FortiGate appliance security
+- **HPE Aruba Networking AOS-CX** - `mondoo-aoscx-security.mql.yaml` - Secure HPE Aruba Networking AOS-CX switch management access, AAA, SSH, SNMP, NTP, and logging
 - **Juniper JunOS** - `mondoo-junos-security.mql.yaml` - Juniper JunOS network device security hardening
 - **MikroTik RouterOS** - `mondoo-mikrotik-security.mql.yaml` - Secure MikroTik RouterOS routers, switches, and access points
 - **Palo Alto PAN-OS** - `mondoo-panos-security.mql.yaml` - Palo Alto Networks PAN-OS security assessment
