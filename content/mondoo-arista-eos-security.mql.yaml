@@ -120,7 +120,7 @@ policies:
       - title: ACL Security
         filters: |
           asset.platform == "arista-eos"
-          arista.eos.runningConfig.content.contains("ip access-list") == true
+          arista.eos.acls != empty
         checks:
           - uid: mondoo-arista-eos-security-acl-explicit-deny
           - uid: mondoo-arista-eos-security-acl-deny-logging
@@ -131,21 +131,21 @@ queries:
     impact: 90
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-log-08
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-log-06
       compliance/dora: dora-art-10
       compliance/hipaa: hipaa-security-ss164-312-b-audit-controls
       compliance/iso-27001-2022: iso-27001-2022-a-8-16
       compliance/nis-2: nis-2-21-2-b
-      compliance/nist-csf-1: nist-csf-1-de-cm-1
-      compliance/nist-csf-2: nist-csf-2-de-cm-09
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-au-6
-      compliance/nist-sp-800-171: nist-sp-800-171--3-3-1
+      compliance/nist-csf-1: nist-csf-1-pr-pt-1
+      compliance/nist-csf-2: nist-csf-2-pr-ps-04
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-au-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-3-7
       compliance/owasp-top-10-2025: owasp-top-10-2025-a09
-      compliance/pci-dss-4: pcidss-requirement-10-2-1
+      compliance/pci-dss-4: pcidss-requirement-10-6-2
       compliance/soc2-2017: soc2-control-cc7-2-1
       compliance/vda-isa-5: vda-isa-5-5-2-4
     mql: |
-      arista.eos.runningConfig.content.lines.one(_ == /aaa accounting commands all default start-stop/)
+      arista.eos.runningConfig.content.lines.any(_ == /^aaa accounting commands all default start-stop \S/)
     docs:
       desc: |
         This check verifies that every command executed on the switch is recorded to an accounting trail.
@@ -213,7 +213,7 @@ queries:
       compliance/soc2-2017: soc2-control-cc7-2-1
       compliance/vda-isa-5: vda-isa-5-5-2-4
     mql: |
-      arista.eos.runningConfig.content.lines.one(_ == /aaa accounting exec default start-stop/)
+      arista.eos.runningConfig.content.lines.any(_ == /^aaa accounting exec default start-stop \S/)
     docs:
       desc: |
         This check verifies that interactive login and logout events on the switch are recorded to an accounting trail.
@@ -275,7 +275,7 @@ queries:
       compliance/soc2-2017: soc2-control-cc7-2-1
       compliance/vda-isa-5: vda-isa-5-5-2-4
     mql: |
-      arista.eos.runningConfig.content.lines.one(_ == /aaa accounting system default start-stop/)
+      arista.eos.runningConfig.content.lines.any(_ == /^aaa accounting system default start-stop \S/)
     docs:
       desc: |
         This check verifies that device-level events such as reloads and changes to the accounting service itself are recorded to an accounting trail.
@@ -319,7 +319,7 @@ queries:
       - url: https://www.arista.com/en/um-eos/eos-section-aaa-authorization-and-accounting
         title: Arista EOS AAA Configuration Guide
   - uid: mondoo-arista-eos-security-aaa-authentication-enabled
-    title: Ensure AAA authentication is enabled
+    title: Ensure logins authenticate against a central AAA server group
     impact: 95
     tags:
       compliance/bsi-sys-1-5: false
@@ -337,12 +337,13 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-1-4
       compliance/vda-isa-5: vda-isa-5-4-1-3
     mql: |
-      arista.eos.runningConfig.content.lines.any(_ == /^aaa authentication/)
+      arista.eos.aaa.authenticationLogin.where(key == "default").values.flat.contains("group")
+      arista.eos.aaa.defaultLoginPermitsLocalOnly == false
     docs:
       desc: |
         This check verifies that logins to the switch are validated through a configured authentication method rather than left to platform defaults.
 
-        AAA authentication defines the method lists that validate credentials for console and remote logins, normally an external RADIUS or TACACS+ server group with a local fallback. It is configured with statements such as `aaa authentication login default group tacacs+ local`, and this check requires at least one `aaa authentication` statement in the running configuration.
+        AAA authentication defines the method lists that validate credentials for console and remote logins, normally an external RADIUS or TACACS+ server group with a local fallback. It is configured with statements such as `aaa authentication login default group tacacs+ local`. This check requires the default login method list to name a server group ahead of `local`. A switch with no `aaa authentication login default` statement authenticates against the local user database alone, because that is the EOS default, and fails.
 
         **Why this matters**
 
@@ -355,10 +356,10 @@ queries:
         Verify AAA authentication from the Arista EOS CLI:
 
         1. Connect to the switch and enter privileged EXEC mode.
-        2. Run `show running-config section aaa` to display the AAA configuration.
-        3. Confirm at least one `aaa authentication` line is present.
+        2. Run `show running-config section aaa authentication login` to display the login method lists.
+        3. Confirm an `aaa authentication login default` line is present and that its first method is `group` followed by a RADIUS or TACACS+ server group.
 
-        If one or more `aaa authentication` lines are configured, the check passes. If no `aaa authentication` lines exist, the check fails.
+        If the default login method list starts with a server group, the check passes. If the line is absent, or `local` comes before any server group, the check fails.
       remediation:
         - id: cli
           desc: |
@@ -477,7 +478,7 @@ queries:
       desc: |
         This check verifies that commands entered on the serial console are subject to authorization rather than accepted unconditionally.
 
-        Console authorization applies the configured command and exec authorization method lists to sessions arriving on the serial port, so a console user is held to the same role restrictions as a remote one. It is enabled with `aaa authorization console` in global configuration mode, and this check requires it to be active.
+        Console authorization applies the configured command and exec authorization method lists to sessions arriving on the serial port, so a console user is held to the same role restrictions as a remote one. It is enabled with `aaa authorization serial-console` in global configuration mode, and this check requires it to be active.
 
         **Why this matters**
 
@@ -613,9 +614,7 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-1-4
       compliance/vda-isa-5: vda-isa-5-4-1-3
     mql: |
-      arista.eos.runningConfig
-        .section(name: "management console").content.lines
-        .any(_ == /^\s+idle-timeout [1-9]\d*/)
+      arista.eos.consoleSettings.idleTimeout > 0
     docs:
       desc: |
         This check verifies that idle sessions on the serial console are disconnected automatically.
@@ -690,11 +689,11 @@ queries:
 
         **Why this matters**
 
-        EOS derives the fully qualified name from the hostname and the domain, and it will not generate SSH host keys or a self-signed certificate without one. On a switch missing the domain, the SSH service may fail to start and the management API cannot present TLS, so the two encrypted management paths that every other control in this policy assumes are simply unavailable.
+        EOS derives the fully qualified name from the hostname and the domain. That name is what appears in certificates issued to the switch and what a client checks when it connects to the management API. Without it, certificate verification cannot be made to succeed against a name the client can resolve, which pushes operators and automation into disabling verification, at which point encrypted management stops defending against an in-path attacker at all.
 
-        The fully qualified name is also what appears in certificates and what a client checks when it connects. Without it, certificate verification cannot be made to succeed, which pushes operators and automation into disabling verification, at which point encrypted management stops defending against an in-path attacker at all.
+        The domain also makes the device identifiable in log and accounting records collected from many sites, where two switches that share a short hostname are otherwise indistinguishable.
 
-        Set the domain before enabling SSH or the management API, and verify with `show hostname` that the fully qualified name now includes the suffix. A companion check in this policy covers the hostname that this name is built from.
+        Verify with `show hostname` that the fully qualified name includes the suffix after setting it. A companion check in this policy covers the hostname that this name is built from.
       audit: |
         Verify the domain name from the Arista EOS CLI:
 
@@ -763,10 +762,10 @@ queries:
         Verify the remote session idle timeout from the Arista EOS CLI:
 
         1. Connect to the switch and enter privileged EXEC mode.
-        2. Run `show management ssh` to display the SSH service configuration.
-        3. Confirm the idle timeout is set to a nonzero value.
+        2. Run `show running-config section management ssh` to display the SSH service configuration.
+        3. Confirm an `idle-timeout` line with a nonzero value is present.
 
-        If a nonzero idle timeout is configured for the SSH service, the check passes. If the idle timeout is 0, the check fails.
+        If a nonzero idle timeout is configured for the SSH service, the check passes. If the `idle-timeout` line is absent or set to 0, the check fails.
       remediation:
         - id: cli
           desc: |
@@ -826,7 +825,7 @@ queries:
 
         The name is also the identity an operator sees at the prompt before typing a command. Generic names are directly responsible for the classic outage in which a change meant for a lab device lands on a production one, because nothing on the screen distinguished them.
 
-        Encode enough to locate the device, such as site, row, and role, and keep the convention consistent across the fleet so tooling can parse it. The hostname is a prerequisite for SSH host key generation as well, so a device left at the default may be unable to bring up the SSH service at all.
+        Encode enough to locate the device, such as site, row, and role, and keep the convention consistent across the fleet so tooling can parse it.
       audit: |
         Verify the hostname from the Arista EOS CLI:
 
@@ -927,7 +926,6 @@ queries:
   - uid: mondoo-arista-eos-security-https-enabled
     title: Ensure HTTPS is enabled for management API
     impact: 85
-    filters: arista.eos.runningConfig.content.contains("management api http-commands") == true
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-04
@@ -947,9 +945,9 @@ queries:
       arista.eos.eapi.httpsServerConfigured == true
     docs:
       desc: |
-        This check verifies that the management API, where it is in use, serves requests over TLS.
+        This check verifies that the management API serves requests over TLS.
 
-        This check applies only to switches whose configuration contains a `management api http-commands` block, and it requires the HTTPS listener within that block to be enabled with `protocol https`. Switches that do not run the API at all are out of scope.
+        The `management api http-commands` sub-mode selects which transports the API listens on, and this check requires the HTTPS listener to be enabled with `protocol https`.
 
         **Why this matters**
 
@@ -962,10 +960,10 @@ queries:
         Verify the management API HTTPS listener from the Arista EOS CLI:
 
         1. Connect to the switch and enter privileged EXEC mode.
-        2. Run `show running-config section management api http-commands` to display the management API configuration.
-        3. Confirm the output includes a `protocol https` line.
+        2. Run `show management api http-commands` to display the state of each listener.
+        3. Confirm the output reads `HTTPS server: running`.
 
-        If the management API has `protocol https` configured, the check passes. If it is absent, the check fails.
+        If the HTTPS server is running, the check passes. If it is shut down, the check fails.
       remediation:
         - id: cli
           desc: |
@@ -1080,7 +1078,7 @@ queries:
       desc: |
         This check verifies that the switch retains recent log messages in local memory.
 
-        Buffered logging is configured with `logging buffered <size> <severity>` in global configuration mode, for example `logging buffered 100000 informational`. This check requires such an entry in the running configuration.
+        Buffered logging is configured with `logging buffered <size> <severity>` in global configuration mode, for example `logging buffered 100000 informational`. EOS enables a small buffer by default, so this check fails only where buffered logging has been turned off with `no logging buffered`.
 
         **Why this matters**
 
@@ -1093,10 +1091,10 @@ queries:
         Verify buffered logging from the Arista EOS CLI:
 
         1. Connect to the switch and enter privileged EXEC mode.
-        2. Run `show running-config | include logging buffered` to display the buffered logging configuration.
-        3. Confirm a `logging buffered` line is present.
+        2. Run `show running-config all | include logging buffered` to display the buffered logging configuration, defaults included.
+        3. Confirm the output shows a `logging buffered` line with a size and severity.
 
-        If a `logging buffered` line is configured, the check passes. If it is absent, the check fails.
+        If buffered logging is configured, the check passes. If the output shows `no logging buffered`, the check fails.
       remediation:
         - id: cli
           desc: |
@@ -1150,7 +1148,7 @@ queries:
 
         Because the collector simply stops receiving records rather than receiving an error, a switch silenced this way looks identical to one that is merely quiet. That makes `no logging on` a useful move for an attacker with configuration access and an easy oversight for an operator who turned it off during a noisy troubleshooting session and never reverted.
 
-        If logging was disabled deliberately to control volume, the right instrument is per-subsystem severity levels rather than a global off switch, which a companion check in this policy covers. Save the configuration after restoring logging, because the running configuration is what took effect and the startup configuration may still carry the disable.
+        If logging was disabled deliberately to control volume, the right instrument is per-facility `logging level` settings rather than a global off switch. Save the configuration after restoring logging, because the running configuration is what took effect and the startup configuration may still carry the disable.
       audit: |
         Verify that logging is enabled from the Arista EOS CLI:
 
@@ -1244,7 +1242,7 @@ queries:
       - url: https://www.arista.com/en/um-eos/eos-logging
         title: Arista EOS Logging Configuration Guide
   - uid: mondoo-arista-eos-security-logging-level-configured
-    title: Ensure appropriate logging level is configured
+    title: Ensure informational messages are forwarded to remote syslog
     impact: 80
     tags:
       compliance/bsi-sys-1-5: false
@@ -1262,39 +1260,36 @@ queries:
       compliance/soc2-2017: soc2-control-cc7-2-1
       compliance/vda-isa-5: vda-isa-5-5-2-4
     mql: |
-      arista.eos.runningConfig.content.lines.any(_ == /logging level/)
+      arista.eos.logging.trapSeverity == /^(informational|debugging)$/
     docs:
       desc: |
-        This check verifies that per-subsystem logging severities are set explicitly rather than left at defaults.
+        This check verifies that the severity threshold for messages sent to remote syslog collectors keeps informational messages.
 
-        EOS assigns each logging facility a severity threshold, adjusted with statements such as `logging level all informational` and `logging level security debugging`. This check requires at least one explicit `logging level` statement in the running configuration.
+        The threshold is set with `logging trap <severity>` in global configuration mode, and only messages at that severity or more severe leave the switch. This check requires the threshold to be `informational` or `debugging`. EOS uses `informational` by default, so the check fails where the threshold has been raised or remote logging has been turned off with `no logging trap`.
 
         **Why this matters**
 
-        Defaults are tuned for operational noise, not for investigation. Left alone, several facilities log only at warning and above, so security-relevant events that sit at informational, session establishment, authorization decisions, access list matches, never reach the buffer or the collector at all. Nothing looks broken. The records simply do not exist when an investigation asks for them.
+        EOS writes each command accounting record as an informational message, `ACCOUNTING-6-CMD`. A threshold of `notifications` or anything more severe still forwards login, logout, and configuration-session events, so the collector looks healthy, but it silently drops the record of every command typed on the switch. The accounting trail then exists only in the local buffer, which anyone holding the device can clear.
 
-        Setting the levels explicitly also documents the intent. A switch whose configuration states what it captures can be audited against that statement, whereas one relying on defaults captures whatever the EOS release it happens to be running considers reasonable, and that can change across upgrades on a device that stays in service for a decade.
-
-        Levels are a genuine tradeoff, since debugging across every facility can flood a collector and load the switch's own control plane. Raise verbosity for the security facility, hold the general level at informational, and confirm the receiving collector is sized for the resulting rate.
+        Raising the threshold is the usual response to a noisy collector, and it is made on the switch where nobody reviewing the collector sees it. Hold the remote threshold at informational and control volume with per-facility `logging level` settings or filtering on the collector instead.
       audit: |
-        Verify configured logging levels from the Arista EOS CLI:
+        Verify the remote syslog severity threshold from the Arista EOS CLI:
 
         1. Connect to the switch and enter privileged EXEC mode.
-        2. Run `show running-config | include logging level` to display configured logging levels.
-        3. Confirm at least one `logging level` line is present.
+        2. Run `show running-config all | include logging trap` to display the threshold, defaults included.
+        3. Confirm the output reads `logging trap informational` or `logging trap debugging`.
 
-        If one or more `logging level` entries are configured, the check passes. If no `logging level` line exists, the check fails.
+        If the threshold is informational or debugging, the check passes. If it is set to a more severe level or shows `no logging trap`, the check fails.
       remediation:
         - id: cli
           desc: |
             **Using the CLI**
 
-            Enter global configuration mode and set logging levels for important subsystems, choosing informational or debugging as appropriate:
+            Enter global configuration mode and set the remote syslog threshold to informational:
 
             ```text
             configure
-            logging level all informational
-            logging level security debugging
+            logging trap informational
             ```
 
             Return to privileged EXEC mode and save the configuration. EOS does not save running-config automatically, so without this step the change is lost on the next reload:
@@ -1528,9 +1523,7 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-1-4
       compliance/vda-isa-5: vda-isa-5-4-1-3
     mql: |
-      arista.eos.runningConfig.content.lines
-        .where(_ == /aaa authentication/)
-        .one(_ == /aaa authentication login console group/)
+      arista.eos.runningConfig.content.lines.any(_ == /^aaa authentication login console group /)
     docs:
       desc: |
         This check verifies that console logins are directed to an authentication server group capable of enforcing a second factor.
@@ -1600,11 +1593,11 @@ queries:
       desc: |
         This check verifies that no local account on the switch can log in without presenting a password.
 
-        EOS allows an account to be created with the `nopassword` attribute, which accepts any login attempt for that username with no credential at all. This check requires that no account carries it. Setting a secret with `username <name> secret 0 <password>` replaces the attribute.
+        EOS allows an account to be created with the `nopassword` attribute, which gives it no password at all. This check requires that no account carries it, including accounts that log in with an SSH key. Setting a secret with `username <name> secret 0 <password>` replaces the attribute.
 
         **Why this matters**
 
-        A `nopassword` account is not a weak password, it is the absence of authentication. Anyone who can open a session to the management address, and anyone holding a console cable, becomes that user by typing the name. If the account also carries privilege 15, the first command can add a mirroring session copying a production VLAN to a port the attacker controls, and the network keeps forwarding as though nothing happened.
+        A `nopassword` account is not a weak password, it is the absence of one. EOS refuses password logins over SSH for such an account by default, so remotely it can only use an SSH key, but that protection rests on a single global setting: `aaa authentication policy local allow-nopassword-remote-login` lifts it, and from then on anyone who can reach the management address becomes that user by typing the name. The console does not apply that restriction. If the account also carries privilege 15, the first command can add a mirroring session copying a production VLAN to a port the attacker controls, and the network keeps forwarding as though nothing happened.
 
         These accounts are almost always accidental leftovers: a placeholder created during a bring-up, a template applied to a lab switch that was later promoted to production, an account whose secret was removed during troubleshooting and never restored. Because they never fail a login, nothing ever draws attention to them, and a switch installed a decade ago can still be carrying one.
 
@@ -1647,7 +1640,7 @@ queries:
       - url: https://www.arista.com/en/um-eos/eos-user-security
         title: Arista EOS User Security Configuration Guide
   - uid: mondoo-arista-eos-security-ntp-enabled
-    title: Ensure NTP synchronization is enabled
+    title: Ensure the clock is synchronized with NTP
     impact: 85
     tags:
       compliance/bsi-sys-1-5: false
@@ -1664,12 +1657,15 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-10-2-1
       compliance/soc2-2017: soc2-control-cc7-2-1
       compliance/vda-isa-5: vda-isa-5-5-2-4
-    mql: arista.eos.ntp.status != "disabled"
+    mql: |
+      arista.eos {
+        ntp.status == "synchronised"
+      }
     docs:
       desc: |
         This check verifies that the switch is synchronizing its clock with a time source.
 
-        This check requires the NTP subsystem to report a state other than disabled, which follows from configuring at least one `ntp server <address>` in global configuration mode.
+        This check requires `show ntp status` to report the clock as synchronised to a server. A switch with no `ntp server` configured reports NTP as disabled, and one whose servers are configured but unreachable reports it as unsynchronised. Both fail.
 
         **Why this matters**
 
@@ -1683,9 +1679,9 @@ queries:
 
         1. Connect to the switch and enter privileged EXEC mode.
         2. Run `show ntp status` to display the current NTP synchronization state.
-        3. Confirm the status reports the clock as synchronized rather than disabled.
+        3. Confirm the output starts with `synchronised to NTP server`.
 
-        If NTP reports a synchronized state, the check passes. If NTP is disabled, the check fails.
+        If NTP reports a synchronised state, the check passes. If it reports `unsynchronised` or `NTP is disabled`, the check fails.
       remediation:
         - id: cli
           desc: |
@@ -1794,7 +1790,7 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-1-9
       compliance/vda-isa-5: vda-isa-5-4-1-3
     mql: |
-      arista.eos.passwordPolicy.minimumLength > 0
+      arista.eos.passwordPolicy.minimumLength > 0 || arista.eos.runningConfig.content.lines.any(_ == /^\s+password minimum length [1-9]\d*$/)
     docs:
       desc: |
         This check verifies that the switch enforces a minimum length on local account passwords.
@@ -1841,7 +1837,7 @@ queries:
       - url: https://www.arista.com/en/um-eos/eos-user-security
         title: Arista EOS User Security Configuration Guide
   - uid: mondoo-arista-eos-security-service-password-encryption
-    title: Ensure password encryption service is enabled
+    title: Ensure every local account secret is stored as a SHA-512 hash
     impact: 80
     tags:
       compliance/bsi-sys-1-5: false
@@ -1924,13 +1920,12 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-1-9
       compliance/vda-isa-5: vda-isa-5-4-1-3
     mql: |
-      arista.eos.runningConfig.content.contains("snmp-server community public") == false
-      arista.eos.runningConfig.content.contains("snmp-server community private") == false
+      arista.eos.snmpCommunities.none(name == "public" || name == "private")
     docs:
       desc: |
         This check verifies that the switch does not use the well-known default SNMP community strings.
 
-        This check requires that neither `snmp-server community public` nor `snmp-server community private` appears in the running configuration. Remove them with `no snmp-server community public` and replace them using `snmp-server community <unique-string> ro`.
+        This check requires that no community string is named exactly `public` or `private`. Remove them with `no snmp-server community public` and replace them using `snmp-server community <unique-string> ro`.
 
         **Why this matters**
 
@@ -1979,7 +1974,6 @@ queries:
   - uid: mondoo-arista-eos-security-snmp-traps-secured
     title: Ensure SNMP traps are properly secured
     impact: 70
-    filters: arista.eos.snmp.enabled == true
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-02
@@ -2001,7 +1995,7 @@ queries:
       desc: |
         This check verifies that SNMP trap destinations are not configured with default community strings.
 
-        This check applies where SNMP is enabled and requires that no `snmp-server host` entry names `public` or `private`. Trap hosts are declared in global configuration mode, and the secure form points the destination at an SNMPv3 user with `snmp-server host <server-ip> version 3 priv <username>`.
+        This check requires that no `snmp-server host` entry names `public` or `private`, and passes where no trap destination is configured. Trap hosts are declared in global configuration mode, and the secure form points the destination at an SNMPv3 user with `snmp-server host <server-ip> version 3 priv <username>`.
 
         **Why this matters**
 
@@ -2034,9 +2028,11 @@ queries:
             If your monitoring system cannot yet accept SNMPv3, replacing the default community string with a strong, unique one is only a minimum stopgap that does not encrypt the traffic:
 
             ```text
-            no snmp-server host <server-ip>
+            no snmp-server host <server-ip> version 2c public
             snmp-server host <server-ip> version 2c <secure-community-string>
             ```
+
+            The `no snmp-server host` line has to repeat the version and community of the entry it removes.
 
             Verify with `show running-config | include snmp-server host` that no destination uses the `public` or `private` community string.
 
@@ -2081,7 +2077,7 @@ queries:
 
         SSH is also the prerequisite for the authentication methods worth having. Public key authentication removes the shared password from the process entirely, which is what lets automation reach the device without a reusable secret sitting in a configuration file.
 
-        The service needs host keys, and EOS cannot generate them until the device has both a hostname and a DNS domain name, so a switch missing either may leave SSH unable to start. Companion checks in this policy cover both. Harden the service from the same sub-mode by restricting the ciphers and key exchange algorithms it will negotiate, and disable Telnet once SSH access is confirmed working.
+        Harden the service from the same sub-mode by setting an idle timeout and restricting the ciphers and key exchange algorithms it will negotiate, and disable Telnet once SSH access is confirmed working.
       audit: |
         Verify the SSH management service from the Arista EOS CLI:
 
@@ -2094,8 +2090,6 @@ queries:
         - id: cli
           desc: |
             **Using the CLI**
-
-            Before enabling SSH, make sure the prerequisites for key generation are in place. SSH needs host keys, and EOS cannot generate them until the device has a hostname and a DNS domain name configured, so the SSH service may not come up otherwise. Set the hostname and domain name first if they are missing. The domain name is covered by a separate check in this policy.
 
             Enter global configuration mode, then the `management ssh` sub-mode, and enable the service:
 
@@ -2215,7 +2209,7 @@ queries:
       desc: |
         This check verifies that the switch stamps its records in UTC or GMT rather than a local time zone.
 
-        The zone is set with `clock timezone UTC` in global configuration mode, and this check requires that statement in the running configuration.
+        The zone is set with `clock timezone <zone>` in global configuration mode. EOS uses UTC when no zone is configured, and this check requires the effective zone to be UTC or GMT.
 
         **Why this matters**
 
@@ -2228,10 +2222,10 @@ queries:
         Verify the system timezone from the Arista EOS CLI:
 
         1. Connect to the switch and enter privileged EXEC mode.
-        2. Run `show running-config | include clock timezone` to display the configured timezone.
-        3. Confirm a `clock timezone UTC` or `clock timezone GMT` line is present.
+        2. Run `show clock` to display the current time and the zone in effect.
+        3. Confirm the `Timezone:` line reads `UTC` or `GMT`.
 
-        If the timezone is set to UTC or GMT, the check passes. If it is set to another zone or unset, the check fails.
+        If the timezone is UTC or GMT, the check passes. If it is any other zone, the check fails.
       remediation:
         - id: cli
           desc: |
@@ -2871,7 +2865,7 @@ queries:
   - uid: mondoo-arista-eos-security-acl-explicit-deny
     title: Ensure ACLs contain explicit deny entries
     impact: 85
-    filters: arista.eos.runningConfig.content.contains("ip access-list") == true
+    filters: arista.eos.acls != empty
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
@@ -2889,13 +2883,13 @@ queries:
       compliance/vda-isa-5: vda-isa-5-5-2-7
     mql: |
       arista.eos.acls.all(
-        entries.any(action == "deny")
+        entries.where(action != "remark").last.action == "deny"
       )
     docs:
       desc: |
         This check verifies that each access control list ends with a deny rule that is written down rather than merely implied.
 
-        Every EOS access list already denies anything it does not permit, but that implicit behavior cannot be logged or reviewed. This check requires each list to contain at least one explicit `deny` entry, added in the `ip access-list standard` sub-mode with a sequence number higher than every existing entry so it stays last.
+        Every EOS access list already denies anything it does not permit, but that implicit behavior cannot be logged or reviewed. This check requires the last entry of each IPv4 and IPv6 list, remarks aside, to be an explicit `deny`, added with a sequence number higher than every existing entry so it stays last. A list with no entries fails.
 
         **Why this matters**
 
@@ -2909,20 +2903,31 @@ queries:
 
         1. Connect to the switch and enter privileged EXEC mode.
         2. Run `show ip access-lists` to display every configured ACL and its entries.
-        3. Confirm each ACL contains at least one explicit `deny` entry.
+        3. Run `show ipv6 access-lists` to display every IPv6 ACL and its entries.
+        4. Confirm the highest-numbered entry of each ACL, ignoring remarks, is a `deny` entry.
 
-        If every ACL has at least one explicit deny entry, the check passes. If any ACL has no explicit deny entry, the check fails.
+        If every ACL ends with an explicit deny entry, the check passes. If any ACL ends with a permit entry or has no entries, the check fails.
       remediation:
         - id: cli
           desc: |
             **Using the CLI**
 
-            Add an explicit deny entry at the end of each standard ACL. Use a sequence number higher than every existing entry so the deny stays last. Enter global configuration mode, then the `ip access-list standard` sub-mode, and add the entry:
+            Add an explicit deny entry at the end of each ACL. Use a sequence number higher than every existing entry so the deny stays last. Enter global configuration mode, then the sub-mode for the list, and add the entry. A standard list takes a source only:
 
             ```text
             configure
             ip access-list standard <acl-name>
             <high-sequence-number> deny any log
+            ```
+
+            An extended IPv4 list and an IPv6 list name the protocol, source, and destination:
+
+            ```text
+            ip access-list <acl-name>
+            <high-sequence-number> deny ip any any log
+            exit
+            ipv6 access-list <acl-name>
+            <high-sequence-number> deny ipv6 any any log
             ```
 
             The `log` keyword ensures denied traffic is recorded for security monitoring. This entry matches the same traffic as the implicit deny, so it does not change forwarding behavior for ACLs already ending in the implicit deny.
@@ -2939,7 +2944,7 @@ queries:
   - uid: mondoo-arista-eos-security-acl-deny-logging
     title: Ensure ACL deny entries have logging enabled
     impact: 75
-    filters: arista.eos.runningConfig.content.contains("ip access-list") == true
+    filters: arista.eos.acls != empty
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-log-08
@@ -2976,7 +2981,7 @@ queries:
         Verify ACL deny logging from the Arista EOS CLI:
 
         1. Connect to the switch and enter privileged EXEC mode.
-        2. Run `show ip access-lists` to display every configured ACL and its entries.
+        2. Run `show ip access-lists` and `show ipv6 access-lists` to display every configured ACL and its entries.
         3. Confirm every `deny` entry includes the `log` keyword.
 
         If every ACL deny entry has logging enabled, the check passes. If any deny entry lacks the `log` keyword, the check fails.
@@ -2991,12 +2996,21 @@ queries:
             show ip access-lists
             ```
 
-            Re-enter each deny entry with its existing sequence number and append the `log` keyword. Standard ACL entries take only a source address. Enter global configuration mode, then the `ip access-list standard` sub-mode, and re-enter the deny entries:
+            EOS rejects an entry whose sequence number is already in use, so remove each deny entry and enter it again at the same sequence number with the `log` keyword appended. Enter global configuration mode, then the sub-mode for the list. A standard list takes a source only:
 
             ```text
             configure
             ip access-list standard <acl-name>
+            no <sequence-number>
             <sequence-number> deny <source> log
+            ```
+
+            An extended IPv4 list and an IPv6 list carry the protocol and destination as well:
+
+            ```text
+            ip access-list <acl-name>
+            no <sequence-number>
+            <sequence-number> deny ip <source> <destination> log
             ```
 
             Return to privileged EXEC mode and save the configuration. EOS does not save running-config automatically, so without this step the change is lost on the next reload:
