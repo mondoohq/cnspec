@@ -1,0 +1,2375 @@
+# Copyright Mondoo, Inc. 2024, 2026
+# SPDX-License-Identifier: BUSL-1.1
+policies:
+  - uid: mondoo-cisco-apic-security
+    name: Mondoo Cisco APIC Security
+    version: 1.0.0
+    license: BUSL-1.1
+    tags:
+      mondoo.com/category: security
+      mondoo.com/platform: cisco-apic,networkdevice
+      mondoo.com/icon: cisco
+    require:
+      - provider: apic
+    authors:
+      - name: Mondoo, Inc.
+        email: hello@mondoo.com
+    summary: Secure Cisco ACI fabrics through their APIC controllers
+    docs:
+      desc: |
+        The Mondoo Cisco APIC Security policy identifies misconfigurations on Cisco Application Policy Infrastructure Controller clusters and the Cisco ACI fabrics they manage. The APIC is the single point of control for every leaf and spine switch in the fabric, so an attacker who reaches its management plane can rewrite tenant policy, open contracts between segments, or take the whole fabric offline. This policy helps organizations find the hardening gaps that make that easier before they are exploited.
+
+        This policy provides security checks across key areas of an ACI fabric:
+
+        - **Management access**: Telnet, HTTP, and the browser SSH console disabled; TLS versions, HTTPS ciphers, and the HTTPS certificate; SSH key exchange and MAC algorithms; strict security on the out-of-band subnet; GUI idle timeout
+        - **Authentication**: Remote AAA as the default login realm, LDAP over verified TLS, password strength, length, and history, account lockout, and login banners
+        - **Fabric security**: COOP strict mode, OpFlex TLS and client authentication, endpoint subnet enforcement, rogue endpoint control, loop protection, MCP, and domain validation
+        - **Software lifecycle**: Controllers on an APIC release that still receives security fixes
+
+        Have suggestions for new checks in this policy? Visit our [cnspec repository](https://github.com/mondoohq/cnspec).
+
+    groups:
+      - title: Management Access
+        filters: asset.platform == "cisco-apic"
+        checks:
+          - uid: mondoo-cisco-apic-security-telnet-disabled
+          - uid: mondoo-cisco-apic-security-http-disabled
+          - uid: mondoo-cisco-apic-security-shellinabox-disabled
+          - uid: mondoo-cisco-apic-security-https-tls-1-2-minimum
+          - uid: mondoo-cisco-apic-security-https-weak-ciphers-disabled
+          - uid: mondoo-cisco-apic-security-https-certificate-ca-signed
+          - uid: mondoo-cisco-apic-security-https-certificate-not-expiring
+          - uid: mondoo-cisco-apic-security-https-certificate-key-strength
+          - uid: mondoo-cisco-apic-security-ssh-strong-macs
+          - uid: mondoo-cisco-apic-security-ssh-strong-kex
+          - uid: mondoo-cisco-apic-security-oob-strict-security
+          - uid: mondoo-cisco-apic-security-gui-idle-timeout
+      - title: Authentication
+        filters: asset.platform == "cisco-apic"
+        checks:
+          - uid: mondoo-cisco-apic-security-remote-authentication
+          - uid: mondoo-cisco-apic-security-ldap-tls-strict
+          - uid: mondoo-cisco-apic-security-password-strength-check
+          - uid: mondoo-cisco-apic-security-password-minimum-length
+          - uid: mondoo-cisco-apic-security-password-history
+          - uid: mondoo-cisco-apic-security-login-lockout
+          - uid: mondoo-cisco-apic-security-login-banner
+      - title: Fabric Security
+        filters: asset.platform == "cisco-apic"
+        checks:
+          - uid: mondoo-cisco-apic-security-coop-strict-mode
+          - uid: mondoo-cisco-apic-security-opflex-tls
+          - uid: mondoo-cisco-apic-security-opflex-client-authentication
+          - uid: mondoo-cisco-apic-security-enforce-subnet-check
+          - uid: mondoo-cisco-apic-security-rogue-endpoint-control
+          - uid: mondoo-cisco-apic-security-endpoint-loop-protection
+          - uid: mondoo-cisco-apic-security-mcp-enabled
+          - uid: mondoo-cisco-apic-security-domain-validation
+      - title: Software Lifecycle
+        filters: asset.platform == "cisco-apic"
+        checks:
+          - uid: mondoo-cisco-apic-security-controller-release-supported
+    scoring_system: average
+queries:
+  # The `api` remediations use the APIC REST API. Cisco publishes no OpenAPI
+  # specification for it, so no command validator covers these blocks. Every
+  # class, attribute, and enumerated value in their request bodies was checked
+  # against Cisco's published APIC 6.1 Management Information Model.
+  - uid: mondoo-cisco-apic-security-telnet-disabled
+    title: Ensure Telnet is disabled in every management access policy
+    impact: 85
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-2-ii-transmission-security-encryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a04
+      compliance/pci-dss-4: pcidss-requirement-2-2-7
+      compliance/soc2-2017: soc2-control-cc6-6-2
+      compliance/vda-isa-5: vda-isa-5-5-1-2
+    mql: |
+      cisco.apic.management.accessPolicies != empty
+      cisco.apic.management.accessPolicies.all(telnet == null || telnet.enabled == false)
+    docs:
+      desc: |
+        This check verifies that no management access policy lets administrators log in to the controllers and switches over Telnet.
+
+        ACI groups the management services of the fabric into management access policies. The policy named `default` applies to every pod unless a pod policy group selects another one, and each policy has its own Telnet setting. The check requires Telnet to be disabled in every policy. A policy without a Telnet object passes, because Telnet is disabled by default.
+
+        **Why this matters**
+
+        Telnet sends the user name, the password, and every command of the session in clear text. Anyone who can capture traffic between an administrator and the out-of-band management network reads the credentials of an account that can reconfigure the whole fabric, and can inject commands into a live session.
+
+        Cisco removed Telnet support in APIC release 6.0(2) and recommends keeping it disabled on earlier releases. Use SSH for command line access.
+      audit: |
+        ### Audit via the APIC GUI
+
+        1. Log in to the APIC GUI.
+        2. Navigate to **Fabric > Fabric Policies > Policies > Pod > Management Access**.
+        3. Open each management access policy, starting with **default**, and review the **Telnet** section.
+
+        The check passes when **Admin State** is **Disabled** for Telnet in every policy.
+
+        ### Audit via the APIC REST API
+
+        1. Log in to the REST API and keep the session cookie:
+
+           ```bash
+           curl -sf -c apic-cookie.txt -X POST "https://apic.example.com/api/aaaLogin.json" \
+             -d '{"aaaUser":{"attributes":{"name":"admin","pwd":"<password>"}}}'
+           ```
+
+        2. List the Telnet settings of every management access policy:
+
+           ```bash
+           curl -sf -b apic-cookie.txt "https://apic.example.com/api/class/commTelnet.json"
+           ```
+
+        The check passes when every returned `commTelnet` object has `adminSt` set to `disabled`.
+      remediation:
+        - id: console
+          desc: |
+            **Using the APIC GUI**
+
+            1. Navigate to **Fabric > Fabric Policies > Policies > Pod > Management Access**.
+            2. Select the management access policy, starting with **default**.
+            3. In the **Telnet** section, set **Admin State** to **Disabled**.
+            4. Click **Submit**.
+            5. Repeat for every other management access policy.
+        - id: api
+          desc: |
+            **Using the APIC REST API**
+
+            Log in, then disable Telnet in the policy. The example changes the `default` policy; for another policy replace `comm-default` with `comm-<policy-name>`:
+
+            ```bash
+            curl -sf -c apic-cookie.txt -X POST "https://apic.example.com/api/aaaLogin.json" \
+              -d '{"aaaUser":{"attributes":{"name":"admin","pwd":"<password>"}}}'
+            curl -sf -b apic-cookie.txt -X POST "https://apic.example.com/api/mo/uni/fabric/comm-default/telnet.json" \
+              -d '{"commTelnet":{"attributes":{"adminSt":"disabled"}}}'
+            ```
+    refs:
+      - url: https://www.cisco.com/c/en/us/td/docs/dcn/whitepapers/cisco-aci-hardening.html
+        title: Cisco ACI Hardening
+  - uid: mondoo-cisco-apic-security-http-disabled
+    title: Ensure the HTTP server is disabled in every management access policy
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-2-ii-transmission-security-encryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a04
+      compliance/pci-dss-4: pcidss-requirement-2-2-7
+      compliance/soc2-2017: soc2-control-cc6-6-2
+      compliance/vda-isa-5: vda-isa-5-5-1-2
+    mql: |
+      cisco.apic.management.accessPolicies != empty
+      cisco.apic.management.accessPolicies.all(httpServer == null || httpServer.enabled == false)
+    docs:
+      desc: |
+        This check verifies that the controllers and switches do not serve the APIC GUI and REST API over unencrypted HTTP.
+
+        Each management access policy has an HTTP server setting next to the HTTPS one. The check requires HTTP to be disabled in every policy. A policy without an HTTP object passes, because HTTP is disabled by default. Redirecting HTTP to HTTPS does not pass the check: the server still listens on port 80, and an API client that posts its login there sends the password before any redirect happens.
+
+        **Why this matters**
+
+        The APIC login exchanges a user name and password for a session token, and every later REST call carries that token in a cookie. Over HTTP both travel in clear text. An attacker on the management network captures the token and replays it with the full rights of the administrator until it expires, or captures the password itself.
+
+        Cisco ships HTTP disabled and recommends using HTTPS only. Automation that still targets `http://` should be moved to `https://` before HTTP is turned off.
+      audit: |
+        ### Audit via the APIC GUI
+
+        1. Log in to the APIC GUI.
+        2. Navigate to **Fabric > Fabric Policies > Policies > Pod > Management Access**.
+        3. Open each management access policy, starting with **default**, and review the **HTTP** section.
+
+        The check passes when **Admin State** is **Disabled** for HTTP in every policy.
+
+        ### Audit via the APIC REST API
+
+        1. Log in to the REST API and keep the session cookie:
+
+           ```bash
+           curl -sf -c apic-cookie.txt -X POST "https://apic.example.com/api/aaaLogin.json" \
+             -d '{"aaaUser":{"attributes":{"name":"admin","pwd":"<password>"}}}'
+           ```
+
+        2. List the HTTP settings of every management access policy:
+
+           ```bash
+           curl -sf -b apic-cookie.txt "https://apic.example.com/api/class/commHttp.json"
+           ```
+
+        The check passes when every returned `commHttp` object has `adminSt` set to `disabled`.
+      remediation:
+        - id: console
+          desc: |
+            **Using the APIC GUI**
+
+            1. Navigate to **Fabric > Fabric Policies > Policies > Pod > Management Access**.
+            2. Select the management access policy, starting with **default**.
+            3. In the **HTTP** section, set **Admin State** to **Disabled**.
+            4. Click **Submit**.
+            5. Repeat for every other management access policy.
+        - id: api
+          desc: |
+            **Using the APIC REST API**
+
+            Log in, then disable HTTP in the policy. The example changes the `default` policy; for another policy replace `comm-default` with `comm-<policy-name>`:
+
+            ```bash
+            curl -sf -c apic-cookie.txt -X POST "https://apic.example.com/api/aaaLogin.json" \
+              -d '{"aaaUser":{"attributes":{"name":"admin","pwd":"<password>"}}}'
+            curl -sf -b apic-cookie.txt -X POST "https://apic.example.com/api/mo/uni/fabric/comm-default/http.json" \
+              -d '{"commHttp":{"attributes":{"adminSt":"disabled"}}}'
+            ```
+    refs:
+      - url: https://www.cisco.com/c/en/us/td/docs/dcn/whitepapers/cisco-aci-hardening.html
+        title: Cisco ACI Hardening
+  - uid: mondoo-cisco-apic-security-shellinabox-disabled
+    title: Ensure the Shell In A Box web console is disabled
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-04
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-9
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-pt-3
+      compliance/nist-csf-2: nist-csf-2-pr-ps-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-4-6
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a02
+      compliance/pci-dss-4: pcidss-requirement-2-2-4
+      compliance/soc2-2017: soc2-control-cc6-6-1
+      compliance/vda-isa-5: vda-isa-5-4-1-2
+    mql: |
+      cisco.apic.management.accessPolicies != empty
+      cisco.apic.management.accessPolicies.all(shellinabox == null || shellinabox.enabled == false)
+    docs:
+      desc: |
+        This check verifies that no management access policy enables Shell In A Box, the browser-based SSH console of the controllers.
+
+        Shell In A Box serves a terminal session to the controller CLI through a web page, so a browser becomes a second way into the shell next to the SSH server. It is configured in the **SSH access via WEB** section of each management access policy and is disabled by default. The check requires it to be disabled in every policy. A policy without the object passes.
+
+        **Why this matters**
+
+        Every additional login surface on the controller is another place for credential guessing, session theft, and vulnerabilities in the service itself. Shell In A Box runs its own web server and terminal emulator, separate from the APIC GUI, and has its own history of security fixes. Administrators who need a shell already have SSH, which takes the same credentials without the extra web stack.
+
+        Enable the console only for as long as a task needs it, and disable it again afterwards.
+      audit: |
+        ### Audit via the APIC GUI
+
+        1. Log in to the APIC GUI.
+        2. Navigate to **Fabric > Fabric Policies > Policies > Pod > Management Access**.
+        3. Open each management access policy, starting with **default**, and review the **SSH access via WEB** section.
+
+        The check passes when **Admin State** is **Disabled** in every policy.
+
+        ### Audit via the APIC REST API
+
+        1. Log in to the REST API and keep the session cookie:
+
+           ```bash
+           curl -sf -c apic-cookie.txt -X POST "https://apic.example.com/api/aaaLogin.json" \
+             -d '{"aaaUser":{"attributes":{"name":"admin","pwd":"<password>"}}}'
+           ```
+
+        2. List the Shell In A Box settings of every management access policy:
+
+           ```bash
+           curl -sf -b apic-cookie.txt "https://apic.example.com/api/class/commShellinabox.json"
+           ```
+
+        The check passes when every returned `commShellinabox` object has `adminSt` set to `disabled`.
+      remediation:
+        - id: console
+          desc: |
+            **Using the APIC GUI**
+
+            1. Navigate to **Fabric > Fabric Policies > Policies > Pod > Management Access**.
+            2. Select the management access policy, starting with **default**.
+            3. In the **SSH access via WEB** section, set **Admin State** to **Disabled**.
+            4. Click **Submit**.
+            5. Repeat for every other management access policy.
+        - id: api
+          desc: |
+            **Using the APIC REST API**
+
+            Log in, then disable Shell In A Box in the policy. The example changes the `default` policy; for another policy replace `comm-default` with `comm-<policy-name>`:
+
+            ```bash
+            curl -sf -c apic-cookie.txt -X POST "https://apic.example.com/api/aaaLogin.json" \
+              -d '{"aaaUser":{"attributes":{"name":"admin","pwd":"<password>"}}}'
+            curl -sf -b apic-cookie.txt -X POST "https://apic.example.com/api/mo/uni/fabric/comm-default/shellinabox.json" \
+              -d '{"commShellinabox":{"attributes":{"adminSt":"disabled"}}}'
+            ```
+    refs:
+      - url: https://www.cisco.com/c/en/us/td/docs/dcn/whitepapers/cisco-aci-hardening.html
+        title: Cisco ACI Hardening
+  - uid: mondoo-cisco-apic-security-https-tls-1-2-minimum
+    title: Ensure the HTTPS server does not accept TLS 1.0 or TLS 1.1
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-04
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-2-ii-transmission-security-encryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-13
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-11
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a04
+      compliance/pci-dss-4: pcidss-requirement-2-2-7
+      compliance/soc2-2017: soc2-control-cc6-7-2
+      compliance/vda-isa-5: vda-isa-5-5-1-2
+    mql: |
+      cisco.apic.fabric.nodes.where(role == "controller") != empty
+      cisco.apic.fabric.nodes.where(role == "controller").all(version == /^([6-9]|[1-9][0-9])\./) ||
+        cisco.apic.management.accessPolicies.all(
+          httpsServer.tlsVersions != empty &&
+          httpsServer.tlsVersions.none(_ == "TLSv1" || _ == "TLSv1.1")
+        )
+    docs:
+      desc: |
+        This check verifies that the APIC GUI and REST API only negotiate TLS 1.2 or later.
+
+        The **SSL Protocols** setting of each management access policy lists the TLS versions the HTTPS server offers. On releases before 6.0 that list is enforced as configured, and the factory default includes TLS 1.1. Cisco removed TLS 1.0 and TLS 1.1 from the HTTPS server in APIC release 6.0, so the check passes when every controller runs 6.0 or later. On earlier releases it requires every policy to offer neither TLS 1.0 nor TLS 1.1.
+
+        **Why this matters**
+
+        TLS 1.0 and TLS 1.1 depend on SHA-1 and MD5 in the handshake and only offer CBC cipher suites with the record format that BEAST and the padding oracle attacks target. A client that can be pushed down to them gives an attacker on the path a realistic chance to recover the session cookie, which carries full administrator rights.
+
+        RFC 8996 formally deprecates both versions, and current browsers no longer connect with them. Releases before 6.0 also no longer receive security fixes, which is checked separately.
+      audit: |
+        ### Audit via the APIC GUI
+
+        1. Log in to the APIC GUI and note the release shown under **Admin > Firmware**.
+        2. Navigate to **Fabric > Fabric Policies > Policies > Pod > Management Access**.
+        3. Open each management access policy, starting with **default**, and review **SSL Protocols** in the **HTTPS** section.
+
+        The check passes when the controllers run release 6.0 or later, or when no policy selects **TLSv1** or **TLSv1.1**.
+
+        ### Audit via the APIC REST API
+
+        1. Log in to the REST API and keep the session cookie:
+
+           ```bash
+           curl -sf -c apic-cookie.txt -X POST "https://apic.example.com/api/aaaLogin.json" \
+             -d '{"aaaUser":{"attributes":{"name":"admin","pwd":"<password>"}}}'
+           ```
+
+        2. Read the running release of every controller and the TLS versions of every management access policy:
+
+           ```bash
+           curl -sf -b apic-cookie.txt "https://apic.example.com/api/class/firmwareCtrlrRunning.json"
+           curl -sf -b apic-cookie.txt "https://apic.example.com/api/class/commHttps.json"
+           ```
+
+        The check passes when every `firmwareCtrlrRunning` object reports a `version` of 6.0 or later, or when no `commHttps` object lists `TLSv1` or `TLSv1.1` in `sslProtocols`.
+      remediation:
+        - id: console
+          desc: |
+            **Using the APIC GUI**
+
+            1. Navigate to **Fabric > Fabric Policies > Policies > Pod > Management Access**.
+            2. Select the management access policy, starting with **default**.
+            3. In the **HTTPS** section, clear **TLSv1** and **TLSv1.1** under **SSL Protocols** and keep **TLSv1.2** selected.
+            4. Click **Submit**.
+            5. Repeat for every other management access policy.
+
+            Upgrading the controllers to a supported 6.x release removes TLS 1.0 and TLS 1.1 entirely.
+        - id: api
+          desc: |
+            **Using the APIC REST API**
+
+            Log in, then set the TLS versions of the policy. The example changes the `default` policy; for another policy replace `comm-default` with `comm-<policy-name>`:
+
+            ```bash
+            curl -sf -c apic-cookie.txt -X POST "https://apic.example.com/api/aaaLogin.json" \
+              -d '{"aaaUser":{"attributes":{"name":"admin","pwd":"<password>"}}}'
+            curl -sf -b apic-cookie.txt -X POST "https://apic.example.com/api/mo/uni/fabric/comm-default/https.json" \
+              -d '{"commHttps":{"attributes":{"sslProtocols":"TLSv1.2"}}}'
+            ```
+    refs:
+      - url: https://www.cisco.com/c/en/us/td/docs/dcn/whitepapers/cisco-aci-hardening.html
+        title: Cisco ACI Hardening
+      - url: https://www.rfc-editor.org/rfc/rfc8996
+        title: "RFC 8996: Deprecating TLS 1.0 and TLS 1.1"
+  - uid: mondoo-cisco-apic-security-https-weak-ciphers-disabled
+    title: Ensure the HTTPS server has no weak cipher suites enabled
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-04
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-2-ii-transmission-security-encryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-13
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-11
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a04
+      compliance/pci-dss-4: pcidss-requirement-2-2-7
+      compliance/soc2-2017: soc2-control-cc6-7-2
+      compliance/vda-isa-5: vda-isa-5-5-1-2
+    mql: |
+      cisco.apic.management.accessPolicies != empty
+      cisco.apic.management.accessPolicies.all(
+        httpsServer.ciphers != empty &&
+        httpsServer.ciphers.none(_ == /^(aNULL|eNULL|EXP|EXPORT|LOW|DES|3DES|RC4|MD5|SHA|PSK|SRP|DSS|CAMELLIA|EDH|ECDHE-RSA-AES128-SHA256|ECDHE-RSA-AES256-SHA384)$/)
+      )
+    docs:
+      desc: |
+        This check verifies that the APIC HTTPS server offers none of the cipher suites that APIC itself classifies as weak.
+
+        Each management access policy holds a cipher list for its HTTPS server, and every entry is enabled or disabled. APIC marks a fixed set of entries as weak: the null, export, and low-strength groups, DES, 3DES, RC4, MD5, SHA-1, PSK, SRP, DSS, Camellia, static ephemeral DH, and the two CBC suites `ECDHE-RSA-AES128-SHA256` and `ECDHE-RSA-AES256-SHA384`. The check requires every policy to have at least one enabled cipher and none of the weak ones.
+
+        **Why this matters**
+
+        A server that still accepts a broken suite lets an attacker who can interfere with the connection steer the handshake toward it. RC4 keystream biases, the small block size of 3DES, and the padding oracle attacks against CBC records have each been used to recover session cookies from long-lived HTTPS sessions, and the APIC session cookie is an administrator credential.
+
+        The default cipher list leaves all of these disabled. A failing result means someone enabled one, usually for an old automation client, and that client should be updated instead.
+      audit: |
+        ### Audit via the APIC GUI
+
+        1. Log in to the APIC GUI.
+        2. Navigate to **Fabric > Fabric Policies > Policies > Pod > Management Access**.
+        3. Open each management access policy, starting with **default**, and review the **Cipher Configuration** table in the **HTTPS** section.
+
+        The check passes when every cipher listed above shows the state **Disabled**.
+
+        ### Audit via the APIC REST API
+
+        1. Log in to the REST API and keep the session cookie:
+
+           ```bash
+           curl -sf -c apic-cookie.txt -X POST "https://apic.example.com/api/aaaLogin.json" \
+             -d '{"aaaUser":{"attributes":{"name":"admin","pwd":"<password>"}}}'
+           ```
+
+        2. List the cipher settings of every management access policy:
+
+           ```bash
+           curl -sf -b apic-cookie.txt "https://apic.example.com/api/class/commCipher.json"
+           ```
+
+        The check passes when no `commCipher` object with `weak` set to `yes` has `state` set to `enabled`.
+      remediation:
+        - id: console
+          desc: |
+            **Using the APIC GUI**
+
+            1. Navigate to **Fabric > Fabric Policies > Policies > Pod > Management Access**.
+            2. Select the management access policy, starting with **default**.
+            3. In the **Cipher Configuration** table of the **HTTPS** section, set every weak cipher to **Disabled**.
+            4. Click **Submit**.
+            5. Repeat for every other management access policy.
+        - id: api
+          desc: |
+            **Using the APIC REST API**
+
+            Log in, then disable the cipher. The example disables `ECDHE-RSA-AES128-SHA256` in the `default` policy; repeat with each enabled weak cipher, and for another policy replace `comm-default` with `comm-<policy-name>`:
+
+            ```bash
+            curl -sf -c apic-cookie.txt -X POST "https://apic.example.com/api/aaaLogin.json" \
+              -d '{"aaaUser":{"attributes":{"name":"admin","pwd":"<password>"}}}'
+            curl -sf -b apic-cookie.txt -X POST "https://apic.example.com/api/mo/uni/fabric/comm-default/https/cph-ECDHE-RSA-AES128-SHA256.json" \
+              -d '{"commCipher":{"attributes":{"id":"ECDHE-RSA-AES128-SHA256","state":"disabled"}}}'
+            ```
+    refs:
+      - url: https://www.cisco.com/c/en/us/td/docs/dcn/whitepapers/cisco-aci-hardening.html
+        title: Cisco ACI Hardening
+  - uid: mondoo-cisco-apic-security-https-certificate-ca-signed
+    title: Ensure the HTTPS server presents a CA-signed certificate
+    impact: 65
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-17
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-15
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a04
+      compliance/pci-dss-4: pcidss-requirement-2-2-7
+      compliance/soc2-2017: soc2-control-cc6-7-2
+      compliance/vda-isa-5: vda-isa-5-5-1-1
+    mql: |
+      cisco.apic.management.accessPolicies != empty
+      cisco.apic.management.accessPolicies.all(httpsServer.certificate != null && httpsServer.certificate.certificate.selfSigned == false)
+    docs:
+      desc: |
+        This check verifies that browsers and API clients can authenticate the APIC by its HTTPS certificate.
+
+        The HTTPS server presents the certificate of the key ring selected as **Admin KeyRing** in the management access policy. Out of the box that is the key ring named `default`, which holds a self-signed certificate the controller generated at first boot. The check requires every policy to point at a key ring whose certificate is issued by a certificate authority.
+
+        **Why this matters**
+
+        A self-signed certificate cannot be verified, so every administrator learns to click through the browser warning and every script runs with certificate checks turned off. From then on an attacker who can intercept management traffic presents their own certificate, nobody notices the difference, and the attacker reads the login and the session cookie in clear text.
+
+        Issue the certificate from the organization's internal CA, import that CA as a trust point on the APIC, and distribute the CA to the administrators' workstations and automation hosts.
+      audit: |
+        ### Audit via the APIC GUI
+
+        1. Log in to the APIC GUI.
+        2. Navigate to **Fabric > Fabric Policies > Policies > Pod > Management Access** and note the **Admin KeyRing** of each policy.
+        3. Navigate to **Admin > AAA > Security > Key Rings** and open each of those key rings.
+
+        The check passes when every key ring in use has a certificate whose issuer differs from its subject and a **Certificate Authority** that names your CA. The factory key ring `default` is self-signed and fails.
+
+        ### Audit via the APIC REST API
+
+        1. Log in to the REST API and keep the session cookie:
+
+           ```bash
+           curl -sf -c apic-cookie.txt -X POST "https://apic.example.com/api/aaaLogin.json" \
+             -d '{"aaaUser":{"attributes":{"name":"admin","pwd":"<password>"}}}'
+           ```
+
+        2. Read the key ring each policy uses, then the key rings:
+
+           ```bash
+           curl -sf -b apic-cookie.txt "https://apic.example.com/api/class/commRsKeyRing.json"
+           curl -sf -b apic-cookie.txt "https://apic.example.com/api/class/pkiKeyRing.json"
+           ```
+
+        The check passes when the `tDn` of every `commRsKeyRing` names a `pkiKeyRing` whose `tp` references a trust point and whose certificate has an issuer different from its subject.
+      remediation:
+        - id: console
+          desc: |
+            **Using the APIC GUI**
+
+            1. Navigate to **Admin > AAA > Security > Public Key Management > Certificate Authorities** and create a trust point with the certificate chain of your CA.
+            2. Navigate to **Admin > AAA > Security > Public Key Management > Key Rings** and create a key ring that references that trust point.
+            3. Generate a certificate signing request from the key ring, have the CA sign it, and paste the signed certificate into the key ring.
+            4. Navigate to **Fabric > Fabric Policies > Policies > Pod > Management Access**, select the policy, and set **Admin KeyRing** in the **HTTPS** section to the new key ring.
+            5. Click **Submit** and repeat for every other management access policy.
+
+            **Changing the key ring restarts the HTTPS server.** Open GUI sessions are disconnected, so make the change from a session you can re-establish.
+        - id: api
+          desc: |
+            **Using the APIC REST API**
+
+            Create the trust point and key ring in the GUI or with the API, have the certificate signed, then point the policy at the key ring. The example changes the `default` policy to use a key ring named `apic-ca-signed`; for another policy replace `comm-default` with `comm-<policy-name>`:
+
+            ```bash
+            curl -sf -c apic-cookie.txt -X POST "https://apic.example.com/api/aaaLogin.json" \
+              -d '{"aaaUser":{"attributes":{"name":"admin","pwd":"<password>"}}}'
+            curl -sf -b apic-cookie.txt -X POST "https://apic.example.com/api/mo/uni/fabric/comm-default/https/rsKeyRing.json" \
+              -d '{"commRsKeyRing":{"attributes":{"tnPkiKeyRingName":"apic-ca-signed"}}}'
+            ```
+
+            **Changing the key ring restarts the HTTPS server.** The request that makes the change may not receive a response.
+    refs:
+      - url: https://www.cisco.com/c/en/us/td/docs/dcn/whitepapers/cisco-aci-hardening.html
+        title: Cisco ACI Hardening
+  - uid: mondoo-cisco-apic-security-https-certificate-not-expiring
+    title: Ensure the HTTPS certificate is valid for more than 30 days
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-12
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-17
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-10
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a04
+      compliance/pci-dss-4: pcidss-requirement-2-2-7
+      compliance/soc2-2017: soc2-control-cc6-7-2
+      compliance/vda-isa-5: vda-isa-5-5-1-1
+    mql: |
+      cisco.apic.management.accessPolicies != empty
+      cisco.apic.management.accessPolicies.all(httpsServer.certificate.certificate.notAfter > time.now + 30 * time.day)
+    docs:
+      desc: |
+        This check verifies that the certificate the APIC presents over HTTPS will not expire within the next 30 days.
+
+        The HTTPS server presents the certificate of the key ring selected as **Admin KeyRing** in each management access policy. The check requires that certificate to remain valid for at least 30 more days in every policy, which leaves time to have a replacement signed and installed.
+
+        **Why this matters**
+
+        An expired certificate breaks every client that verifies it. Automation stops, and administrators who need the GUI during an incident are told to bypass the browser warning, which is exactly the habit an interception attack relies on. Renewing under time pressure also tends to end with a self-signed certificate that stays in place for years.
+
+        Thirty days is enough lead time for most internal CAs. Shorten the window only if certificates are renewed automatically.
+      audit: |
+        ### Audit via the APIC GUI
+
+        1. Log in to the APIC GUI.
+        2. Navigate to **Fabric > Fabric Policies > Policies > Pod > Management Access** and note the **Admin KeyRing** of each policy.
+        3. Navigate to **Admin > AAA > Security > Public Key Management > Key Rings** and open each of those key rings.
+
+        The check passes when the certificate of every key ring in use is valid for more than 30 more days.
+
+        ### Audit via the APIC REST API
+
+        1. Log in to the REST API and keep the session cookie:
+
+           ```bash
+           curl -sf -c apic-cookie.txt -X POST "https://apic.example.com/api/aaaLogin.json" \
+             -d '{"aaaUser":{"attributes":{"name":"admin","pwd":"<password>"}}}'
+           ```
+
+        2. Read the key rings, which report the end of the validity period in `certValidUntil`:
+
+           ```bash
+           curl -sf -b apic-cookie.txt "https://apic.example.com/api/class/pkiKeyRing.json"
+           ```
+
+        The check passes when the `certValidUntil` of every key ring that a management access policy uses is more than 30 days away.
+      remediation:
+        - id: console
+          desc: |
+            **Using the APIC GUI**
+
+            1. Navigate to **Admin > AAA > Security > Public Key Management > Key Rings** and create a key ring that references the trust point of your CA.
+            2. Generate a certificate signing request from the key ring, have the CA sign it, and paste the signed certificate into the key ring.
+            3. Navigate to **Fabric > Fabric Policies > Policies > Pod > Management Access**, select the policy, and set **Admin KeyRing** in the **HTTPS** section to the new key ring.
+            4. Click **Submit** and repeat for every other management access policy that used the expiring key ring.
+
+            **Changing the key ring restarts the HTTPS server.** Open GUI sessions are disconnected.
+        - id: api
+          desc: |
+            **Using the APIC REST API**
+
+            After the renewed certificate is installed in a key ring, point the policy at it. The example changes the `default` policy to use a key ring named `apic-ca-signed-2027`; for another policy replace `comm-default` with `comm-<policy-name>`:
+
+            ```bash
+            curl -sf -c apic-cookie.txt -X POST "https://apic.example.com/api/aaaLogin.json" \
+              -d '{"aaaUser":{"attributes":{"name":"admin","pwd":"<password>"}}}'
+            curl -sf -b apic-cookie.txt -X POST "https://apic.example.com/api/mo/uni/fabric/comm-default/https/rsKeyRing.json" \
+              -d '{"commRsKeyRing":{"attributes":{"tnPkiKeyRingName":"apic-ca-signed-2027"}}}'
+            ```
+    refs:
+      - url: https://www.cisco.com/c/en/us/td/docs/dcn/whitepapers/cisco-aci-hardening.html
+        title: Cisco ACI Hardening
+  - uid: mondoo-cisco-apic-security-https-certificate-key-strength
+    title: Ensure the HTTPS certificate uses a strong RSA or ECDSA key
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-10
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-2-ii-transmission-security-encryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-12
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-10
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a04
+      compliance/pci-dss-4: pcidss-requirement-2-2-7
+      compliance/soc2-2017: soc2-control-cc6-1-11
+      compliance/vda-isa-5: vda-isa-5-5-1-1
+    mql: |
+      cisco.apic.management.accessPolicies != empty
+      cisco.apic.management.accessPolicies.all(
+        httpsServer.certificate.certificate.keyType == "RSA" && httpsServer.certificate.certificate.keySize >= 2048 ||
+        httpsServer.certificate.certificate.keyType == "ECDSA" && httpsServer.certificate.certificate.keySize >= 256
+      )
+    docs:
+      desc: |
+        This check verifies that the key behind the APIC HTTPS certificate is strong enough to resist factoring and forgery.
+
+        The key size is chosen when the key ring is created, in the **Modulus** field for RSA keys or the **ECC Curve** field for ECDSA keys on APIC 6.0(2) and later. The check requires an RSA key of at least 2048 bits or an ECDSA key of at least 256 bits for the key ring each management access policy uses.
+
+        **Why this matters**
+
+        The private key is what proves to clients that they are talking to the real controller. A 1024-bit RSA key is within reach of well-funded attackers, and anyone who recovers it can impersonate the APIC to every administrator without a certificate warning, then capture logins and session cookies. NIST SP 800-131A has disallowed RSA keys below 2048 bits for digital signatures since 2013.
+
+        A stronger key requires a new key ring and a newly signed certificate; the key size of an existing key ring cannot be changed.
+      audit: |
+        ### Audit via the APIC GUI
+
+        1. Log in to the APIC GUI.
+        2. Navigate to **Fabric > Fabric Policies > Policies > Pod > Management Access** and note the **Admin KeyRing** of each policy.
+        3. Navigate to **Admin > AAA > Security > Public Key Management > Key Rings** and review **Modulus** or **ECC Curve** of each of those key rings.
+
+        The check passes when every key ring in use has a modulus of 2048 bits or more, or an ECC curve.
+
+        ### Audit via the APIC REST API
+
+        1. Log in to the REST API and keep the session cookie:
+
+           ```bash
+           curl -sf -c apic-cookie.txt -X POST "https://apic.example.com/api/aaaLogin.json" \
+             -d '{"aaaUser":{"attributes":{"name":"admin","pwd":"<password>"}}}'
+           ```
+
+        2. Read the key rings:
+
+           ```bash
+           curl -sf -b apic-cookie.txt "https://apic.example.com/api/class/pkiKeyRing.json"
+           ```
+
+        The check passes when every key ring that a management access policy uses has `modulus` set to `mod2048` or larger, or `keyType` set to `ECC`.
+      remediation:
+        - id: console
+          desc: |
+            **Using the APIC GUI**
+
+            1. Navigate to **Admin > AAA > Security > Public Key Management > Key Rings** and create a key ring with a **Modulus** of 2048 bits or more, or an ECC key, that references the trust point of your CA.
+            2. Generate a certificate signing request from the key ring, have the CA sign it, and paste the signed certificate into the key ring.
+            3. Navigate to **Fabric > Fabric Policies > Policies > Pod > Management Access**, select the policy, and set **Admin KeyRing** in the **HTTPS** section to the new key ring.
+            4. Click **Submit** and repeat for every other management access policy.
+
+            **Changing the key ring restarts the HTTPS server.** Open GUI sessions are disconnected.
+        - id: api
+          desc: |
+            **Using the APIC REST API**
+
+            Create a key ring with a 2048-bit or larger RSA key. The example creates `apic-rsa-2048`, signed by the trust point `corp-ca`:
+
+            ```bash
+            curl -sf -c apic-cookie.txt -X POST "https://apic.example.com/api/aaaLogin.json" \
+              -d '{"aaaUser":{"attributes":{"name":"admin","pwd":"<password>"}}}'
+            curl -sf -b apic-cookie.txt -X POST "https://apic.example.com/api/mo/uni/userext/pkiext/keyring-apic-rsa-2048.json" \
+              -d '{"pkiKeyRing":{"attributes":{"name":"apic-rsa-2048","modulus":"mod2048","tp":"corp-ca"}}}'
+            ```
+
+            Generate the certificate signing request, have it signed, add the certificate to the key ring, and point each management access policy at it with a `commRsKeyRing` update.
+    refs:
+      - url: https://www.cisco.com/c/en/us/td/docs/dcn/whitepapers/cisco-aci-hardening.html
+        title: Cisco ACI Hardening
+      - url: https://csrc.nist.gov/pubs/sp/800/131/a/r2/final
+        title: "NIST SP 800-131A Rev. 2: Transitioning the Use of Cryptographic Algorithms and Key Lengths"
+  - uid: mondoo-cisco-apic-security-ssh-strong-macs
+    title: Ensure the SSH server offers no SHA-1 or MD5 MAC algorithms
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-04
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-2-ii-transmission-security-encryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-13
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-11
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a04
+      compliance/pci-dss-4: pcidss-requirement-2-2-7
+      compliance/soc2-2017: soc2-control-cc6-7-2
+      compliance/vda-isa-5: vda-isa-5-5-1-2
+    mql: |
+      cisco.apic.management.accessPolicies != empty
+      cisco.apic.management.accessPolicies.all(
+        sshServer.enabled == false ||
+        sshServer.macs != empty && sshServer.macs.none(_ == /sha1|md5|-96/)
+      )
+    docs:
+      desc: |
+        This check verifies that SSH sessions to the controllers and switches are integrity-protected only with SHA-2 based message authentication codes.
+
+        The **SSH MACs** setting of each management access policy lists the MAC algorithms the SSH server offers. APIC releases up to 5.3 enable `hmac-sha1` by default, and later releases still let it be selected. The check requires every policy with SSH enabled to offer at least one MAC and none based on SHA-1 or MD5 or truncated to 96 bits.
+
+        **Why this matters**
+
+        The MAC is what stops an attacker on the path from altering commands in an SSH session. SHA-1 is broken for collision resistance, and NIST has scheduled its removal from all uses. Offering it keeps the controller compatible with old clients at the cost of letting an active attacker negotiate the weakest algorithm both sides share.
+
+        Every SSH client released in the last decade supports `hmac-sha2-256` and `hmac-sha2-512`, so removing SHA-1 rarely breaks anything.
+      audit: |
+        ### Audit via the APIC GUI
+
+        1. Log in to the APIC GUI.
+        2. Navigate to **Fabric > Fabric Policies > Policies > Pod > Management Access**.
+        3. Open each management access policy, starting with **default**, and review **SSH MACs** in the **SSH** section.
+
+        The check passes when **hmac-sha1** is not selected in any policy that has SSH enabled.
+
+        ### Audit via the APIC REST API
+
+        1. Log in to the REST API and keep the session cookie:
+
+           ```bash
+           curl -sf -c apic-cookie.txt -X POST "https://apic.example.com/api/aaaLogin.json" \
+             -d '{"aaaUser":{"attributes":{"name":"admin","pwd":"<password>"}}}'
+           ```
+
+        2. List the SSH settings of every management access policy:
+
+           ```bash
+           curl -sf -b apic-cookie.txt "https://apic.example.com/api/class/commSsh.json"
+           ```
+
+        The check passes when no `commSsh` object with `adminSt` set to `enabled` lists `hmac-sha1` in `sshMacs`.
+      remediation:
+        - id: console
+          desc: |
+            **Using the APIC GUI**
+
+            1. Navigate to **Fabric > Fabric Policies > Policies > Pod > Management Access**.
+            2. Select the management access policy, starting with **default**.
+            3. In the **SSH** section, clear **hmac-sha1** under **SSH MACs** and keep the SHA-2 algorithms selected.
+            4. Click **Submit**.
+            5. Repeat for every other management access policy.
+        - id: api
+          desc: |
+            **Using the APIC REST API**
+
+            Log in, then set the MAC list of the policy. The example changes the `default` policy; for another policy replace `comm-default` with `comm-<policy-name>`. The `-etm@openssh.com` variants exist on APIC 6.0 and later; leave them out on earlier releases:
+
+            ```bash
+            curl -sf -c apic-cookie.txt -X POST "https://apic.example.com/api/aaaLogin.json" \
+              -d '{"aaaUser":{"attributes":{"name":"admin","pwd":"<password>"}}}'
+            curl -sf -b apic-cookie.txt -X POST "https://apic.example.com/api/mo/uni/fabric/comm-default/ssh.json" \
+              -d '{"commSsh":{"attributes":{"sshMacs":"hmac-sha2-256,hmac-sha2-512,hmac-sha2-256-etm@openssh.com,hmac-sha2-512-etm@openssh.com"}}}'
+            ```
+    refs:
+      - url: https://www.cisco.com/c/en/us/td/docs/dcn/whitepapers/cisco-aci-hardening.html
+        title: Cisco ACI Hardening
+  - uid: mondoo-cisco-apic-security-ssh-strong-kex
+    title: Ensure the SSH server offers no SHA-1 key exchange algorithms
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-04
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-2-ii-transmission-security-encryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-13
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-11
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a04
+      compliance/pci-dss-4: pcidss-requirement-2-2-7
+      compliance/soc2-2017: soc2-control-cc6-7-2
+      compliance/vda-isa-5: vda-isa-5-5-1-2
+    mql: |
+      cisco.apic.management.accessPolicies != empty
+      cisco.apic.management.accessPolicies.all(
+        sshServer.enabled == false ||
+        sshServer.kexAlgorithms != empty && sshServer.kexAlgorithms.none(_ == /sha1/)
+      )
+    docs:
+      desc: |
+        This check verifies that the SSH server negotiates session keys only with key exchange methods that do not rely on SHA-1 or 1024-bit Diffie-Hellman groups.
+
+        The **KEX Algorithms** setting of each management access policy lists the key exchange methods the SSH server offers. On APIC 5.2 and 5.3 the default list includes `diffie-hellman-group1-sha1`, `diffie-hellman-group14-sha1`, and `diffie-hellman-group-exchange-sha1`, and later releases still let the first two be selected. The check requires every policy with SSH enabled to offer key exchange methods and none that use SHA-1.
+
+        **Why this matters**
+
+        Key exchange is where the session keys are agreed. `diffie-hellman-group1-sha1` uses a 1024-bit group that the Logjam research showed a nation-state attacker can break with precomputation, which decrypts every recorded session that used it. The SHA-1 hash in all three methods also weakens the host authentication the exchange performs.
+
+        Every current SSH client supports `curve25519-sha256` and the SHA-2 Diffie-Hellman groups, which APIC 6.0 and later offer by default.
+      audit: |
+        ### Audit via the APIC GUI
+
+        1. Log in to the APIC GUI.
+        2. Navigate to **Fabric > Fabric Policies > Policies > Pod > Management Access**.
+        3. Open each management access policy, starting with **default**, and review **KEX Algorithms** in the **SSH** section.
+
+        The check passes when no algorithm ending in `sha1` is selected in any policy that has SSH enabled.
+
+        ### Audit via the APIC REST API
+
+        1. Log in to the REST API and keep the session cookie:
+
+           ```bash
+           curl -sf -c apic-cookie.txt -X POST "https://apic.example.com/api/aaaLogin.json" \
+             -d '{"aaaUser":{"attributes":{"name":"admin","pwd":"<password>"}}}'
+           ```
+
+        2. List the SSH settings of every management access policy:
+
+           ```bash
+           curl -sf -b apic-cookie.txt "https://apic.example.com/api/class/commSsh.json"
+           ```
+
+        The check passes when no `commSsh` object with `adminSt` set to `enabled` lists an algorithm containing `sha1` in `kexAlgos`.
+      remediation:
+        - id: console
+          desc: |
+            **Using the APIC GUI**
+
+            1. Navigate to **Fabric > Fabric Policies > Policies > Pod > Management Access**.
+            2. Select the management access policy, starting with **default**.
+            3. In the **SSH** section, clear every algorithm ending in `sha1` under **KEX Algorithms**.
+            4. Click **Submit**.
+            5. Repeat for every other management access policy.
+        - id: api
+          desc: |
+            **Using the APIC REST API**
+
+            Log in, then set the key exchange list of the policy. The example changes the `default` policy; for another policy replace `comm-default` with `comm-<policy-name>`. The two SHA-2 Diffie-Hellman groups exist on APIC 6.0 and later; leave them out on earlier releases:
+
+            ```bash
+            curl -sf -c apic-cookie.txt -X POST "https://apic.example.com/api/aaaLogin.json" \
+              -d '{"aaaUser":{"attributes":{"name":"admin","pwd":"<password>"}}}'
+            curl -sf -b apic-cookie.txt -X POST "https://apic.example.com/api/mo/uni/fabric/comm-default/ssh.json" \
+              -d '{"commSsh":{"attributes":{"kexAlgos":"curve25519-sha256,curve25519-sha256@libssh.org,ecdh-sha2-nistp256,ecdh-sha2-nistp384,ecdh-sha2-nistp521,diffie-hellman-group14-sha256,diffie-hellman-group16-sha512"}}}'
+            ```
+    refs:
+      - url: https://www.cisco.com/c/en/us/td/docs/dcn/whitepapers/cisco-aci-hardening.html
+        title: Cisco ACI Hardening
+      - url: https://weakdh.org/
+        title: "Weak Diffie-Hellman and the Logjam Attack"
+  - uid: mondoo-cisco-apic-security-oob-strict-security
+    title: Ensure strict security is enabled on the APIC out-of-band subnet
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-3
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-17
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-12
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-1-3-1
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/vda-isa-5: vda-isa-5-5-2-7
+    mql: |
+      cisco.apic.management.accessPolicies != empty
+      cisco.apic.management.accessPolicies.all(strictSecurityOnOobSubnet == null || strictSecurityOnOobSubnet == true)
+    docs:
+      desc: |
+        This check verifies that only the subnets allowed by the out-of-band management contracts can reach the controllers' management services.
+
+        APIC 6.1 added **Strict Security on APIC OOB Subnet** to the management access policy. Without it, hosts in the controllers' own out-of-band subnet reach the management services regardless of the out-of-band contracts; with it, the contracts are enforced for that subnet too. The check requires the setting in every management access policy. Releases before 6.1 do not have the setting and pass.
+
+        **Why this matters**
+
+        The out-of-band subnet usually holds more than the controllers: server management controllers, switch management ports, jump hosts, and appliances that are patched less carefully. Any of them that an attacker compromises becomes a launch point against the APIC login and REST API, even when the contracts were written to allow only the administrators' networks.
+
+        Before enabling the setting, make sure the out-of-band contracts list every subnet that legitimately needs access, including monitoring and backup systems.
+      audit: |
+        ### Audit via the APIC GUI
+
+        1. Log in to the APIC GUI.
+        2. Navigate to **Fabric > Fabric Policies > Policies > Pod > Management Access**.
+        3. Open each management access policy, starting with **default**, and review **Strict Security on APIC OOB Subnet**.
+
+        The check passes when the setting is enabled in every policy.
+
+        ### Audit via the APIC REST API
+
+        1. Log in to the REST API and keep the session cookie:
+
+           ```bash
+           curl -sf -c apic-cookie.txt -X POST "https://apic.example.com/api/aaaLogin.json" \
+             -d '{"aaaUser":{"attributes":{"name":"admin","pwd":"<password>"}}}'
+           ```
+
+        2. List the management access policies:
+
+           ```bash
+           curl -sf -b apic-cookie.txt "https://apic.example.com/api/class/commPol.json"
+           ```
+
+        The check passes when every `commPol` object has `strictSecurityOnApicOOBSubnet` set to `yes`, or does not have the attribute.
+      remediation:
+        - id: console
+          desc: |
+            **Using the APIC GUI**
+
+            1. Review the out-of-band contracts under **Tenants > mgmt > Contracts > Out-Of-Band Contracts** and the external management network instance profiles that consume them, and add every subnet that needs management access.
+            2. Navigate to **Fabric > Fabric Policies > Policies > Pod > Management Access**.
+            3. Select the management access policy, starting with **default**.
+            4. Enable **Strict Security on APIC OOB Subnet**.
+            5. Click **Submit** and repeat for every other management access policy.
+
+            **Hosts in the out-of-band subnet that are not covered by a contract lose access immediately.** Keep a console or CIMC session open while making the change.
+        - id: api
+          desc: |
+            **Using the APIC REST API**
+
+            Log in, then enable the setting in the policy. The example changes the `default` policy; for another policy replace `comm-default` with `comm-<policy-name>`:
+
+            ```bash
+            curl -sf -c apic-cookie.txt -X POST "https://apic.example.com/api/aaaLogin.json" \
+              -d '{"aaaUser":{"attributes":{"name":"admin","pwd":"<password>"}}}'
+            curl -sf -b apic-cookie.txt -X POST "https://apic.example.com/api/mo/uni/fabric/comm-default.json" \
+              -d '{"commPol":{"attributes":{"strictSecurityOnApicOOBSubnet":"yes"}}}'
+            ```
+    refs:
+      - url: https://www.cisco.com/c/en/us/td/docs/dcn/whitepapers/cisco-aci-hardening.html
+        title: Cisco ACI Hardening
+  - uid: mondoo-cisco-apic-security-gui-idle-timeout
+    title: Ensure idle GUI sessions end after 15 minutes or less
+    impact: 65
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: false
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-2-iii-access-control-automatic-logoff
+      compliance/iso-27001-2022: iso-27001-2022-a-8-5
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-7
+      compliance/nist-csf-2: nist-csf-2-pr-aa-03
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-12
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-11
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a07
+      compliance/pci-dss-4: pcidss-requirement-8-2-8
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/vda-isa-5: vda-isa-5-4-1-2
+    mql: |
+      cisco.apic.management.session.uiIdleTimeoutSeconds > 0
+      cisco.apic.management.session.uiIdleTimeoutSeconds <= 900
+    docs:
+      desc: |
+        This check verifies that an APIC GUI session left unattended is closed after no more than 15 minutes.
+
+        The **Web Session Idle Timeout** in the web token settings ends a GUI session after the given number of seconds without activity. The factory value is 1200 seconds, or 20 minutes. The check requires a value between 1 and 900 seconds.
+
+        **Why this matters**
+
+        An administrator who walks away from an open APIC session leaves a console with full control of the fabric on an unlocked screen, and a stolen session cookie stays usable for as long as the session lives. A short idle timeout limits both. PCI DSS requirement 8.2.8 sets the same 15-minute ceiling.
+
+        The setting applies to the GUI. REST API clients are bounded separately by the token lifetime and the maximum validity period.
+      audit: |
+        ### Audit via the APIC GUI
+
+        1. Log in to the APIC GUI.
+        2. Navigate to **Admin > AAA > Security** and open the **Security Default Settings** tab.
+        3. Review **Web Session Idle Timeout (s)**.
+
+        The check passes when the value is between 1 and 900 seconds.
+
+        ### Audit via the APIC REST API
+
+        1. Log in to the REST API and keep the session cookie:
+
+           ```bash
+           curl -sf -c apic-cookie.txt -X POST "https://apic.example.com/api/aaaLogin.json" \
+             -d '{"aaaUser":{"attributes":{"name":"admin","pwd":"<password>"}}}'
+           ```
+
+        2. Read the web token settings:
+
+           ```bash
+           curl -sf -b apic-cookie.txt "https://apic.example.com/api/mo/uni/userext/pkiext/webtokendata.json"
+           ```
+
+        The check passes when `uiIdleTimeoutSeconds` is between 1 and 900.
+      remediation:
+        - id: console
+          desc: |
+            **Using the APIC GUI**
+
+            1. Navigate to **Admin > AAA > Security** and open the **Security Default Settings** tab.
+            2. Click the edit icon and set **Web Session Idle Timeout (s)** to `900` or less.
+            3. Click **Submit**.
+        - id: api
+          desc: |
+            **Using the APIC REST API**
+
+            Log in, then set the idle timeout:
+
+            ```bash
+            curl -sf -c apic-cookie.txt -X POST "https://apic.example.com/api/aaaLogin.json" \
+              -d '{"aaaUser":{"attributes":{"name":"admin","pwd":"<password>"}}}'
+            curl -sf -b apic-cookie.txt -X POST "https://apic.example.com/api/mo/uni/userext/pkiext/webtokendata.json" \
+              -d '{"pkiWebTokenData":{"attributes":{"uiIdleTimeoutSeconds":"900"}}}'
+            ```
+    refs:
+      - url: https://www.cisco.com/c/en/us/td/docs/dcn/whitepapers/cisco-aci-hardening.html
+        title: Cisco ACI Hardening
+  - uid: mondoo-cisco-apic-security-remote-authentication
+    title: Ensure logins are authenticated by a remote AAA service by default
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-13
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-2-i-access-control-unique-user-identification
+      compliance/iso-27001-2022: iso-27001-2022-a-5-16
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-2
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-1
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a07
+      compliance/pci-dss-4: pcidss-requirement-8-2-2
+      compliance/soc2-2017: soc2-control-cc6-1-8
+      compliance/vda-isa-5: vda-isa-5-4-1-3
+    mql: |
+      cisco.apic.aaa.defaultAuthentication.realm != empty
+      cisco.apic.aaa.defaultAuthentication.realm != "local"
+    docs:
+      desc: |
+        This check verifies that administrators log in to the fabric with their individual directory accounts rather than with users defined on the controllers.
+
+        The **Default Authentication** realm decides how a login that names no login domain is authenticated. Out of the box it is `local`, which means the users stored on the APIC. The check requires a remote realm such as TACACS+, RADIUS, LDAP, RSA, or SAML.
+
+        **Why this matters**
+
+        Local users live outside the organization's identity lifecycle. Accounts of people who left are not disabled when their directory account is, passwords are shared between administrators, and multi-factor authentication and central password rules do not apply. Remote AAA also gives every change in the audit log a real person's name.
+
+        Keep the local `admin` account as a break-glass account for when the AAA servers cannot be reached. Cisco recommends leaving the `fallback` login domain in place for that purpose.
+      audit: |
+        ### Audit via the APIC GUI
+
+        1. Log in to the APIC GUI.
+        2. Navigate to **Admin > AAA > Authentication** and open the **Authentication Default Settings** tab.
+        3. Review **Realm** in the **Default Authentication** section.
+
+        The check passes when the realm is not **Local**.
+
+        ### Audit via the APIC REST API
+
+        1. Log in to the REST API and keep the session cookie:
+
+           ```bash
+           curl -sf -c apic-cookie.txt -X POST "https://apic.example.com/api/aaaLogin.json" \
+             -d '{"aaaUser":{"attributes":{"name":"admin","pwd":"<password>"}}}'
+           ```
+
+        2. Read the default authentication settings:
+
+           ```bash
+           curl -sf -b apic-cookie.txt "https://apic.example.com/api/mo/uni/userext/authrealm/defaultauth.json"
+           ```
+
+        The check passes when `realm` is not `local`.
+      remediation:
+        - id: console
+          desc: |
+            **Using the APIC GUI**
+
+            1. Add the TACACS+, RADIUS, or LDAP servers under **Admin > AAA > Authentication** in the tab of that protocol, and create a provider group that contains them.
+            2. Configure the servers to return the `CiscoAVPair` attribute that assigns each user's security domains and roles.
+            3. Log in through a login domain that uses the provider group and confirm that a remote user receives the expected roles.
+            4. Open the **Authentication Default Settings** tab, click the edit icon in **Default Authentication**, set **Realm** to the protocol and **Provider Group** to the new group.
+            5. Click **Submit**.
+
+            **A mistake in the server or attribute configuration locks remote users out.** Test with a separate login domain before changing the default, and keep a local administrator session open.
+        - id: api
+          desc: |
+            **Using the APIC REST API**
+
+            After the servers and provider group exist, set the default realm. The example uses TACACS+ with a provider group named `corp-tacacs`:
+
+            ```bash
+            curl -sf -c apic-cookie.txt -X POST "https://apic.example.com/api/aaaLogin.json" \
+              -d '{"aaaUser":{"attributes":{"name":"admin","pwd":"<password>"}}}'
+            curl -sf -b apic-cookie.txt -X POST "https://apic.example.com/api/mo/uni/userext/authrealm/defaultauth.json" \
+              -d '{"aaaDefaultAuth":{"attributes":{"realm":"tacacs","providerGroup":"corp-tacacs"}}}'
+            ```
+    refs:
+      - url: https://www.cisco.com/c/en/us/td/docs/dcn/whitepapers/cisco-aci-hardening.html
+        title: Cisco ACI Hardening
+  - uid: mondoo-cisco-apic-security-ldap-tls-strict
+    title: Ensure LDAP servers are reached over TLS with strict certificate validation
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-2-ii-transmission-security-encryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-7
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a04
+      compliance/pci-dss-4: pcidss-requirement-8-3-2
+      compliance/soc2-2017: soc2-control-cc6-6-2
+      compliance/vda-isa-5: vda-isa-5-5-1-2
+    mql: |
+      cisco.apic.aaa.ldapServers.all(sslEnabled == true && sslValidationLevel == "strict")
+    docs:
+      desc: |
+        This check verifies that user passwords sent from the APIC to LDAP servers are encrypted and go only to a server that proved its identity.
+
+        When a user logs in through an LDAP login domain, the APIC binds to the LDAP server with that user's password. Each LDAP provider has an **Enable SSL** setting and an **SSL Certificate Validation Level** of **Permissive** or **Strict**. The check requires SSL with strict validation for every LDAP provider. A fabric without LDAP providers passes.
+
+        **Why this matters**
+
+        Without SSL the bind sends every user's password across the network in clear text. With permissive validation the connection is encrypted, but the APIC accepts any certificate, so an attacker who redirects the LDAP traffic terminates it with their own certificate and collects the same passwords. Those are directory passwords, valid far beyond the fabric.
+
+        Strict validation needs the issuing CA of the LDAP server's certificate imported as a trust point on the APIC.
+      audit: |
+        ### Audit via the APIC GUI
+
+        1. Log in to the APIC GUI.
+        2. Navigate to **Admin > AAA > Authentication** and open the **LDAP** tab.
+        3. Open each LDAP provider and review **Enable SSL** and **SSL Certificate Validation Level**.
+
+        The check passes when every provider has SSL enabled and the validation level set to **Strict**.
+
+        ### Audit via the APIC REST API
+
+        1. Log in to the REST API and keep the session cookie:
+
+           ```bash
+           curl -sf -c apic-cookie.txt -X POST "https://apic.example.com/api/aaaLogin.json" \
+             -d '{"aaaUser":{"attributes":{"name":"admin","pwd":"<password>"}}}'
+           ```
+
+        2. List the LDAP providers:
+
+           ```bash
+           curl -sf -b apic-cookie.txt "https://apic.example.com/api/class/aaaLdapProvider.json"
+           ```
+
+        The check passes when every `aaaLdapProvider` object has `enableSSL` set to `yes` and `SSLValidationLevel` set to `strict`.
+      remediation:
+        - id: console
+          desc: |
+            **Using the APIC GUI**
+
+            1. Import the CA that issued the LDAP server certificate under **Admin > AAA > Security > Public Key Management > Certificate Authorities**.
+            2. Navigate to **Admin > AAA > Authentication** and open the **LDAP** tab.
+            3. Open the LDAP provider, enable **Enable SSL**, set **SSL Certificate Validation Level** to **Strict**, and set **Port** to `636` if the server serves LDAPS there.
+            4. Click **Submit** and repeat for every other LDAP provider.
+        - id: api
+          desc: |
+            **Using the APIC REST API**
+
+            Log in, then update the provider. The example changes the provider `ldap1.example.com` used for user logins; the DN of a Duo LDAP provider uses `duoext` instead of `ldapext`:
+
+            ```bash
+            curl -sf -c apic-cookie.txt -X POST "https://apic.example.com/api/aaaLogin.json" \
+              -d '{"aaaUser":{"attributes":{"name":"admin","pwd":"<password>"}}}'
+            curl -sf -b apic-cookie.txt -X POST "https://apic.example.com/api/mo/uni/userext/ldapext/ldapprovider-ldap1.example.com.json" \
+              -d '{"aaaLdapProvider":{"attributes":{"enableSSL":"yes","SSLValidationLevel":"strict","port":"636"}}}'
+            ```
+    refs:
+      - url: https://www.cisco.com/c/en/us/td/docs/dcn/whitepapers/cisco-aci-hardening.html
+        title: Cisco ACI Hardening
+  - uid: mondoo-cisco-apic-security-password-strength-check
+    title: Ensure the password strength check is enabled for local users
+    impact: 75
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-02
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-308-a-5-ii-d-security-awareness-training-and-tools-password-management
+      compliance/iso-27001-2022: iso-27001-2022-a-5-17
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-7
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a07
+      compliance/pci-dss-4: pcidss-requirement-8-3-6
+      compliance/soc2-2017: soc2-control-cc6-1-8
+      compliance/vda-isa-5: vda-isa-5-4-1-3
+    mql: |
+      cisco.apic.aaa.passwordPolicy.strengthCheckEnabled == true
+    docs:
+      desc: |
+        This check verifies that the APIC rejects weak passwords for local users.
+
+        **Password Strength Check** applies the password strength profile whenever a local user's password is set or changed. With the default profile a password needs at least three character classes, may not repeat a character more than three times in a row, may not be the user name or its reverse, and must pass a dictionary check. The check requires the strength check to be enabled, which is the factory setting.
+
+        **Why this matters**
+
+        Local accounts, including the built-in `admin`, are the ones that still work when remote AAA is down, and they are the first target of password spraying against the APIC login. Without the strength check the controller accepts `cisco123` for an account that can erase the fabric configuration.
+      audit: |
+        ### Audit via the APIC GUI
+
+        1. Log in to the APIC GUI.
+        2. Navigate to **Admin > AAA > Security** and open the **Security Default Settings** tab.
+        3. Review **Password Strength Check**.
+
+        The check passes when the strength check is enabled.
+
+        ### Audit via the APIC REST API
+
+        1. Log in to the REST API and keep the session cookie:
+
+           ```bash
+           curl -sf -c apic-cookie.txt -X POST "https://apic.example.com/api/aaaLogin.json" \
+             -d '{"aaaUser":{"attributes":{"name":"admin","pwd":"<password>"}}}'
+           ```
+
+        2. Read the user settings:
+
+           ```bash
+           curl -sf -b apic-cookie.txt "https://apic.example.com/api/mo/uni/userext.json"
+           ```
+
+        The check passes when `pwdStrengthCheck` is `yes`.
+      remediation:
+        - id: console
+          desc: |
+            **Using the APIC GUI**
+
+            1. Navigate to **Admin > AAA > Security** and open the **Security Default Settings** tab.
+            2. Click the edit icon and enable **Password Strength Check**.
+            3. Click **Submit**.
+        - id: api
+          desc: |
+            **Using the APIC REST API**
+
+            Log in, then enable the strength check:
+
+            ```bash
+            curl -sf -c apic-cookie.txt -X POST "https://apic.example.com/api/aaaLogin.json" \
+              -d '{"aaaUser":{"attributes":{"name":"admin","pwd":"<password>"}}}'
+            curl -sf -b apic-cookie.txt -X POST "https://apic.example.com/api/mo/uni/userext.json" \
+              -d '{"aaaUserEp":{"attributes":{"pwdStrengthCheck":"yes"}}}'
+            ```
+    refs:
+      - url: https://www.cisco.com/c/en/us/td/docs/dcn/whitepapers/cisco-aci-hardening.html
+        title: Cisco ACI Hardening
+  - uid: mondoo-cisco-apic-security-password-minimum-length
+    title: Ensure local user passwords are at least 12 characters long
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-02
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-308-a-5-ii-d-security-awareness-training-and-tools-password-management
+      compliance/iso-27001-2022: iso-27001-2022-a-5-17
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-7
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a07
+      compliance/pci-dss-4: pcidss-requirement-8-3-6
+      compliance/soc2-2017: soc2-control-cc6-1-8
+      compliance/vda-isa-5: vda-isa-5-4-1-3
+    mql: |
+      cisco.apic.aaa.passwordPolicy.minimumLength >= 12
+    docs:
+      desc: |
+        This check verifies that the APIC requires local user passwords of at least 12 characters.
+
+        The password strength profile sets **Password Minimum Length**, which the factory configures to 8, the lowest value APIC allows. The check requires 12 or more, the minimum PCI DSS 4.0 requirement 8.3.6 sets for systems that support it.
+
+        **Why this matters**
+
+        Length is what makes a password expensive to guess. Eight characters drawn from three classes is a search space that offline cracking hardware exhausts quickly once a hash leaks, for example from a configuration export saved without an AES passphrase. Online, a short minimum lets users choose the short, predictable passwords that spraying attacks try first.
+      audit: |
+        ### Audit via the APIC GUI
+
+        1. Log in to the APIC GUI.
+        2. Navigate to **Admin > AAA > Security** and open the **Security Default Settings** tab.
+        3. Review **Password Minimum Length** in the password strength profile.
+
+        The check passes when the minimum length is 12 or more.
+
+        ### Audit via the APIC REST API
+
+        1. Log in to the REST API and keep the session cookie:
+
+           ```bash
+           curl -sf -c apic-cookie.txt -X POST "https://apic.example.com/api/aaaLogin.json" \
+             -d '{"aaaUser":{"attributes":{"name":"admin","pwd":"<password>"}}}'
+           ```
+
+        2. Read the password strength profile:
+
+           ```bash
+           curl -sf -b apic-cookie.txt "https://apic.example.com/api/mo/uni/userext/pwdstrengthprofile.json"
+           ```
+
+        The check passes when `pwdMinLength` is 12 or more.
+      remediation:
+        - id: console
+          desc: |
+            **Using the APIC GUI**
+
+            1. Navigate to **Admin > AAA > Security** and open the **Security Default Settings** tab.
+            2. Click the edit icon and set **Password Minimum Length** to `12` or more.
+            3. Click **Submit**.
+
+            The new minimum applies when a password is next set or changed. Existing passwords keep working until then.
+        - id: api
+          desc: |
+            **Using the APIC REST API**
+
+            Log in, then set the minimum length:
+
+            ```bash
+            curl -sf -c apic-cookie.txt -X POST "https://apic.example.com/api/aaaLogin.json" \
+              -d '{"aaaUser":{"attributes":{"name":"admin","pwd":"<password>"}}}'
+            curl -sf -b apic-cookie.txt -X POST "https://apic.example.com/api/mo/uni/userext/pwdstrengthprofile.json" \
+              -d '{"aaaPwdStrengthProfile":{"attributes":{"pwdMinLength":"12"}}}'
+            ```
+    refs:
+      - url: https://www.cisco.com/c/en/us/td/docs/dcn/whitepapers/cisco-aci-hardening.html
+        title: Cisco ACI Hardening
+  - uid: mondoo-cisco-apic-security-password-history
+    title: Ensure local users cannot reuse any of their last four passwords
+    impact: 60
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-02
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-308-a-5-ii-d-security-awareness-training-and-tools-password-management
+      compliance/iso-27001-2022: iso-27001-2022-a-5-17
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-7
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a07
+      compliance/pci-dss-4: pcidss-requirement-8-3-7
+      compliance/soc2-2017: soc2-control-cc6-1-8
+      compliance/vda-isa-5: vda-isa-5-4-1-3
+    mql: |
+      cisco.apic.aaa.passwordPolicy.historyCount >= 4
+    docs:
+      desc: |
+        This check verifies that a local user cannot set a password they used recently.
+
+        The password change policy keeps the given number of retired passwords for each local user in **Number of Passwords Stored**, and rejects a new password that matches one of them. The factory value is 5. The check requires 4 or more, the history PCI DSS 4.0 requirement 8.3.7 sets.
+
+        **Why this matters**
+
+        A password changed after a suspected compromise only helps if the user cannot change it straight back. Without a history, the old password, which the attacker may already hold, becomes valid again the moment the user reverts to it.
+      audit: |
+        ### Audit via the APIC GUI
+
+        1. Log in to the APIC GUI.
+        2. Navigate to **Admin > AAA > Security** and open the **Security Default Settings** tab.
+        3. Review **Number of Passwords Stored**.
+
+        The check passes when the value is 4 or more.
+
+        ### Audit via the APIC REST API
+
+        1. Log in to the REST API and keep the session cookie:
+
+           ```bash
+           curl -sf -c apic-cookie.txt -X POST "https://apic.example.com/api/aaaLogin.json" \
+             -d '{"aaaUser":{"attributes":{"name":"admin","pwd":"<password>"}}}'
+           ```
+
+        2. Read the password change policy:
+
+           ```bash
+           curl -sf -b apic-cookie.txt "https://apic.example.com/api/mo/uni/userext/pwdprofile.json"
+           ```
+
+        The check passes when `historyCount` is 4 or more.
+      remediation:
+        - id: console
+          desc: |
+            **Using the APIC GUI**
+
+            1. Navigate to **Admin > AAA > Security** and open the **Security Default Settings** tab.
+            2. Click the edit icon and set **Number of Passwords Stored** to `4` or more.
+            3. Click **Submit**.
+        - id: api
+          desc: |
+            **Using the APIC REST API**
+
+            Log in, then set the password history:
+
+            ```bash
+            curl -sf -c apic-cookie.txt -X POST "https://apic.example.com/api/aaaLogin.json" \
+              -d '{"aaaUser":{"attributes":{"name":"admin","pwd":"<password>"}}}'
+            curl -sf -b apic-cookie.txt -X POST "https://apic.example.com/api/mo/uni/userext/pwdprofile.json" \
+              -d '{"aaaPwdProfile":{"attributes":{"historyCount":"5"}}}'
+            ```
+    refs:
+      - url: https://www.cisco.com/c/en/us/td/docs/dcn/whitepapers/cisco-aci-hardening.html
+        title: Cisco ACI Hardening
+  - uid: mondoo-cisco-apic-security-login-lockout
+    title: Ensure users are locked out after repeated failed logins
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-14
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-d-person-or-entity-authentication
+      compliance/iso-27001-2022: iso-27001-2022-a-8-5
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-7
+      compliance/nist-csf-2: nist-csf-2-pr-aa-03
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-8
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a07
+      compliance/pci-dss-4: pcidss-requirement-8-3-4
+      compliance/soc2-2017: soc2-control-cc6-1-4
+      compliance/vda-isa-5: vda-isa-5-4-1-3
+    mql: |
+      cisco.apic.aaa.lockoutPolicy.enabled == true
+      cisco.apic.aaa.lockoutPolicy.maxFailedAttempts <= 10
+      cisco.apic.aaa.lockoutPolicy.lockoutMinutes >= 30
+    docs:
+      desc: |
+        This check verifies that the APIC stops accepting logins for a user after a burst of wrong passwords.
+
+        **Lockout User after multiple failed login attempts** blocks a user once the number of failed attempts within the counting window reaches the limit, for the configured duration. APIC 4.2(4) and later have the setting, and it is disabled by default. The check requires it to be enabled with at most 10 failed attempts and a lockout of at least 30 minutes, the values PCI DSS 4.0 requirement 8.3.4 sets.
+
+        **Why this matters**
+
+        Without a lockout the APIC login and the REST `aaaLogin` endpoint let an attacker try passwords as fast as the controller answers. Even with the strength check enabled, an online guessing run against `admin` or a known administrator name eventually finds a weak or reused password.
+
+        A lockout can be used to block a legitimate administrator on purpose. Pair it with remote AAA, so individual accounts rather than the shared `admin` account are the target, and keep the console path available for recovery.
+      audit: |
+        ### Audit via the APIC GUI
+
+        1. Log in to the APIC GUI.
+        2. Navigate to **Admin > AAA > Security** and open the **Security Default Settings** tab.
+        3. Review **Lockout User after multiple failed login attempts**, **Number of failed attempts before user is locked out**, and **Duration of lockout (m)**.
+
+        The check passes when lockout is enabled, the number of failed attempts is 10 or less, and the duration is 30 minutes or more.
+
+        ### Audit via the APIC REST API
+
+        1. Log in to the REST API and keep the session cookie:
+
+           ```bash
+           curl -sf -c apic-cookie.txt -X POST "https://apic.example.com/api/aaaLogin.json" \
+             -d '{"aaaUser":{"attributes":{"name":"admin","pwd":"<password>"}}}'
+           ```
+
+        2. Read the lockout settings:
+
+           ```bash
+           curl -sf -b apic-cookie.txt "https://apic.example.com/api/mo/uni/userext/blockloginp.json"
+           ```
+
+        The check passes when `enableLoginBlock` is `enable`, `maxFailedAttempts` is 10 or less, and `blockDuration` is 30 or more.
+      remediation:
+        - id: console
+          desc: |
+            **Using the APIC GUI**
+
+            1. Navigate to **Admin > AAA > Security** and open the **Security Default Settings** tab.
+            2. Click the edit icon and set **Lockout User after multiple failed login attempts** to **Enable**.
+            3. Set **Number of failed attempts before user is locked out** to `10` or less, and **Duration of lockout (m)** to `30` or more.
+            4. Click **Submit**.
+        - id: api
+          desc: |
+            **Using the APIC REST API**
+
+            Log in, then enable the lockout:
+
+            ```bash
+            curl -sf -c apic-cookie.txt -X POST "https://apic.example.com/api/aaaLogin.json" \
+              -d '{"aaaUser":{"attributes":{"name":"admin","pwd":"<password>"}}}'
+            curl -sf -b apic-cookie.txt -X POST "https://apic.example.com/api/mo/uni/userext/blockloginp.json" \
+              -d '{"aaaBlockLoginProfile":{"attributes":{"enableLoginBlock":"enable","maxFailedAttempts":"5","maxFailedAttemptsWindow":"5","blockDuration":"60"}}}'
+            ```
+    refs:
+      - url: https://www.cisco.com/c/en/us/td/docs/dcn/aci/apic/6x/security-configuration/cisco-apic-security-configuration-guide-60x/access-authentication-and-accounting-60x.html
+        title: Cisco APIC Security Configuration Guide, Release 6.0(x), Access, Authentication, and Accounting
+  - uid: mondoo-cisco-apic-security-login-banner
+    title: Ensure a login banner is configured for controller and switch CLI logins
+    impact: 40
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: false
+      compliance/dora: false
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-5
+      compliance/nis-2: false
+      compliance/nist-csf-1: false
+      compliance/nist-csf-2: false
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-9
+      compliance/owasp-top-10-2025: false
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: false
+    mql: |
+      cisco.apic.aaa.banner.cliMessage != empty
+      cisco.apic.aaa.banner.cliMessage != "Application Policy Infrastructure Controller"
+      cisco.apic.aaa.banner.switchMessage != empty
+    docs:
+      desc: |
+        This check verifies that users see an authorized-use notice before they log in to the controller or switch command line.
+
+        The fabric keeps separate pre-login banners for the controller CLI, the switch CLI, and the GUI, under **System Settings > System Alias and Banners**. The controller CLI banner ships with the product name, `Application Policy Infrastructure Controller`, and the switch banner ships empty. The check requires the controller CLI banner to differ from the factory text and the switch banner to be set.
+
+        **Why this matters**
+
+        A banner stating that access is restricted to authorized users and is monitored is what many jurisdictions expect before unauthorized access can be prosecuted or activity monitored without further notice. It also tells someone who reached the prompt by mistake that they should not be there.
+
+        Keep the banner to the legal notice your counsel approves. Do not name the organization, the device model, or the software release, which only helps an attacker.
+      audit: |
+        ### Audit via the APIC GUI
+
+        1. Log in to the APIC GUI.
+        2. Navigate to **System > System Settings > System Alias and Banners**.
+        3. Review **Controller CLI Banner** and **Switch CLI Banner**.
+
+        The check passes when the controller banner is not the factory text `Application Policy Infrastructure Controller` and the switch banner is set.
+
+        ### Audit via the APIC REST API
+
+        1. Log in to the REST API and keep the session cookie:
+
+           ```bash
+           curl -sf -c apic-cookie.txt -X POST "https://apic.example.com/api/aaaLogin.json" \
+             -d '{"aaaUser":{"attributes":{"name":"admin","pwd":"<password>"}}}'
+           ```
+
+        2. Read the banners:
+
+           ```bash
+           curl -sf -b apic-cookie.txt "https://apic.example.com/api/mo/uni/userext/preloginbanner.json"
+           ```
+
+        The check passes when `message` is set to something other than `Application Policy Infrastructure Controller` and `switchMessage` is set.
+      remediation:
+        - id: console
+          desc: |
+            **Using the APIC GUI**
+
+            1. Navigate to **System > System Settings > System Alias and Banners**.
+            2. Enter the approved notice in **Controller CLI Banner** and **Switch CLI Banner**, and in **GUI Banner** if the GUI should show it too.
+            3. Click **Submit**.
+        - id: api
+          desc: |
+            **Using the APIC REST API**
+
+            Log in, then set the banners:
+
+            ```bash
+            curl -sf -c apic-cookie.txt -X POST "https://apic.example.com/api/aaaLogin.json" \
+              -d '{"aaaUser":{"attributes":{"name":"admin","pwd":"<password>"}}}'
+            curl -sf -b apic-cookie.txt -X POST "https://apic.example.com/api/mo/uni/userext/preloginbanner.json" \
+              -d '{"aaaPreLoginBanner":{"attributes":{"message":"Authorized use only. Activity is monitored.","switchMessage":"Authorized use only. Activity is monitored."}}}'
+            ```
+    refs:
+      - url: https://www.cisco.com/c/en/us/td/docs/dcn/whitepapers/cisco-aci-hardening.html
+        title: Cisco ACI Hardening
+  - uid: mondoo-cisco-apic-security-coop-strict-mode
+    title: Ensure COOP authentication is set to strict mode
+    impact: 75
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-d-person-or-entity-authentication
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-7
+      compliance/nist-csf-2: nist-csf-2-pr-aa-03
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-23
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-15
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a07
+      compliance/pci-dss-4: pcidss-requirement-2-2-1
+      compliance/soc2-2017: soc2-control-cc6-1-4
+      compliance/vda-isa-5: vda-isa-5-5-2-7
+    mql: |
+      cisco.apic.fabric.settings.coopStrictMode == true
+    docs:
+      desc: |
+        This check verifies that the spine endpoint database only accepts updates from switches that authenticate.
+
+        COOP is the protocol leaf switches use to report every endpoint they learn to the spines, which keep the fabric's mapping of endpoints to locations. The **COOP Group** policy sets its authentication mode. In **Compatible** mode, the factory setting, spines accept both MD5-authenticated and unauthenticated messages; in **Strict** mode they accept only authenticated ones. The check requires **Strict**.
+
+        **Why this matters**
+
+        Whoever can write to the COOP database decides where the fabric forwards traffic for an endpoint. A device that can send COOP messages into the infrastructure network, for example a compromised or rogue switch, can announce a server's address at its own location and receive its traffic. Strict mode makes such messages fail authentication.
+
+        All switches of a supported release support strict mode. Enable it after confirming that no switch in the fabric runs a release older than the controllers expect.
+      audit: |
+        ### Audit via the APIC GUI
+
+        1. Log in to the APIC GUI.
+        2. Navigate to **System > System Settings > COOP Group**.
+        3. Review **Type**.
+
+        The check passes when the type is **Strict**.
+
+        ### Audit via the APIC REST API
+
+        1. Log in to the REST API and keep the session cookie:
+
+           ```bash
+           curl -sf -c apic-cookie.txt -X POST "https://apic.example.com/api/aaaLogin.json" \
+             -d '{"aaaUser":{"attributes":{"name":"admin","pwd":"<password>"}}}'
+           ```
+
+        2. Read the COOP group policy:
+
+           ```bash
+           curl -sf -b apic-cookie.txt "https://apic.example.com/api/mo/uni/fabric/pol-default.json"
+           ```
+
+        The check passes when `type` is `strict`.
+      remediation:
+        - id: console
+          desc: |
+            **Using the APIC GUI**
+
+            1. Navigate to **System > System Settings > COOP Group**.
+            2. Set **Type** to **Strict**.
+            3. Click **Submit**.
+        - id: api
+          desc: |
+            **Using the APIC REST API**
+
+            Log in, then set the COOP group policy to strict:
+
+            ```bash
+            curl -sf -c apic-cookie.txt -X POST "https://apic.example.com/api/aaaLogin.json" \
+              -d '{"aaaUser":{"attributes":{"name":"admin","pwd":"<password>"}}}'
+            curl -sf -b apic-cookie.txt -X POST "https://apic.example.com/api/mo/uni/fabric/pol-default.json" \
+              -d '{"coopPol":{"attributes":{"type":"strict"}}}'
+            ```
+    refs:
+      - url: https://www.cisco.com/c/en/us/td/docs/dcn/whitepapers/cisco-aci-hardening.html
+        title: Cisco ACI Hardening
+  - uid: mondoo-cisco-apic-security-opflex-tls
+    title: Ensure OpFlex connections use TLS 1.2 or later
+    impact: 75
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-2-ii-transmission-security-encryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a04
+      compliance/pci-dss-4: pcidss-requirement-2-2-1
+      compliance/soc2-2017: soc2-control-cc6-7-2
+      compliance/vda-isa-5: vda-isa-5-5-1-2
+    mql: |
+      cisco.apic.fabric.settings.opflexSslEnabled == true
+      cisco.apic.fabric.settings.opflexTlsVersions != empty
+      cisco.apic.fabric.settings.opflexTlsVersions.none(_ == "TLSv1" || _ == "TLSv1.1")
+    docs:
+      desc: |
+        This check verifies that the policy the fabric pushes to OpFlex agents travels over modern TLS.
+
+        OpFlex is the protocol the leaf switches use to send policy to agents on hypervisor virtual switches, such as the OpFlex agent of OpenStack or Kubernetes integrations. **SSL Opflex** in the fabric-wide settings requires TLS for these connections, and **SSL Opflex Version** lists the TLS versions allowed. The factory value is TLS 1.1 and TLS 1.2. The check requires TLS to be on and neither TLS 1.0 nor TLS 1.1 to be allowed.
+
+        **Why this matters**
+
+        OpFlex carries the endpoint group membership and contract policy that decides which workloads may talk to each other. An attacker who can read or alter it on the path learns the segmentation design and can push an agent toward a weaker policy. TLS 1.0 and TLS 1.1 are deprecated by RFC 8996 and leave the session exposed to downgrade and CBC padding attacks.
+
+        Fabrics with no OpFlex agents are unaffected by the setting and can change it without impact.
+      audit: |
+        ### Audit via the APIC GUI
+
+        1. Log in to the APIC GUI.
+        2. Navigate to **System > System Settings > Fabric-Wide Settings**.
+        3. Review **SSL Opflex** and **SSL Opflex Version**.
+
+        The check passes when SSL Opflex is enabled and only **TLSv1.2** is selected.
+
+        ### Audit via the APIC REST API
+
+        1. Log in to the REST API and keep the session cookie:
+
+           ```bash
+           curl -sf -c apic-cookie.txt -X POST "https://apic.example.com/api/aaaLogin.json" \
+             -d '{"aaaUser":{"attributes":{"name":"admin","pwd":"<password>"}}}'
+           ```
+
+        2. Read the fabric-wide settings:
+
+           ```bash
+           curl -sf -b apic-cookie.txt "https://apic.example.com/api/mo/uni/infra/settings.json"
+           ```
+
+        The check passes when `opflexpUseSsl` is `yes` and `opflexpSslProtocols` lists neither `TLSv1` nor `TLSv1.1`.
+      remediation:
+        - id: console
+          desc: |
+            **Using the APIC GUI**
+
+            1. Navigate to **System > System Settings > Fabric-Wide Settings**.
+            2. Enable **SSL Opflex**.
+            3. Under **SSL Opflex Version**, clear **TLSv1** and **TLSv1.1** and keep **TLSv1.2** selected.
+            4. Click **Submit**.
+
+            **OpFlex agents that only support TLS 1.1 disconnect.** Update them before the change.
+        - id: api
+          desc: |
+            **Using the APIC REST API**
+
+            Log in, then set the OpFlex TLS settings:
+
+            ```bash
+            curl -sf -c apic-cookie.txt -X POST "https://apic.example.com/api/aaaLogin.json" \
+              -d '{"aaaUser":{"attributes":{"name":"admin","pwd":"<password>"}}}'
+            curl -sf -b apic-cookie.txt -X POST "https://apic.example.com/api/mo/uni/infra/settings.json" \
+              -d '{"infraSetPol":{"attributes":{"opflexpUseSsl":"yes","opflexpSslProtocols":"TLSv1.2"}}}'
+            ```
+    refs:
+      - url: https://www.cisco.com/c/en/us/td/docs/dcn/whitepapers/cisco-aci-hardening.html
+        title: Cisco ACI Hardening
+      - url: https://www.rfc-editor.org/rfc/rfc8996
+        title: "RFC 8996: Deprecating TLS 1.0 and TLS 1.1"
+  - uid: mondoo-cisco-apic-security-opflex-client-authentication
+    title: Ensure OpFlex clients must authenticate with a certificate
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-d-person-or-entity-authentication
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-7
+      compliance/nist-csf-2: nist-csf-2-pr-aa-03
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-23
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-15
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a07
+      compliance/pci-dss-4: pcidss-requirement-2-2-1
+      compliance/soc2-2017: soc2-control-cc6-1-4
+      compliance/vda-isa-5: vda-isa-5-5-2-7
+    mql: |
+      cisco.apic.fabric.settings.opflexClientAuthentication == true
+    docs:
+      desc: |
+        This check verifies that only OpFlex agents with a certificate the fabric trusts can connect to the leaf switches.
+
+        **Opflex Client Authentication** in the fabric-wide settings makes the leaf switches require a client certificate from every OpFlex agent. It is enabled by default. The check requires it to stay enabled.
+
+        **Why this matters**
+
+        An OpFlex agent declares which endpoints sit behind it and receives the policy for them. Without client authentication, any host that reaches the infrastructure VLAN can pose as an agent, announce endpoints it does not own, and learn the endpoint groups and contracts that segment the data center.
+      audit: |
+        ### Audit via the APIC GUI
+
+        1. Log in to the APIC GUI.
+        2. Navigate to **System > System Settings > Fabric-Wide Settings**.
+        3. Review **Opflex Client Authentication**.
+
+        The check passes when the setting is enabled.
+
+        ### Audit via the APIC REST API
+
+        1. Log in to the REST API and keep the session cookie:
+
+           ```bash
+           curl -sf -c apic-cookie.txt -X POST "https://apic.example.com/api/aaaLogin.json" \
+             -d '{"aaaUser":{"attributes":{"name":"admin","pwd":"<password>"}}}'
+           ```
+
+        2. Read the fabric-wide settings:
+
+           ```bash
+           curl -sf -b apic-cookie.txt "https://apic.example.com/api/mo/uni/infra/settings.json"
+           ```
+
+        The check passes when `opflexpAuthenticateClients` is `yes`.
+      remediation:
+        - id: console
+          desc: |
+            **Using the APIC GUI**
+
+            1. Navigate to **System > System Settings > Fabric-Wide Settings**.
+            2. Enable **Opflex Client Authentication**.
+            3. Click **Submit**.
+
+            **Agents without a valid client certificate disconnect.** Confirm that every OpFlex agent has one before enabling the setting.
+        - id: api
+          desc: |
+            **Using the APIC REST API**
+
+            Log in, then enable client authentication:
+
+            ```bash
+            curl -sf -c apic-cookie.txt -X POST "https://apic.example.com/api/aaaLogin.json" \
+              -d '{"aaaUser":{"attributes":{"name":"admin","pwd":"<password>"}}}'
+            curl -sf -b apic-cookie.txt -X POST "https://apic.example.com/api/mo/uni/infra/settings.json" \
+              -d '{"infraSetPol":{"attributes":{"opflexpAuthenticateClients":"yes"}}}'
+            ```
+    refs:
+      - url: https://www.cisco.com/c/en/us/td/docs/dcn/whitepapers/cisco-aci-hardening.html
+        title: Cisco ACI Hardening
+  - uid: mondoo-cisco-apic-security-enforce-subnet-check
+    title: Ensure endpoint learning is limited to the bridge domain subnets
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-09
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a02
+      compliance/pci-dss-4: pcidss-requirement-2-2-1
+      compliance/soc2-2017: soc2-control-cc7-1-1
+      compliance/vda-isa-5: vda-isa-5-5-2-7
+    mql: |
+      cisco.apic.fabric.settings.enforceSubnetCheck == true
+    docs:
+      desc: |
+        This check verifies that the fabric refuses to learn an endpoint at an IP address outside the subnets of its VRF.
+
+        **Enforce Subnet Check** in the fabric-wide settings makes the leaf switches learn an endpoint's IP address only when it falls inside a subnet configured for the VRF. Without it, a leaf learns any source address it sees. The check requires the setting to be enabled.
+
+        **Why this matters**
+
+        A host that sends traffic from a spoofed address in another tenant's or another segment's range gets that address learned at its own port. Traffic for the real owner can then be drawn to the spoofing host, and the bogus entries confuse forwarding for everyone else. Subnet enforcement stops the learning at the edge.
+      audit: |
+        ### Audit via the APIC GUI
+
+        1. Log in to the APIC GUI.
+        2. Navigate to **System > System Settings > Fabric-Wide Settings**.
+        3. Review **Enforce Subnet Check**.
+
+        The check passes when the setting is enabled.
+
+        ### Audit via the APIC REST API
+
+        1. Log in to the REST API and keep the session cookie:
+
+           ```bash
+           curl -sf -c apic-cookie.txt -X POST "https://apic.example.com/api/aaaLogin.json" \
+             -d '{"aaaUser":{"attributes":{"name":"admin","pwd":"<password>"}}}'
+           ```
+
+        2. Read the fabric-wide settings:
+
+           ```bash
+           curl -sf -b apic-cookie.txt "https://apic.example.com/api/mo/uni/infra/settings.json"
+           ```
+
+        The check passes when `enforceSubnetCheck` is `yes`.
+      remediation:
+        - id: console
+          desc: |
+            **Using the APIC GUI**
+
+            1. Navigate to **System > System Settings > Fabric-Wide Settings**.
+            2. Enable **Enforce Subnet Check**.
+            3. Click **Submit**.
+
+            **Endpoints that use addresses outside the configured subnets stop being learned.** Review the bridge domain subnets for gaps first.
+        - id: api
+          desc: |
+            **Using the APIC REST API**
+
+            Log in, then enable subnet enforcement:
+
+            ```bash
+            curl -sf -c apic-cookie.txt -X POST "https://apic.example.com/api/aaaLogin.json" \
+              -d '{"aaaUser":{"attributes":{"name":"admin","pwd":"<password>"}}}'
+            curl -sf -b apic-cookie.txt -X POST "https://apic.example.com/api/mo/uni/infra/settings.json" \
+              -d '{"infraSetPol":{"attributes":{"enforceSubnetCheck":"yes"}}}'
+            ```
+    refs:
+      - url: https://www.cisco.com/c/en/us/td/docs/dcn/whitepapers/cisco-aci-hardening.html
+        title: Cisco ACI Hardening
+  - uid: mondoo-cisco-apic-security-rogue-endpoint-control
+    title: Ensure rogue endpoint control is enabled
+    impact: 65
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-09
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-4
+      compliance/nist-sp-800-171: nist-sp-800-171--3-14-6
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a02
+      compliance/pci-dss-4: pcidss-requirement-2-2-1
+      compliance/soc2-2017: soc2-control-cc7-1-1
+      compliance/vda-isa-5: vda-isa-5-5-2-7
+    mql: |
+      cisco.apic.fabric.settings.rogueEndpointControlEnabled == true
+    docs:
+      desc: |
+        This check verifies that the fabric detects and quarantines endpoints whose location keeps changing.
+
+        **Rogue EP Control** under the endpoint controls counts how often an endpoint's MAC or IP address moves between ports or switches. An endpoint that moves more often than the detection multiplier allows within the detection interval is declared rogue, held at its current location, and reported with a fault. It is disabled by default. The check requires it to be enabled.
+
+        **Why this matters**
+
+        Constant moves are the signature of address spoofing and of layer 2 loops outside the fabric. A host that claims the gateway or another server's address makes the endpoint flap between two places, splitting traffic between them, and every move costs COOP updates across the spines. Rogue endpoint control stops the flapping and turns it into an alert someone sees.
+      audit: |
+        ### Audit via the APIC GUI
+
+        1. Log in to the APIC GUI.
+        2. Navigate to **System > System Settings > Endpoint Controls** and open the **Rogue EP Control** tab.
+        3. Review **Administrative State**.
+
+        The check passes when the state is **Enabled**.
+
+        ### Audit via the APIC REST API
+
+        1. Log in to the REST API and keep the session cookie:
+
+           ```bash
+           curl -sf -c apic-cookie.txt -X POST "https://apic.example.com/api/aaaLogin.json" \
+             -d '{"aaaUser":{"attributes":{"name":"admin","pwd":"<password>"}}}'
+           ```
+
+        2. Read the endpoint control policy:
+
+           ```bash
+           curl -sf -b apic-cookie.txt "https://apic.example.com/api/mo/uni/infra/epCtrlP-default.json"
+           ```
+
+        The check passes when `adminSt` is `enabled`.
+      remediation:
+        - id: console
+          desc: |
+            **Using the APIC GUI**
+
+            1. Navigate to **System > System Settings > Endpoint Controls** and open the **Rogue EP Control** tab.
+            2. Set **Administrative State** to **Enabled** and keep the detection interval and multiplier at their defaults unless you have a reason to change them.
+            3. Click **Submit**.
+        - id: api
+          desc: |
+            **Using the APIC REST API**
+
+            Log in, then enable rogue endpoint control:
+
+            ```bash
+            curl -sf -c apic-cookie.txt -X POST "https://apic.example.com/api/aaaLogin.json" \
+              -d '{"aaaUser":{"attributes":{"name":"admin","pwd":"<password>"}}}'
+            curl -sf -b apic-cookie.txt -X POST "https://apic.example.com/api/mo/uni/infra/epCtrlP-default.json" \
+              -d '{"epControlP":{"attributes":{"adminSt":"enabled"}}}'
+            ```
+    refs:
+      - url: https://www.cisco.com/c/en/us/td/docs/dcn/whitepapers/cisco-aci-hardening.html
+        title: Cisco ACI Hardening
+  - uid: mondoo-cisco-apic-security-endpoint-loop-protection
+    title: Ensure endpoint loop protection is enabled
+    impact: 60
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-09
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-pt-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-03
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-5
+      compliance/nist-sp-800-171: false
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a02
+      compliance/pci-dss-4: pcidss-requirement-2-2-1
+      compliance/soc2-2017: soc2-control-cc7-1-1
+      compliance/vda-isa-5: vda-isa-5-5-2-7
+    mql: |
+      cisco.apic.fabric.settings.endpointLoopProtectionEnabled == true
+    docs:
+      desc: |
+        This check verifies that the fabric acts on endpoint moves that indicate a forwarding loop.
+
+        **Ep Loop Protection** under the endpoint controls watches for an endpoint moving between ports too often and then either disables the port or stops learning in the bridge domain, as set in **Action**. It is disabled by default. The check requires it to be enabled.
+
+        **Why this matters**
+
+        A layer 2 loop outside the fabric, from a misconnected switch or a bridging virtual machine, multiplies broadcast traffic and makes every endpoint behind it appear on several ports at once. Without loop protection that storm takes down the bridge domain and loads the switches' control planes, an outage an attacker on a host port can trigger on purpose.
+      audit: |
+        ### Audit via the APIC GUI
+
+        1. Log in to the APIC GUI.
+        2. Navigate to **System > System Settings > Endpoint Controls** and open the **Ep Loop Protection** tab.
+        3. Review **Administrative State**.
+
+        The check passes when the state is **Enabled**.
+
+        ### Audit via the APIC REST API
+
+        1. Log in to the REST API and keep the session cookie:
+
+           ```bash
+           curl -sf -c apic-cookie.txt -X POST "https://apic.example.com/api/aaaLogin.json" \
+             -d '{"aaaUser":{"attributes":{"name":"admin","pwd":"<password>"}}}'
+           ```
+
+        2. Read the endpoint loop protection policy:
+
+           ```bash
+           curl -sf -b apic-cookie.txt "https://apic.example.com/api/mo/uni/infra/epLoopProtectP-default.json"
+           ```
+
+        The check passes when `adminSt` is `enabled`.
+      remediation:
+        - id: console
+          desc: |
+            **Using the APIC GUI**
+
+            1. Navigate to **System > System Settings > Endpoint Controls** and open the **Ep Loop Protection** tab.
+            2. Set **Administrative State** to **Enabled**.
+            3. Choose an **Action**. **BD Learn Disable** limits the impact to the affected bridge domain; **Port Disable** shuts the port the loop enters on.
+            4. Click **Submit**.
+        - id: api
+          desc: |
+            **Using the APIC REST API**
+
+            Log in, then enable endpoint loop protection:
+
+            ```bash
+            curl -sf -c apic-cookie.txt -X POST "https://apic.example.com/api/aaaLogin.json" \
+              -d '{"aaaUser":{"attributes":{"name":"admin","pwd":"<password>"}}}'
+            curl -sf -b apic-cookie.txt -X POST "https://apic.example.com/api/mo/uni/infra/epLoopProtectP-default.json" \
+              -d '{"epLoopProtectP":{"attributes":{"adminSt":"enabled","action":"bd-learn-disable"}}}'
+            ```
+    refs:
+      - url: https://www.cisco.com/c/en/us/td/docs/dcn/whitepapers/cisco-aci-hardening.html
+        title: Cisco ACI Hardening
+  - uid: mondoo-cisco-apic-security-mcp-enabled
+    title: Ensure the MisCabling Protocol is enabled globally
+    impact: 60
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-09
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-pt-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-03
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-5
+      compliance/nist-sp-800-171: false
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a02
+      compliance/pci-dss-4: pcidss-requirement-2-2-1
+      compliance/soc2-2017: soc2-control-cc7-1-1
+      compliance/vda-isa-5: vda-isa-5-5-2-7
+    mql: |
+      cisco.apic.fabric.settings.mcpEnabled == true
+    docs:
+      desc: |
+        This check verifies that leaf switches send MisCabling Protocol probes to detect loops through external switches.
+
+        ACI does not run spanning tree, so a loop between two host ports through an external layer 2 network is invisible to it. MCP sends signed probes out of host ports and disables a port that receives a probe from the fabric. It must be enabled globally in the **MCP Instance Policy default**, with a key, before the per-interface MCP policies take effect. It is disabled by default. The check requires it to be enabled globally.
+
+        **Why this matters**
+
+        A loop through an external switch floods every broadcast around the loop until links saturate, which takes down the bridge domain and can affect the switches' control planes. MCP is the fabric's own defense against it and catches loops that endpoint loop protection only notices after the damage starts.
+      audit: |
+        ### Audit via the APIC GUI
+
+        1. Log in to the APIC GUI.
+        2. Navigate to **Fabric > Access Policies > Policies > Global > MCP Instance Policy default**.
+        3. Review **Admin State**.
+
+        The check passes when the state is **Enabled**.
+
+        ### Audit via the APIC REST API
+
+        1. Log in to the REST API and keep the session cookie:
+
+           ```bash
+           curl -sf -c apic-cookie.txt -X POST "https://apic.example.com/api/aaaLogin.json" \
+             -d '{"aaaUser":{"attributes":{"name":"admin","pwd":"<password>"}}}'
+           ```
+
+        2. Read the global MCP policy:
+
+           ```bash
+           curl -sf -b apic-cookie.txt "https://apic.example.com/api/mo/uni/infra/mcpInstP-default.json"
+           ```
+
+        The check passes when `adminSt` is `enabled`.
+      remediation:
+        - id: console
+          desc: |
+            **Using the APIC GUI**
+
+            1. Navigate to **Fabric > Access Policies > Policies > Global > MCP Instance Policy default**.
+            2. Set **Admin State** to **Enabled** and enter a **Key** that the switches use to sign the probes.
+            3. Click **Submit**.
+            4. Make sure the interface policy groups of host ports use an MCP interface policy that is enabled, which is the default.
+        - id: api
+          desc: |
+            **Using the APIC REST API**
+
+            Log in, then enable MCP globally with a key:
+
+            ```bash
+            curl -sf -c apic-cookie.txt -X POST "https://apic.example.com/api/aaaLogin.json" \
+              -d '{"aaaUser":{"attributes":{"name":"admin","pwd":"<password>"}}}'
+            curl -sf -b apic-cookie.txt -X POST "https://apic.example.com/api/mo/uni/infra/mcpInstP-default.json" \
+              -d '{"mcpInstPol":{"attributes":{"adminSt":"enabled","key":"<mcp-key>"}}}'
+            ```
+    refs:
+      - url: https://www.cisco.com/c/en/us/td/docs/dcn/whitepapers/cisco-aci-hardening.html
+        title: Cisco ACI Hardening
+  - uid: mondoo-cisco-apic-security-domain-validation
+    title: Ensure domain validation is enforced
+    impact: 55
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-04
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-9
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ip-1
+      compliance/nist-csf-2: nist-csf-2-pr-ps-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-4-2
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a02
+      compliance/pci-dss-4: pcidss-requirement-2-2-1
+      compliance/soc2-2017: soc2-control-cc7-1-1
+      compliance/vda-isa-5: vda-isa-5-5-2-1
+    mql: |
+      cisco.apic.fabric.settings.domainValidation == true
+    docs:
+      desc: |
+        This check verifies that the APIC rejects an endpoint group binding to a port or VLAN that the group's domain does not allow.
+
+        In ACI, a domain ties an endpoint group to the VLAN pools and interfaces it may use. **Enforce Domain Validation** in the fabric-wide settings makes the APIC check every static path against the endpoint group's domains and refuse the ones that do not match. It is disabled by default, and once enabled it cannot be disabled again. The check requires it to be enabled.
+
+        **Why this matters**
+
+        Without validation, an endpoint group can be deployed on a port and VLAN that belong to another team's domain, which silently places hosts into the wrong segment and lets a tenant administrator reach interfaces their domain was meant to exclude. Validation turns that mistake into a rejected configuration.
+
+        Resolve the faults existing configuration raises for missing domains before enabling it, because the setting is permanent.
+      audit: |
+        ### Audit via the APIC GUI
+
+        1. Log in to the APIC GUI.
+        2. Navigate to **System > System Settings > Fabric-Wide Settings**.
+        3. Review **Enforce Domain Validation**.
+
+        The check passes when the setting is enabled.
+
+        ### Audit via the APIC REST API
+
+        1. Log in to the REST API and keep the session cookie:
+
+           ```bash
+           curl -sf -c apic-cookie.txt -X POST "https://apic.example.com/api/aaaLogin.json" \
+             -d '{"aaaUser":{"attributes":{"name":"admin","pwd":"<password>"}}}'
+           ```
+
+        2. Read the fabric-wide settings:
+
+           ```bash
+           curl -sf -b apic-cookie.txt "https://apic.example.com/api/mo/uni/infra/settings.json"
+           ```
+
+        The check passes when `domainValidation` is `yes`.
+      remediation:
+        - id: console
+          desc: |
+            **Using the APIC GUI**
+
+            1. Resolve every fault about endpoint groups that lack a domain or use a path outside it.
+            2. Navigate to **System > System Settings > Fabric-Wide Settings**.
+            3. Enable **Enforce Domain Validation**.
+            4. Click **Submit**.
+
+            **The setting cannot be disabled once enabled.**
+        - id: api
+          desc: |
+            **Using the APIC REST API**
+
+            Log in, then enable domain validation:
+
+            ```bash
+            curl -sf -c apic-cookie.txt -X POST "https://apic.example.com/api/aaaLogin.json" \
+              -d '{"aaaUser":{"attributes":{"name":"admin","pwd":"<password>"}}}'
+            curl -sf -b apic-cookie.txt -X POST "https://apic.example.com/api/mo/uni/infra/settings.json" \
+              -d '{"infraSetPol":{"attributes":{"domainValidation":"yes"}}}'
+            ```
+
+            **The setting cannot be disabled once enabled.**
+    refs:
+      - url: https://www.cisco.com/c/en/us/td/docs/dcn/whitepapers/cisco-aci-hardening.html
+        title: Cisco ACI Hardening
+  # Release table last checked 2026-11-14 against the Cisco end-of-life notices for
+  # ACI 5.2 and 5.3 in refs. 5.2 and 5.3: end of vulnerability/security support
+  # 2025-12-31. 6.0, 6.1 and 6.2: no end-of-life announcement.
+  - uid: mondoo-cisco-apic-security-controller-release-supported
+    title: Ensure the controllers run an APIC release with security support
+    impact: 90
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-tvm-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-8
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ip-12
+      compliance/nist-csf-2: nist-csf-2-pr-ps-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-2
+      compliance/nist-sp-800-171: nist-sp-800-171--3-14-1
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a03
+      compliance/pci-dss-4: pcidss-requirement-6-3-3
+      compliance/soc2-2017: soc2-control-cc7-1-2
+      compliance/vda-isa-5: vda-isa-5-5-2-5
+    mql: |
+      cisco.apic.fabric.nodes.where(role == "controller") != empty
+      cisco.apic.fabric.nodes.where(role == "controller").all(
+        version == /^5\.[23]\(/ && time.now < parse.date("2025-12-31") ||
+        version == /^6\.[0-2]\(/
+      )
+    docs:
+      desc: |
+        This check verifies that every controller of the cluster runs an APIC release train for which Cisco still publishes security fixes.
+
+        Cisco announces an end of vulnerability and security support date for each ACI release train. After it, newly found vulnerabilities in that train are no longer fixed. The check compares the running release of every controller against the trains that are still supported, using Cisco's published end-of-life notices, and fails a train past its date or one it does not know.
+
+        **Why this matters**
+
+        The APIC is reachable over HTTPS and SSH from the management network and holds the configuration of every switch. Cisco has published critical advisories against the APIC REST API and web interface that allow unauthenticated access or privilege escalation. On a train past its security support date, the next such advisory comes without a fix, and the only remedy is an upgrade under pressure.
+
+        Upgrading the controllers is followed by upgrading the switches, which this check does not cover. Plan both together.
+      audit: |
+        ### Audit via the APIC GUI
+
+        1. Log in to the APIC GUI.
+        2. Navigate to **Admin > Firmware** and review the running version of each controller.
+        3. Compare the release train with the end-of-life notices for Cisco ACI software releases.
+
+        The check passes when every controller runs a release train that has not reached its end of vulnerability and security support.
+
+        ### Audit via the APIC REST API
+
+        1. Log in to the REST API and keep the session cookie:
+
+           ```bash
+           curl -sf -c apic-cookie.txt -X POST "https://apic.example.com/api/aaaLogin.json" \
+             -d '{"aaaUser":{"attributes":{"name":"admin","pwd":"<password>"}}}'
+           ```
+
+        2. Read the running version of every controller:
+
+           ```bash
+           curl -sf -b apic-cookie.txt "https://apic.example.com/api/class/firmwareCtrlrRunning.json"
+           ```
+
+        The check passes when the `version` of every controller belongs to a supported release train.
+      remediation:
+        - id: console
+          desc: |
+            **Using the APIC GUI**
+
+            1. Choose a target release from Cisco's recommended releases for Cisco ACI and read its upgrade path; some upgrades need an intermediate release.
+            2. Download the APIC image from Cisco Software Download and add it under **Admin > Firmware > Images**.
+            3. Run the pre-upgrade validation, then create an upgrade group for the controllers under **Admin > Firmware > Controllers** and start the upgrade.
+            4. After the controllers finish, upgrade the switches in maintenance groups.
+
+            **Controllers upgrade one at a time and the cluster stays available, but the GUI is unavailable while the controller you are logged in to reboots.**
+        # No api remediation: an APIC upgrade involves image download, pre-upgrade validation, and staged controller and switch groups that Cisco documents for the GUI; a single REST call does not perform it safely.
+    refs:
+      - url: https://www.cisco.com/c/en/us/products/collateral/cloud-systems-management/application-policy-infrastructure-controller-apic/aci-software-releases-5-2-and-15-2-eol.html
+        title: End-of-Sale and End-of-Life Announcement for the Cisco ACI Software Releases 5.2 and 15.2
+      - url: https://www.cisco.com/c/en/us/products/collateral/cloud-systems-management/application-policy-infrastructure-controller-apic/aci-software-releases-5-3-and-15-3-eol.html
+        title: End-of-Sale and End-of-Life Announcement for the Cisco ACI Software Releases 5.3 and 15.3

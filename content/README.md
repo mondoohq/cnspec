@@ -73,6 +73,7 @@ Our comprehensive collection of security policies covers major platforms and ser
 ### Network Devices
 
 - **Arista EOS** - `mondoo-arista-eos-security.mql.yaml` - Arista EOS network device security hardening
+- **Cisco APIC** - `mondoo-cisco-apic-security.mql.yaml` - Cisco ACI fabric security configuration through the APIC controllers
 - **Cisco IOS-XE** - `mondoo-cisco-iosxe-security.mql.yaml` - Cisco IOS-XE security configuration and hardening
 - **Cisco IOS-XR** - `mondoo-cisco-iosxr-security.mql.yaml` - Cisco IOS-XR security configuration and hardening
 - **Cisco NX-OS** - `mondoo-cisco-nxos-security.mql.yaml` - Cisco NX-OS security configuration and hardening
