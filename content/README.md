@@ -82,6 +82,7 @@ Our comprehensive collection of security policies covers major platforms and ser
 - **HPE Aruba Networking AOS-CX** - `mondoo-aoscx-security.mql.yaml` - Secure HPE Aruba Networking AOS-CX switch management access, AAA, SSH, SNMP, NTP, and logging
 - **Juniper JunOS** - `mondoo-junos-security.mql.yaml` - Juniper JunOS network device security hardening
 - **MikroTik RouterOS** - `mondoo-mikrotik-security.mql.yaml` - Secure MikroTik RouterOS routers, switches, and access points
+- **NetScaler ADC** - `mondoo-netscaler-security.mql.yaml` - Harden NetScaler ADC and Gateway firmware, management access, authentication, TLS, and logging
 - **Palo Alto PAN-OS** - `mondoo-panos-security.mql.yaml` - Palo Alto Networks PAN-OS security assessment
 - **Ubiquiti UniFi** - `mondoo-unifi-security.mql.yaml` - Ubiquiti UniFi network security assessment
 
