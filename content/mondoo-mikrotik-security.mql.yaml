@@ -849,12 +849,27 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-6-4
       compliance/vda-isa-5: vda-isa-5-5-2-7
     mql: |
-      mikrotik.firewallRules.where(chain == "input" && disabled != true && invalid != true) != empty && mikrotik.firewallRules.where(chain == "input" && disabled != true && invalid != true).last.action.in(["drop", "reject"])
+      inputRules = mikrotik.firewallRules.where(chain == "input" && disabled != true && invalid != true)
+      inputRules != empty
+      inputRules.last {
+        action.in(["drop", "reject"])
+        protocol == empty
+        srcAddress == empty
+        dstAddress == empty
+        srcAddressList == empty
+        dstAddressList == empty
+        srcPort == empty
+        dstPort == empty
+        inInterface == empty
+        connectionState == empty
+      }
     docs:
       desc: |
         This check verifies that traffic addressed to the router itself is denied unless a rule explicitly permits it.
 
         The `input` chain in `/ip firewall filter` governs packets destined for the router rather than passing through it, and RouterOS accepts anything no rule matches. A default-deny posture therefore has to be written out: accept rules for established connections and for trusted management sources, then a closing `/ip firewall filter add chain=input action=drop` at the end of the chain.
+
+        The check requires the last enabled rule of the input chain to drop or reject without matching on protocol, source or destination address, address list, port, input interface, or connection state. A final rule such as `action=drop protocol=tcp dst-port=23` blocks one service and lets everything else through, so it fails. RouterOS also supports matchers the check cannot see, such as `in-interface-list`. A final rule limited only by one of those, like the default configuration's `in-interface-list=!LAN` drop, passes.
 
         **Why this matters**
 
@@ -877,7 +892,7 @@ queries:
 
         3. Find the last rule in the list that is not disabled.
 
-        If that last enabled input rule has `action=drop` or `action=reject`, the check passes. If the chain is empty or ends in any other action, the check fails, because traffic that reaches the end of the chain is accepted.
+        If that last enabled input rule has `action=drop` or `action=reject` and no protocol, address, address list, port, `in-interface`, or `connection-state` matcher, the check passes. If the chain is empty, ends in any other action, or ends in a drop limited by one of those matchers, the check fails, because traffic that reaches the end of the chain is accepted.
       remediation:
         - id: cli
           desc: |
@@ -2197,12 +2212,24 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-6-4
       compliance/vda-isa-5: vda-isa-5-5-2-7
     mql: |
-      mikrotik.ipv6Addresses.where(disabled != true && invalid != true && address != /^::1\//).length == 0 || mikrotik.ipv6FirewallRules.where(chain == "input" && disabled != true && invalid != true) != empty && mikrotik.ipv6FirewallRules.where(chain == "input" && disabled != true && invalid != true).last.action.in(["drop", "reject"])
+      ipv6InUse = mikrotik.ipv6Addresses.where(disabled != true && invalid != true && address != /^::1\//) != empty
+      inputRules = mikrotik.ipv6FirewallRules.where(chain == "input" && disabled != true && invalid != true)
+      ipv6InUse == false || inputRules != empty &&
+        inputRules.last.action.in(["drop", "reject"]) &&
+        inputRules.last.protocol == empty &&
+        inputRules.last.srcAddress == empty &&
+        inputRules.last.dstAddress == empty &&
+        inputRules.last.srcAddressList == empty &&
+        inputRules.last.dstAddressList == empty &&
+        inputRules.last.srcPort == empty &&
+        inputRules.last.dstPort == empty &&
+        inputRules.last.inInterface == empty &&
+        inputRules.last.connectionState == empty
     docs:
       desc: |
         This check verifies that IPv6 traffic addressed to the router itself is denied unless a rule explicitly permits it.
 
-        IPv6 has its own firewall under `/ipv6 firewall filter`, independent of the IPv4 rules, and its `input` chain accepts anything no rule matches. RouterOS assigns link-local IPv6 addresses to interfaces automatically, so the router is reachable over IPv6 even when nobody configured IPv6 on purpose. The check applies whenever the router has an IPv6 address other than loopback and requires the last enabled rule of the IPv6 input chain to drop or reject.
+        IPv6 has its own firewall under `/ipv6 firewall filter`, independent of the IPv4 rules, and its `input` chain accepts anything no rule matches. RouterOS assigns link-local IPv6 addresses to interfaces automatically, so the router is reachable over IPv6 even when nobody configured IPv6 on purpose. The check applies whenever the router has an IPv6 address other than loopback. It requires the last enabled rule of the IPv6 input chain to drop or reject without matching on protocol, source or destination address, address list, port, input interface, or connection state, so a narrow final rule such as `action=drop protocol=tcp dst-port=23` fails. Matchers the check cannot see, such as `in-interface-list`, are not evaluated, so a final drop limited only by one of them passes.
 
         **Why this matters**
 
@@ -2227,7 +2254,7 @@ queries:
            /ipv6 firewall filter print where chain=input
            ```
 
-        If the router has no IPv6 address other than loopback, or the last enabled input rule drops or rejects, the check passes. If the chain is empty or ends in a rule that accepts, the check fails.
+        If the router has no IPv6 address other than loopback, or the last enabled input rule drops or rejects with no protocol, address, address list, port, `in-interface`, or `connection-state` matcher, the check passes. If the chain is empty, ends in a rule that accepts, or ends in a drop limited by one of those matchers, the check fails.
       remediation:
         - id: cli
           desc: |
