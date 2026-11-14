@@ -166,12 +166,14 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-2-2-4
       compliance/soc2-2017: soc2-control-cc6-1-5
       compliance/vda-isa-5: vda-isa-5-5-2-7
-    mql: aoscx.sshServer.enabledVrfs.all(name == "mgmt")
+    mql: |
+      aoscx.vrfs.any(sshEnabled == true || sshEnabled == false)
+      aoscx.sshServer.enabledVrfs.all(name == "mgmt")
     docs:
       desc: |
         This check verifies that SSH logins to the switch are accepted only from the out-of-band management network.
 
-        AOS-CX enables the SSH server per VRF with `ssh server vrf <vrf>`. The built-in `mgmt` VRF contains only the out-of-band management port, so SSH enabled there is reachable only from the management network. This check requires that `mgmt` is the only VRF with SSH enabled.
+        AOS-CX enables the SSH server per VRF with `ssh server vrf <vrf>`. The built-in `mgmt` VRF contains only the out-of-band management port, so SSH enabled there is reachable only from the management network. This check requires that `mgmt` is the only VRF with SSH enabled. It passes when SSH is disabled on every VRF, and fails when the switch reports the SSH setting for no VRF, since the setting could not be read.
 
         **Why this matters**
 
@@ -184,7 +186,7 @@ queries:
         1. Connect to the switch over SSH or the console.
         2. Run `show running-config | include ssh server vrf`.
 
-        If the only line is `ssh server vrf mgmt`, or there is no line, the check passes. A line for any other VRF fails the check.
+        If the only line is `ssh server vrf mgmt`, or there is no line, SSH is limited to the management VRF or disabled. A line for any other VRF fails the check.
       remediation:
         - id: cli
           desc: |
@@ -224,12 +226,14 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-2-2-4
       compliance/soc2-2017: soc2-control-cc6-1-5
       compliance/vda-isa-5: vda-isa-5-5-2-7
-    mql: aoscx.httpsServer.enabledVrfs.all(name == "mgmt")
+    mql: |
+      aoscx.httpsServer.enabledVrfs != empty
+      aoscx.httpsServer.enabledVrfs.all(name == "mgmt")
     docs:
       desc: |
         This check verifies that the Web UI and the REST API are reachable only from the out-of-band management network.
 
-        On AOS-CX the HTTPS server serves both the Web UI and the REST API, and it is enabled per VRF with `https-server vrf <vrf>`. Depending on the model, it is enabled by default on the `default` VRF, the `mgmt` VRF, or both. This check requires that `mgmt` is the only VRF with the HTTPS server enabled.
+        On AOS-CX the HTTPS server serves both the Web UI and the REST API, and it is enabled per VRF with `https-server vrf <vrf>`. Depending on the model, it is enabled by default on the `default` VRF, the `mgmt` VRF, or both. This check requires that the HTTPS server is enabled on at least one VRF and that `mgmt` is the only one. The scan itself reaches the switch through the REST API, so a switch that reports no VRF with HTTPS enabled is one whose setting could not be read, and the check fails.
 
         **Why this matters**
 
@@ -240,7 +244,7 @@ queries:
         1. Connect to the switch over SSH or the console.
         2. Run `show running-config | include https-server vrf`.
 
-        If the only line is `https-server vrf mgmt`, or there is no line, the check passes. A line for any other VRF fails the check.
+        If the only line is `https-server vrf mgmt`, the check passes. A line for any other VRF fails the check.
       remediation:
         - id: cli
           desc: |
@@ -280,12 +284,14 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-2-2-4
       compliance/soc2-2017: soc2-control-cc6-1-5
       compliance/vda-isa-5: vda-isa-5-5-2-7
-    mql: aoscx.snmp.enabledVrfs.all(name == "mgmt")
+    mql: |
+      aoscx.vrfs.any(snmpEnabled == true || snmpEnabled == false)
+      aoscx.snmp.enabledVrfs.all(name == "mgmt")
     docs:
       desc: |
         This check verifies that the SNMP agent answers only on the out-of-band management network.
 
-        AOS-CX enables the SNMP agent per VRF with `snmp-server vrf <vrf>`. This check requires that `mgmt` is the only VRF with SNMP enabled, and passes when SNMP is not enabled on any VRF.
+        AOS-CX enables the SNMP agent per VRF with `snmp-server vrf <vrf>`. This check requires that `mgmt` is the only VRF with SNMP enabled. It passes when SNMP is disabled on every VRF, and fails when the switch reports the SNMP setting for no VRF, since the setting could not be read.
 
         **Why this matters**
 
@@ -296,7 +302,7 @@ queries:
         1. Connect to the switch over SSH or the console.
         2. Run `show running-config | include snmp-server vrf`.
 
-        If the only line is `snmp-server vrf mgmt`, or there is no line, the check passes. A line for any other VRF fails the check.
+        If the only line is `snmp-server vrf mgmt`, or there is no line, SNMP is limited to the management VRF or disabled. A line for any other VRF fails the check.
       remediation:
         - id: cli
           desc: |
@@ -1006,12 +1012,13 @@ queries:
       compliance/vda-isa-5: vda-isa-5-4-1-2
     mql: |
       aoscx.aaa.maxLoginAttempts > 0 && aoscx.aaa.maxLoginAttempts <= 5 && aoscx.aaa.loginLockoutTime >= 1800 ||
-        aoscx.aaa.methodLists.any(function == "authentication" && groups.any(type == "tacacs" || type == "radius"))
+        aoscx.aaa.methodLists.where(function == "authentication" && sessionType == "default").any(groups.first.type == "tacacs" || groups.first.type == "radius") &&
+        aoscx.aaa.methodLists.where(function == "authentication" && sessionType != "console").all(groups.first.type == "tacacs" || groups.first.type == "radius")
     docs:
       desc: |
         This check verifies that an attacker cannot guess local passwords over SSH or the Web UI without limit.
 
-        AOS-CX locks a local user out after repeated failures when `aaa authentication limit-login-attempts` is set, for the number of seconds given by its `lockout-time`. The switch does not allow that setting together with TACACS+ or RADIUS authentication, where the AAA server enforces lockout instead. This check passes when the switch locks out after at most 5 failures for at least 30 minutes, or when an authentication method list uses a TACACS+ or RADIUS server group.
+        AOS-CX locks a local user out after repeated failures when `aaa authentication limit-login-attempts` is set, for the number of seconds given by its `lockout-time`. The switch does not allow that setting together with TACACS+ or RADIUS authentication, where the AAA server enforces lockout instead. This check passes when the switch locks out after at most 5 failures for at least 30 minutes, or when the `default` authentication method list and every list for SSH and the HTTPS server try a TACACS+ or RADIUS server group first.
 
         **Why this matters**
 
@@ -1022,7 +1029,7 @@ queries:
         1. Connect to the switch over SSH or the console.
         2. Run `show running-config | include aaa authentication`.
 
-        The check passes if the output contains `aaa authentication limit-login-attempts` with 5 or fewer attempts and a `lockout-time` of 1800 seconds or more, or an `aaa authentication login` line that names a TACACS+ or RADIUS server group. Otherwise it fails.
+        The check passes if the output contains `aaa authentication limit-login-attempts` with 5 or fewer attempts and a `lockout-time` of 1800 seconds or more, or a `default` `aaa authentication login` line and every `ssh` and `https-server` line that name a TACACS+ or RADIUS server group first. Otherwise it fails.
       remediation:
         - id: cli
           desc: |
@@ -1712,13 +1719,14 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-7-2
       compliance/vda-isa-5: vda-isa-5-5-1-1
     mql: |
+      aoscx.certificates.where(usage.contains("https-server")) != empty
       aoscx.certificates.where(usage.contains("https-server")).all(notAfter > time.now)
       aoscx.certificates.where(usage.contains("https-server")).all(selfSigned == false)
     docs:
       desc: |
         This check verifies that the Web UI and REST API present a certificate that clients can validate.
 
-        AOS-CX serves HTTPS with the certificate associated through `crypto pki application https-server certificate <name>`, and otherwise with a self-signed certificate generated at first boot. This check requires every certificate used by the HTTPS server to be unexpired and issued by a certificate authority rather than self-signed.
+        AOS-CX serves HTTPS with the certificate associated through `crypto pki application https-server certificate <name>`, and otherwise with a self-signed certificate generated at first boot. This check requires a certificate to be associated with the HTTPS server, and every such certificate to be unexpired and issued by a certificate authority rather than self-signed. A switch with no associated certificate serves the factory self-signed one and fails.
 
         **Why this matters**
 
@@ -1728,7 +1736,7 @@ queries:
         2. Run `show crypto pki application` to see which certificate the HTTPS server uses.
         3. Run `show crypto pki certificate <name> details` for that certificate.
 
-        If the certificate's issuer differs from its subject and its validity end date is in the future, the check passes. Otherwise it fails.
+        If a certificate is associated with the HTTPS server, its issuer differs from its subject, and its validity end date is in the future, the check passes. If no certificate is associated, or the certificate is self-signed or expired, the check fails.
       remediation:
         - id: cli
           desc: |
