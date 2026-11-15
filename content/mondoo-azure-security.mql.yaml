@@ -127,7 +127,6 @@ policies:
           - uid: mondoo-azure-security-keyvault-rbac-enabled
           - uid: mondoo-azure-security-keyvault-key-auto-rotation
           - uid: mondoo-azure-security-keyvault-private-endpoints
-          - uid: mondoo-azure-security-managed-hsm-soft-delete
           - uid: mondoo-azure-security-managed-hsm-purge-protection
           - uid: mondoo-azure-security-managed-hsm-public-access-disabled
           - uid: mondoo-azure-security-managed-hsm-private-endpoints
@@ -186,6 +185,7 @@ policies:
       - title: Microsoft Defender for Cloud
         checks:
           - uid: mondoo-azure-security-defender-for-servers-enabled
+          - uid: mondoo-azure-security-defender-servers-agentless-scanning-enabled
           - uid: mondoo-azure-security-defender-for-app-services-enabled
           - uid: mondoo-azure-security-defender-for-sql-databases-enabled
           - uid: mondoo-azure-security-defender-for-storage-enabled
@@ -7686,6 +7686,177 @@ queries:
     mql: |
       bicep.resources.where(type == "Microsoft.Security/pricings" && name == "VirtualMachines").all(
         properties["pricingTier"] == "Standard"
+      )
+  - uid: mondoo-azure-security-defender-servers-agentless-scanning-enabled
+    title: Ensure Defender for Servers agentless machine scanning is enabled
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-tvm-07
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-8
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-de-cm-8
+      compliance/nist-csf-2: nist-csf-2-id-ra-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ra-5
+      compliance/nist-sp-800-171: nist-sp-800-171--3-11-2
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a03
+      compliance/pci-dss-4: pcidss-requirement-11-3-1
+      compliance/soc2-2017: soc2-control-cc7-1-5
+      compliance/vda-isa-5: vda-isa-5-5-2-5
+    variants:
+      - uid: mondoo-azure-security-defender-servers-agentless-scanning-enabled-azure
+        tags:
+          mondoo.com/filter-title: Azure Subscription
+          mondoo.com/filter-icon: azure
+      - uid: mondoo-azure-security-defender-servers-agentless-scanning-enabled-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-defender-servers-agentless-scanning-enabled-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-defender-servers-agentless-scanning-enabled-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-defender-servers-agentless-scanning-enabled-bicep
+        tags:
+          mondoo.com/filter-title: Bicep
+          mondoo.com/filter-icon: bicep
+    docs:
+      desc: |
+        This check verifies that Microsoft Defender for Servers scans every virtual machine in the subscription for vulnerabilities, malware, and exposed secrets without needing an agent on the machine.
+
+        Agentless machine scanning takes a snapshot of each machine's disks and analyzes it outside the machine. It reports installed software with known vulnerabilities, malware, and credentials stored on disk. It is part of Defender for Servers Plan 2 and is the `AgentlessVmScanning` extension of the `VirtualMachines` pricing. Turn it on under Microsoft Defender for Cloud, Environment settings, the subscription, Defender plans, then Settings for Servers, where **Agentless scanning for machines** must be On. The check passes when the Servers plan is on and that extension is enabled.
+
+        **Why this matters**
+
+        Agent-based scanning only covers machines where an agent was installed and still runs. A virtual machine created from an old image, started by an attacker for staging, or with a broken agent produces no findings, and nothing in the portal says a machine is missing. Agentless scanning reads the disk from outside, so it covers every machine in the subscription from its first scan, whatever runs inside it.
+
+        Unpatched packages on internet-facing machines are a common way into a cloud environment. Without a scan, a machine running a version with a public exploit stays unreported until someone checks it by hand. Disk scanning also finds SSH private keys, cloud credentials, and connection strings left on disk, which an attacker on one machine uses to reach the next.
+
+        Defender CSPM has its own agentless scanning setting, which this check does not read. A subscription where the Servers plan is off, or is on Plan 1, fails.
+      audit: |
+        ### Audit via Portal
+
+        1. In the Azure Portal, open **Microsoft Defender for Cloud** and select **Environment settings**.
+        2. Select the subscription.
+        3. On the **Defender plans** page, confirm that **Servers** is **On** and select **Settings** for it.
+        4. Confirm that **Agentless scanning for machines** is **On**.
+
+        ### Audit via CLI
+
+        ```bash
+        az security pricing show --name VirtualMachines --query "{tier:pricingTier, subPlan:subPlan, agentlessScanning:extensions[?name=='AgentlessVmScanning'].isEnabled}"
+        ```
+
+        A passing subscription returns the `Standard` tier, sub-plan `P2`, and `True` for the extension. An empty list or `False` fails.
+      remediation:
+        - id: portal
+          desc: |
+            To enable agentless machine scanning using the Azure Portal:
+
+            1. Open **Microsoft Defender for Cloud** and select **Environment settings**.
+            2. Select the subscription and, on the **Defender plans** page, set **Servers** to **On** with **Plan 2**.
+            3. Select **Settings** for Servers.
+            4. Set **Agentless scanning for machines** to **On**.
+            5. Select **Continue** and then **Save**.
+        - id: cli
+          desc: |
+            To enable Defender for Servers Plan 2 with agentless machine scanning using the Azure CLI:
+
+            ```bash
+            az security pricing create --name VirtualMachines --tier Standard --subplan P2 --extensions name=AgentlessVmScanning isEnabled=True
+            ```
+        - id: terraform
+          desc: |
+            To enable Defender for Servers Plan 2 with agentless machine scanning in Terraform, add an `extension` block named `AgentlessVmScanning`:
+
+            ```hcl
+            resource "azurerm_security_center_subscription_pricing" "servers" {
+              tier          = "Standard"
+              resource_type = "VirtualMachines"
+              subplan       = "P2"
+
+              extension {
+                name = "AgentlessVmScanning"
+              }
+            }
+            ```
+        - id: bicep
+          desc: |
+            To enable Defender for Servers Plan 2 with agentless machine scanning in Bicep, deploy at subscription scope:
+
+            ```bicep
+            targetScope = 'subscription'
+
+            resource serversPricing 'Microsoft.Security/pricings@2024-01-01' = {
+              name: 'VirtualMachines'
+              properties: {
+                pricingTier: 'Standard'
+                subPlan: 'P2'
+                extensions: [
+                  {
+                    name: 'AgentlessVmScanning'
+                    isEnabled: 'True'
+                  }
+                ]
+              }
+            }
+            ```
+    refs:
+      - url: https://learn.microsoft.com/en-us/azure/defender-for-cloud/concept-agentless-data-collection
+        title: Agentless machine scanning
+      - url: https://learn.microsoft.com/en-us/azure/defender-for-cloud/enable-agentless-scanning-vms
+        title: Enable agentless scanning for VMs
+  - uid: mondoo-azure-security-defender-servers-agentless-scanning-enabled-azure
+    filters: asset.platform == "azure"
+    mql: |
+      azure.subscription.cloudDefender.forServers.enabled == true
+      azure.subscription.cloudDefender.forServers.extensions
+        .where(name == "AgentlessVmScanning")
+        .any(isEnabled == true)
+  - uid: mondoo-azure-security-defender-servers-agentless-scanning-enabled-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_security_center_subscription_pricing" && arguments['resource_type'] == "VirtualMachines")
+    mql: |
+      terraform.resources("azurerm_security_center_subscription_pricing")
+        .where(arguments['resource_type'] == "VirtualMachines")
+        .all(
+          arguments['tier'] == "Standard" &&
+          blocks.where(type == "extension").any(arguments['name'] == "AgentlessVmScanning")
+        )
+  - uid: mondoo-azure-security-defender-servers-agentless-scanning-enabled-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_security_center_subscription_pricing" && change.after['resource_type'] == "VirtualMachines")
+    mql: |
+      terraform.plan.resourceChanges
+        .where(type == "azurerm_security_center_subscription_pricing")
+        .where(change.after['resource_type'] == "VirtualMachines")
+        .all(
+          change.after['tier'] == "Standard" &&
+          change.after['extension'] != empty &&
+          change.after['extension'].any(_['name'] == "AgentlessVmScanning")
+        )
+  - uid: mondoo-azure-security-defender-servers-agentless-scanning-enabled-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_security_center_subscription_pricing" && values['resource_type'] == "VirtualMachines")
+    mql: |
+      terraform.state.resources
+        .where(type == "azurerm_security_center_subscription_pricing")
+        .where(values['resource_type'] == "VirtualMachines")
+        .all(
+          values['tier'] == "Standard" &&
+          values['extension'] != empty &&
+          values['extension'].any(_['name'] == "AgentlessVmScanning")
+        )
+  - uid: mondoo-azure-security-defender-servers-agentless-scanning-enabled-bicep
+    filters: asset.platform == "bicep" && bicep.resources.any(type == "Microsoft.Security/pricings" && name == "VirtualMachines")
+    mql: |
+      bicep.resources.where(type == "Microsoft.Security/pricings" && name == "VirtualMachines").all(
+        properties["pricingTier"] == "Standard" &&
+        properties["extensions"] != empty &&
+        properties["extensions"].any(_["name"] == "AgentlessVmScanning" && _["isEnabled"] == "True")
       )
   - uid: mondoo-azure-security-defender-for-app-services-enabled
     title: Ensure Microsoft Defender for App Service is enabled
@@ -33904,158 +34075,6 @@ queries:
       bicep.resources.where(type == "Microsoft.Compute/diskEncryptionSets").all(
         properties["rotationToLatestKeyVersionEnabled"] == true
       )
-  - uid: mondoo-azure-security-managed-hsm-soft-delete
-    title: Ensure Managed HSM has soft delete enabled
-    impact: 80
-    tags:
-      compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-bcr-08
-      compliance/dora: dora-art-12
-      compliance/hipaa: hipaa-security-ss164-308-a-7-ii-a-contingency-plan-data-backup-plan
-      compliance/iso-27001-2022: iso-27001-2022-a-8-13
-      compliance/nis-2: nis-2-21-2-c
-      compliance/nist-csf-1: nist-csf-1-pr-ip-4
-      compliance/nist-csf-2: nist-csf-2-pr-ds-11
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-12
-      compliance/nist-sp-800-171: nist-sp-800-171--3-13-10
-      compliance/owasp-top-10-2025: owasp-top-10-2025-a08
-      compliance/pci-dss-4: false
-      compliance/soc2-2017: soc2-control-cc9-1-1
-      compliance/vda-isa-5: vda-isa-5-3-1-2
-    variants:
-      - uid: mondoo-azure-security-managed-hsm-soft-delete-azure
-        tags:
-          mondoo.com/filter-title: Azure Key Vault Managed HSM
-          mondoo.com/filter-icon: azure
-      - uid: mondoo-azure-security-managed-hsm-soft-delete-terraform-hcl
-        tags:
-          mondoo.com/filter-title: Terraform HCL
-          mondoo.com/filter-icon: terraform
-      - uid: mondoo-azure-security-managed-hsm-soft-delete-terraform-plan
-        tags:
-          mondoo.com/filter-title: Terraform Plan
-          mondoo.com/filter-icon: terraform
-      - uid: mondoo-azure-security-managed-hsm-soft-delete-terraform-state
-        tags:
-          mondoo.com/filter-title: Terraform State
-          mondoo.com/filter-icon: terraform
-      - uid: mondoo-azure-security-managed-hsm-soft-delete-bicep
-        tags:
-          mondoo.com/filter-title: Bicep
-          mondoo.com/filter-icon: bicep
-    docs:
-      desc: |
-        This check verifies that a deleted Managed HSM pool enters a recoverable state instead of being destroyed outright.
-
-        Soft delete moves a deleted pool and its contents into a recoverable state for a retention period rather than removing them. It is enabled by default on every Managed HSM and cannot be turned off, and the retention period is set at provisioning time with `--retention-days` on `az keyvault create`. The state is shown under Properties in the Azure portal and read from `properties.enableSoftDelete`.
-
-        **Why this matters**
-
-        A Managed HSM holds the most sensitive cryptographic keys an organization has, including those used for data encryption, code signing, and TLS termination. Deleting the pool without a recovery path destroys that key material permanently, and every dependent encrypted dataset becomes irrecoverable even though the data itself is intact and untouched.
-
-        Ransomware operators target key infrastructure for exactly this reason. Destroying the keys is faster and more final than encrypting the data, and without soft delete it is a single action with no undo.
-
-        The retention period converts that single action into an incident with a response window. Security teams get time to notice an unauthorized deletion, escalate it, and recover the pool before the deletion becomes permanent, and the same window covers an accidental deletion by an administrator or an automation error.
-
-        Because the platform enables soft delete on every pool and offers no way to disable it, this check normally passes and serves as a guard that the property is genuinely set on each pool rather than assumed. Soft delete on its own does not prevent an early purge during the retention window, and the retention length is fixed at creation. Companion checks in this policy cover purge protection and a retention period of at least 90 days.
-      audit: |
-        **Manual Audit via Azure Portal:**
-
-        1. Navigate to **Managed HSMs** in the Azure Portal.
-        2. Select a Managed HSM.
-        3. Go to **Properties**.
-        4. Verify that **Soft delete** is enabled.
-
-        **Automated Audit with Azure CLI:**
-
-        ```bash
-        az keyvault show --hsm-name <HSMName> --query "properties.enableSoftDelete"
-        ```
-      remediation:
-        - id: portal
-          desc: |
-            Soft delete is enabled by default on new Managed HSM instances and cannot be disabled. If you have a Managed HSM without soft delete, contact Azure support.
-        - id: cli
-          desc: |
-            Soft-delete is enabled by default on every Managed HSM and cannot be disabled. When you provision a new HSM with the Azure CLI, set the retention period explicitly:
-
-            ```bash
-            az keyvault create \
-              --hsm-name <HSMName> \
-              --resource-group <ResourceGroupName> \
-              --location <Location> \
-              --administrators <AdminObjectId> \
-              --retention-days 90
-            ```
-        - id: terraform
-          desc: |
-            Soft delete is enabled by default on Managed HSM and cannot be disabled. Configure the retention period explicitly in Terraform:
-
-            ```hcl
-            resource "azurerm_key_vault_managed_hardware_security_module" "example" {
-              name                       = "example-hsm"
-              resource_group_name        = azurerm_resource_group.example.name
-              location                   = azurerm_resource_group.example.location
-              sku_name                   = "Standard_B1"
-              tenant_id                  = data.azurerm_client_config.current.tenant_id
-              admin_object_ids           = [data.azurerm_client_config.current.object_id]
-              soft_delete_retention_days = 90
-            }
-            ```
-        - id: bicep
-          desc: |
-            Soft delete is enabled by default on Managed HSM and cannot be disabled:
-
-            ```bicep
-            resource managedHsm 'Microsoft.KeyVault/managedHSMs@2023-07-01' = {
-              name: 'example-hsm'
-              location: resourceGroup().location
-              sku: {
-                family: 'B'
-                name: 'Standard_B1'
-              }
-              properties: {
-                tenantId: subscription().tenantId
-                initialAdminObjectIds: [
-                  adminObjectId
-                ]
-                softDeleteRetentionInDays: 90
-              }
-            }
-            ```
-    refs:
-      - url: https://learn.microsoft.com/en-us/azure/key-vault/managed-hsm/soft-delete-overview
-        title: Managed HSM soft delete overview
-  - uid: mondoo-azure-security-managed-hsm-soft-delete-azure
-    filters: asset.platform == "azure-keyvault-managedhsm"
-    mql: |
-      azure.subscription.keyVaultService.managedHsm.enableSoftDelete == true
-  - uid: mondoo-azure-security-managed-hsm-soft-delete-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_key_vault_managed_hardware_security_module")
-    mql: |
-      terraform.resources("azurerm_key_vault_managed_hardware_security_module").all(
-        arguments['soft_delete_retention_days'] != empty
-      )
-  - uid: mondoo-azure-security-managed-hsm-soft-delete-terraform-plan
-    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_key_vault_managed_hardware_security_module")
-    mql: |
-      terraform.plan.resourceChanges
-        .where(type == "azurerm_key_vault_managed_hardware_security_module")
-        .all(
-          change.after['soft_delete_retention_days'] != empty
-        )
-  - uid: mondoo-azure-security-managed-hsm-soft-delete-terraform-state
-    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_key_vault_managed_hardware_security_module")
-    mql: |
-      terraform.state.resources.where(type == "azurerm_key_vault_managed_hardware_security_module").all(
-        values['soft_delete_retention_days'] != empty
-      )
-  - uid: mondoo-azure-security-managed-hsm-soft-delete-bicep
-    filters: asset.platform == "bicep" && bicep.resources.any(type == "Microsoft.KeyVault/managedHSMs")
-    mql: |
-      bicep.resources.where(type == "Microsoft.KeyVault/managedHSMs").all(
-        properties["softDeleteRetentionInDays"] != empty
-      )
   - uid: mondoo-azure-security-managed-hsm-purge-protection
     title: Ensure Managed HSM has purge protection enabled
     impact: 80
@@ -34425,7 +34444,7 @@ queries:
 
         This matters more for a Managed HSM than for almost any other resource, because the pool protects the root of trust for encryption across storage accounts, managed disks, and databases. A network path to it is a network path to everything those keys secure.
 
-        A private endpoint is also the prerequisite for turning the public endpoint off, which is where the isolation becomes complete. A companion check in this policy covers `publicNetworkAccess`, and the two are meant to be applied together so legitimate callers keep a route while everyone else loses one. The Terraform and Bicep forms of this check confirm that a private endpoint targeting the `managedhsm` subresource exists in the configuration rather than tying it to a specific pool.
+        A private endpoint is also the prerequisite for turning the public endpoint off, which is where the isolation becomes complete. A companion check in this policy covers `publicNetworkAccess`, and the two are meant to be applied together so legitimate callers keep a route while everyone else loses one. The Terraform and Bicep forms of this check run on configurations that declare a Managed HSM pool and pass when the same configuration declares a private endpoint targeting the `managedhsm` subresource. They do not tie the endpoint to a specific pool.
       audit: |
         **Manual Audit via Azure Portal:**
 
@@ -34493,9 +34512,19 @@ queries:
             Use the ID printed by the first command as `<HSMResourceId>`. The DNS zone makes callers in the linked virtual network resolve the pool to its private address; without it they keep resolving the public address and lose access once the last command disables public access.
         - id: terraform
           desc: |
-            To configure a private endpoint for a Managed HSM in Terraform:
+            To configure a private endpoint for a Managed HSM in Terraform, declare it next to the pool:
 
             ```hcl
+            resource "azurerm_key_vault_managed_hardware_security_module" "example" {
+              name                          = "example-hsm"
+              resource_group_name           = azurerm_resource_group.example.name
+              location                      = azurerm_resource_group.example.location
+              sku_name                      = "Standard_B1"
+              tenant_id                     = data.azurerm_client_config.current.tenant_id
+              admin_object_ids              = [data.azurerm_client_config.current.object_id]
+              public_network_access_enabled = false
+            }
+
             resource "azurerm_private_endpoint" "hsm" {
               name                = "example-hsm-pe"
               location            = azurerm_resource_group.example.location
@@ -34512,9 +34541,25 @@ queries:
             ```
         - id: bicep
           desc: |
-            To configure private endpoints for Managed HSM in Bicep:
+            To configure private endpoints for Managed HSM in Bicep, declare the endpoint next to the pool:
 
             ```bicep
+            resource managedHsm 'Microsoft.KeyVault/managedHSMs@2023-07-01' = {
+              name: 'example-hsm'
+              location: resourceGroup().location
+              sku: {
+                family: 'B'
+                name: 'Standard_B1'
+              }
+              properties: {
+                tenantId: subscription().tenantId
+                initialAdminObjectIds: [
+                  '<AdminObjectId>'
+                ]
+                publicNetworkAccess: 'Disabled'
+              }
+            }
+
             resource privateEndpoint 'Microsoft.Network/privateEndpoints@2024-05-01' = {
               name: 'example-hsm-pe'
               location: resourceGroup().location
@@ -34544,7 +34589,7 @@ queries:
     mql: |
       azure.subscription.keyVaultService.managedHsm.privateEndpointConnections.length > 0
   - uid: mondoo-azure-security-managed-hsm-private-endpoints-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_private_endpoint")
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_key_vault_managed_hardware_security_module")
     mql: |
       terraform.resources("azurerm_private_endpoint").any(
         blocks.where(type == "private_service_connection").any(
@@ -34552,7 +34597,7 @@ queries:
         )
       )
   - uid: mondoo-azure-security-managed-hsm-private-endpoints-terraform-plan
-    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_private_endpoint")
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_key_vault_managed_hardware_security_module")
     mql: |
       terraform.plan.resourceChanges.where(type == "azurerm_private_endpoint").any(
         change.after['private_service_connection'].any(
@@ -34560,7 +34605,7 @@ queries:
         )
       )
   - uid: mondoo-azure-security-managed-hsm-private-endpoints-terraform-state
-    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_private_endpoint")
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_key_vault_managed_hardware_security_module")
     mql: |
       terraform.state.resources.where(type == "azurerm_private_endpoint").any(
         values['private_service_connection'].any(
@@ -34568,7 +34613,7 @@ queries:
         )
       )
   - uid: mondoo-azure-security-managed-hsm-private-endpoints-bicep
-    filters: asset.platform == "bicep" && bicep.resources.any(type == "Microsoft.Network/privateEndpoints")
+    filters: asset.platform == "bicep" && bicep.resources.any(type == "Microsoft.KeyVault/managedHSMs")
     mql: |
       bicep.resources.where(type == "Microsoft.Network/privateEndpoints").any(
         properties["privateLinkServiceConnections"].any(
@@ -55467,7 +55512,7 @@ queries:
       desc: |
         This check verifies that a Managed HSM pool keeps soft-deleted objects recoverable for at least 90 days.
 
-        Soft delete moves a deleted pool or key into a recoverable state instead of destroying it, and `softDeleteRetentionInDays` sets how long recovery remains possible before the deletion becomes permanent. The value is fixed when the pool is created and cannot be changed afterward, so it is chosen with Days to retain deleted vaults on the Create wizard, or with `--retention-days 90` on `az keyvault create`.
+        Soft delete moves a deleted pool or key into a recoverable state instead of destroying it, and `softDeleteRetentionInDays` sets how long recovery remains possible before the deletion becomes permanent. The value is fixed when the pool is created and cannot be changed afterward, so it is chosen with Days to retain deleted vaults on the Create wizard, or with `--retention-days 90` on `az keyvault create`. A pool created without a value gets the 90-day default, which passes; the Terraform and Bicep forms of this check treat an omitted value the same way.
 
         **Why this matters**
 
@@ -55564,6 +55609,7 @@ queries:
       asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_key_vault_managed_hardware_security_module")
     mql: |
       terraform.resources("azurerm_key_vault_managed_hardware_security_module").all(
+        arguments['soft_delete_retention_days'] == empty ||
         arguments['soft_delete_retention_days'] >= 90
       )
   - uid: mondoo-azure-security-managed-hsm-soft-delete-retention-terraform-plan
@@ -55573,6 +55619,7 @@ queries:
       terraform.plan.resourceChanges
         .where(type == "azurerm_key_vault_managed_hardware_security_module")
         .all(
+          change.after.soft_delete_retention_days == empty ||
           change.after.soft_delete_retention_days >= 90
         )
   - uid: mondoo-azure-security-managed-hsm-soft-delete-retention-terraform-state
@@ -55580,6 +55627,7 @@ queries:
       asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_key_vault_managed_hardware_security_module")
     mql: |
       terraform.state.resources.where(type == "azurerm_key_vault_managed_hardware_security_module").all(
+        values.soft_delete_retention_days == empty ||
         values.soft_delete_retention_days >= 90
       )
   - uid: mondoo-azure-security-managed-hsm-soft-delete-retention-bicep
@@ -55587,6 +55635,7 @@ queries:
       asset.platform == "bicep" && bicep.resources.any(type == "Microsoft.KeyVault/managedHSMs")
     mql: |
       bicep.resources.where(type == "Microsoft.KeyVault/managedHSMs").all(
+        properties["softDeleteRetentionInDays"] == empty ||
         properties["softDeleteRetentionInDays"] >= 90
       )
   # No Terraform variants: azurerm_synapse_workspace exposes no trusted service bypass

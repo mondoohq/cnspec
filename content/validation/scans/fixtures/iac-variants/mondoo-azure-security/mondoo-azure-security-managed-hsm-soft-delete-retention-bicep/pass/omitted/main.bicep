@@ -1,5 +1,6 @@
+// An omitted retention period takes the 90-day default.
 resource hsm 'Microsoft.KeyVault/managedHSMs@2023-07-01' = {
-  name: 'contosohsm'
+  name: 'prod-hsm'
   location: 'eastus'
   sku: {
     name: 'Standard_B1'
@@ -10,7 +11,5 @@ resource hsm 'Microsoft.KeyVault/managedHSMs@2023-07-01' = {
     initialAdminObjectIds: [
       '11111111-1111-1111-1111-111111111111'
     ]
-    publicNetworkAccess: 'Disabled'
-    enablePurgeProtection: true
   }
 }

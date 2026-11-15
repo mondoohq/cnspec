@@ -10,8 +10,5 @@ resource hsm 'Microsoft.KeyVault/managedHSMs@2023-07-01' = {
     initialAdminObjectIds: [
       '11111111-1111-1111-1111-111111111111'
     ]
-    publicNetworkAccess: 'Disabled'
-    enablePurgeProtection: true
-    softDeleteRetentionInDays: 90
   }
 }
