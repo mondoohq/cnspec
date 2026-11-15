@@ -1,4 +1,4 @@
-resource "azurerm_application_gateway" "fail" {
+resource "azurerm_application_gateway" "pass" {
   name                = "example-appgw"
   resource_group_name = "example-rg"
   location            = "eastus"
