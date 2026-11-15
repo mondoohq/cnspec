@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-panos-security
     name: Mondoo Palo Alto Networks PAN-OS Security
-    version: 2.0.7
+    version: 2.0.8
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -1885,12 +1885,18 @@ queries:
     mql: |
       panos.ethernetInterfaces.
         where(mode == "layer3" && status == "up").
-        all(managementProfile != "")
+        all(managementProfile != empty)
+      panos.aggregateInterfaces.
+        where(mode == "layer3" && status == "up").
+        all(managementProfile != empty)
+      panos.layer3Subinterfaces.
+        where(status == "up").
+        all(managementProfile != empty)
     docs:
       desc: |
         This check verifies that active Layer 3 interfaces carry an explicit interface management profile.
 
-        An interface management profile lists which management services, among ping, SSH, HTTPS, SNMP, response pages, and User-ID, may be reached on the dataplane interfaces referencing it. Profiles are built under Network > Network Profiles > Interface Mgmt and attached on the Advanced tab of each interface under Network > Interfaces, and this check requires every Layer 3 interface that is up to name one.
+        An interface management profile lists which management services, among ping, SSH, HTTPS, SNMP, response pages, and User-ID, may be reached on the dataplane interfaces referencing it. Profiles are built under Network > Network Profiles > Interface Mgmt and attached on the Advanced tab of each interface under Network > Interfaces, and this check requires every Layer 3 ethernet interface, aggregate interface, and Layer 3 subinterface that is up to name one. A subinterface takes the link state of its parent.
 
         **Why this matters**
 
@@ -1917,9 +1923,10 @@ queries:
 
            ```text
            show config running xpath devices/entry/network/interface/ethernet
+           show config running xpath devices/entry/network/interface/aggregate-ethernet
            ```
 
-        If every Layer 3 interface that is up contains an `interface-management-profile` value, the check passes. If any lacks one, the check fails.
+        If every Layer 3 interface that is up, and every entry under its `layer3/units`, contains an `interface-management-profile` value, the check passes. If any lacks one, the check fails.
       remediation:
         - id: console
           desc: |
@@ -1981,11 +1988,15 @@ queries:
       panos.ethernetInterfaces.
         where(mode == "layer3").
         none(enableDhcp == true)
+      panos.aggregateInterfaces.
+        where(mode == "layer3").
+        none(enableDhcp == true)
+      panos.layer3Subinterfaces.none(enableDhcp == true)
     docs:
       desc: |
         This check verifies that Layer 3 interfaces use static addressing rather than DHCP.
 
-        Setting a Layer 3 interface to DHCP client makes the firewall request its address, mask, gateway, and optionally a default route from whatever server answers on that segment. The address type is on the IPv4 tab of each interface under Network > Interfaces, and this check requires that no Layer 3 interface is configured as a DHCP client.
+        Setting a Layer 3 interface to DHCP client makes the firewall request its address, mask, gateway, and optionally a default route from whatever server answers on that segment. The address type is on the IPv4 tab of each interface under Network > Interfaces, and this check requires that no Layer 3 ethernet interface, aggregate interface, or Layer 3 subinterface is configured as a DHCP client.
 
         **Why this matters**
 
@@ -2012,9 +2023,10 @@ queries:
 
            ```text
            show config running xpath devices/entry/network/interface/ethernet
+           show config running xpath devices/entry/network/interface/aggregate-ethernet
            ```
 
-        If no Layer 3 interface contains a `layer3/dhcp-client` block with `enable yes`, the check passes. If any does, the check fails.
+        If no Layer 3 interface, and no entry under its `layer3/units`, contains a `dhcp-client` block with `enable yes`, the check passes. If any does, the check fails.
       remediation:
         - id: console
           desc: |
@@ -2064,12 +2076,18 @@ queries:
     mql: |
       panos.ethernetInterfaces.
         where(mode == "layer3" && status == "up").
-        all(zone != "")
+        all(zone != empty)
+      panos.aggregateInterfaces.
+        where(mode == "layer3" && status == "up").
+        all(zone != empty)
+      panos.layer3Subinterfaces.
+        where(status == "up").
+        all(zone != empty)
     docs:
       desc: |
         This check verifies that active Layer 3 interfaces belong to a security zone.
 
-        Zones are what the security policy matches on, since every rule names a source and destination zone, so an interface outside every zone is outside the policy. The assignment is on the Config tab of each interface under Network > Interfaces, and this check requires every Layer 3 interface that is up to name a zone.
+        Zones are what the security policy matches on, since every rule names a source and destination zone, so an interface outside every zone is outside the policy. The assignment is on the Config tab of each interface under Network > Interfaces, and this check requires every Layer 3 ethernet interface, aggregate interface, and Layer 3 subinterface that is up to name a zone.
 
         **Why this matters**
 
@@ -2084,8 +2102,8 @@ queries:
         ### Audit via the PAN-OS web interface
 
         1. Log in to the PAN-OS web interface.
-        2. Navigate to **Network → Interfaces → Ethernet**.
-        3. Review the **Security Zone** column for each Layer 3 interface that is up.
+        2. Navigate to **Network → Interfaces**, and open the **Ethernet** and **AE Group** tabs.
+        3. Review the **Security Zone** column for each Layer 3 interface and subinterface that is up.
 
         If every active Layer 3 interface is assigned to a security zone, the check passes. If any active Layer 3 interface has no zone, the check fails.
 
@@ -2098,7 +2116,7 @@ queries:
            show interface all
            ```
 
-        If every Layer 3 interface that is up reports a zone assignment, the check passes. If any active Layer 3 interface shows no zone, the check fails.
+        If every Layer 3 interface and subinterface that is up reports a zone assignment, the check passes. If any shows no zone, the check fails.
       remediation:
         - id: console
           desc: |
@@ -2822,7 +2840,8 @@ queries:
   - uid: mondoo-panos-security-default-route-exists
     title: Ensure virtual routers have a default route configured
     impact: 70
-    filters: panos.virtualRouters != empty
+    filters: |
+      panos.system.advancedRouting != true && panos.virtualRouters != empty || panos.system.advancedRouting == true && panos.logicalRouters != empty
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ccc-06
@@ -2839,13 +2858,15 @@ queries:
       compliance/soc2-2017: soc2-control-cc8-1-1
       compliance/vda-isa-5: vda-isa-5-5-2-1
     mql: |
-      panos.virtualRouters.
+      panos.system.advancedRouting == true || panos.virtualRouters.
         all(staticRoutes.any(destination == "0.0.0.0/0"))
+      panos.system.advancedRouting != true || panos.logicalRouters.
+        all(vrfs.all(staticRoutes.any(destination == "0.0.0.0/0")))
     docs:
       desc: |
         This check verifies that every virtual router has a statically configured default route.
 
-        A default route of 0.0.0.0/0 is the entry a router uses for destinations no other route covers. Static routes are configured per virtual router under Network > Virtual Routers, and this check requires each virtual router to have one with that destination.
+        A default route of 0.0.0.0/0 is the entry a router uses for destinations no other route covers. Static routes are configured per virtual router under Network > Virtual Routers, and this check requires each virtual router to have one with that destination. With the Advanced Routing Engine enabled, static routes belong to the VRFs of logical routers under Network > Routing > Logical Routers, and the check requires every VRF to have one.
 
         **Why this matters**
 
@@ -2874,7 +2895,7 @@ queries:
            show routing route
            ```
 
-        If every virtual router has a 0.0.0.0/0 route, the check passes. If any virtual router lacks one, the check fails.
+        If every virtual router has a 0.0.0.0/0 route, the check passes. If any virtual router lacks one, the check fails. On a firewall with the Advanced Routing Engine, run `show advanced-routing route` instead, which lists the routes of each logical router; every VRF needs a static 0.0.0.0/0 route.
       remediation:
         - id: console
           desc: |
@@ -2901,6 +2922,14 @@ queries:
             commit
             ```
 
+            On a firewall with the Advanced Routing Engine, add the route to the VRF of the logical router instead:
+
+            ```text
+            configure
+            set network logical-router <lr-name> vrf <vrf-name> routing-table ip static-route default-route destination 0.0.0.0/0 interface <egress-interface> nexthop ip-address <gateway-ip>
+            commit
+            ```
+
     refs:
       - url: https://docs.paloaltonetworks.com/ngfw/networking/static-routes
         title: Static Routes
@@ -2909,7 +2938,7 @@ queries:
     title: Ensure OSPF interfaces use authentication
     impact: 90
     filters: |
-      panos.virtualRouters.any(ospf.enable == true)
+      panos.system.advancedRouting != true && panos.virtualRouters.any(ospf.enable == true) || panos.system.advancedRouting == true && panos.logicalRouters.any(vrfs.any(ospf.enable == true))
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
@@ -2926,19 +2955,29 @@ queries:
       compliance/soc2-2017: false
       compliance/vda-isa-5: vda-isa-5-5-2-7
     mql: |
-      panos.virtualRouters.where(ospf.enable == true).
+      panos.system.advancedRouting == true || panos.virtualRouters.where(ospf.enable == true).
         all(
           ospfAreas.all(
             interfaces().
               where(enable == true && passive == false).
-              all(authProfile != empty)
+              all(authenticationProfile.type == "md5")
+          )
+        )
+      panos.system.advancedRouting != true || panos.logicalRouters.
+        all(
+          vrfs.where(ospf.enable == true).all(
+            ospf.areas.all(
+              interfaces.
+                where(enable == true && passive == false).
+                all(effectiveAuthenticationProfile.type == "md5")
+            )
           )
         )
     docs:
       desc: |
         This check verifies that OSPF interfaces require authentication before forming an adjacency.
 
-        An OSPF authentication profile carries a password or an MD5 key that neighbors must present for their packets to be accepted. Profiles are defined in the OSPF configuration of each virtual router under Network > Virtual Routers and referenced by the interfaces in each area, where this check requires every enabled OSPF interface that forms adjacencies to name one. Passive interfaces advertise their subnet without sending hellos or forming adjacencies, so they are not required to.
+        An OSPF authentication profile carries a password or an MD5 key that neighbors must present for their packets to be accepted. Profiles are defined in the OSPF configuration of each virtual router under Network > Virtual Routers and referenced by the interfaces in each area, where this check requires every enabled OSPF interface that forms adjacencies to use an MD5 profile. With the Advanced Routing Engine enabled, the profiles are routing profiles under Network > Routing > Routing Profiles > OSPF, OSPF is configured per logical router VRF, and an interface without a profile of its own uses the profile of its area. A simple password profile sends the password in cleartext in every OSPF packet, so it fails. Passive interfaces advertise their subnet without sending hellos or forming adjacencies, so they are not required to name one.
 
         **Why this matters**
 
@@ -2948,7 +2987,7 @@ queries:
 
         The same primitive works as a denial of service. Advertising a route and then dropping what arrives black-holes a subnet, and because the firewall's routing table is genuinely correct according to the protocol, the outage looks like a network failure rather than an attack.
 
-        Authentication here is a secret shared between neighbors, so it needs to be distinct per area or link and rotated like any other credential; the older simple password type sends it in cleartext and should not be used. Even on a point-to-point link the firewall fully controls, configuring it costs one profile and outlives the assumption about who can reach that link.
+        Authentication here is a secret shared between neighbors, so it needs to be distinct per area or link and rotated like any other credential; the simple password type sends it in cleartext, which is why this check accepts only MD5. Even on a point-to-point link the firewall fully controls, configuring it costs one profile and outlives the assumption about who can reach that link.
       audit: |
         ### Audit via the PAN-OS web interface
 
@@ -2956,7 +2995,7 @@ queries:
         2. Navigate to **Network → Virtual Routers** and select a virtual router running OSPF.
         3. Open the **OSPF → Areas** tab and review the **Auth Profile** setting for each interface.
 
-        If every enabled OSPF interface that is not passive has an authentication profile assigned, the check passes. If any has none, the check fails. A passive interface sends no hellos and forms no adjacency, so it needs no profile.
+        If every enabled OSPF interface that is not passive has an authentication profile assigned, and that profile, under **OSPF → Auth Profiles**, is of type MD5, the check passes. If any has none or uses a simple password profile, the check fails. A passive interface sends no hellos and forms no adjacency, so it needs no profile.
 
         ### Audit via the PAN-OS CLI
 
@@ -2967,7 +3006,9 @@ queries:
            show config running xpath devices/entry/network/virtual-router
            ```
 
-        If every OSPF area interface with `enable yes` and `passive no` contains an `authentication` value, the check passes. If any lacks one, the check fails.
+        If every OSPF area interface with `enable yes` and `passive no` contains an `authentication` value naming an `auth-profile` entry that holds `md5` keys, the check passes. If any lacks one or names a profile with `password`, the check fails.
+
+        On a firewall with the Advanced Routing Engine, review `show config running xpath devices/entry/network/logical-router` for the `ospf` areas of each VRF and `show config running xpath devices/entry/network/routing-profile/ospf` for the profiles. An interface without its own `authentication` uses its area's.
       remediation:
         - id: console
           desc: |
@@ -2995,6 +3036,15 @@ queries:
             commit
             ```
 
+            On a firewall with the Advanced Routing Engine, OSPF authentication profiles are routing profiles, and an interface without a profile of its own uses its area's:
+
+            ```text
+            configure
+            set network routing-profile ospf auth-profile <profile-name> md5 <key-id> key <key-value>
+            set network logical-router <lr-name> vrf <vrf-name> ospf area <area-id> interface <interface-name> authentication <profile-name>
+            commit
+            ```
+
     refs:
       - url: https://docs.paloaltonetworks.com/ngfw/networking/ospf
         title: OSPF Configuration
@@ -3003,7 +3053,7 @@ queries:
     title: Ensure OSPF virtual links use authentication
     impact: 85
     filters: |
-      panos.virtualRouters.any(ospf.enable == true && ospfAreas.any(virtualLinks().length > 0))
+      panos.system.advancedRouting != true && panos.virtualRouters.any(ospf.enable == true && ospfAreas.any(virtualLinks().length > 0)) || panos.system.advancedRouting == true && panos.logicalRouters.any(vrfs.any(ospf.enable == true && ospf.areas.any(virtualLinks.length > 0)))
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
@@ -3020,19 +3070,29 @@ queries:
       compliance/soc2-2017: false
       compliance/vda-isa-5: vda-isa-5-5-2-7
     mql: |
-      panos.virtualRouters.where(ospf.enable == true).
+      panos.system.advancedRouting == true || panos.virtualRouters.where(ospf.enable == true).
         all(
           ospfAreas.all(
             virtualLinks().
               where(enable == true).
-              all(authProfile != empty)
+              all(authenticationProfile.type == "md5")
+          )
+        )
+      panos.system.advancedRouting != true || panos.logicalRouters.
+        all(
+          vrfs.where(ospf.enable == true).all(
+            ospf.areas.all(
+              virtualLinks.
+                where(enable == true).
+                all(authenticationProfile.type == "md5")
+            )
           )
         )
     docs:
       desc: |
         This check verifies that OSPF virtual links require authentication.
 
-        A virtual link is a logical adjacency carrying backbone traffic across a transit area, used when an area has no direct attachment to area 0. Virtual links are configured per area in the OSPF settings of a virtual router under Network > Virtual Routers, and this check requires each enabled virtual link to reference an authentication profile.
+        A virtual link is a logical adjacency carrying backbone traffic across a transit area, used when an area has no direct attachment to area 0. Virtual links are configured per area in the OSPF settings of a virtual router under Network > Virtual Routers, and this check requires each enabled virtual link to reference an MD5 authentication profile. With the Advanced Routing Engine enabled, the check reads the virtual links of the logical router VRFs, and each must name an MD5 routing profile itself. A simple password profile sends the password in cleartext in every OSPF packet, so it fails.
 
         **Why this matters**
 
@@ -3050,7 +3110,7 @@ queries:
         2. Navigate to **Network → Virtual Routers** and select a virtual router running OSPF.
         3. Open the **OSPF → Areas** tab and review the **Auth Profile** setting for each virtual link.
 
-        If every enabled OSPF virtual link has an authentication profile assigned, the check passes. If any has none, the check fails.
+        If every enabled OSPF virtual link has an authentication profile of type MD5 assigned, the check passes. If any has none or uses a simple password profile, the check fails.
 
         ### Audit via the PAN-OS CLI
 
@@ -3061,7 +3121,7 @@ queries:
            show config running xpath devices/entry/network/virtual-router
            ```
 
-        If every OSPF virtual link with `enable yes` contains an `authentication` value, the check passes. If any lacks one, the check fails.
+        If every OSPF virtual link with `enable yes` contains an `authentication` value naming an `auth-profile` entry that holds `md5` keys, the check passes. If any lacks one or names a profile with `password`, the check fails.
       remediation:
         - id: console
           desc: |
@@ -3089,6 +3149,15 @@ queries:
             commit
             ```
 
+            On a firewall with the Advanced Routing Engine, OSPF authentication profiles are routing profiles, and the virtual link must name one itself:
+
+            ```text
+            configure
+            set network routing-profile ospf auth-profile <profile-name> md5 <key-id> key <key-value>
+            set network logical-router <lr-name> vrf <vrf-name> ospf area <area-id> virtual-link <link-name> authentication <profile-name>
+            commit
+            ```
+
     refs:
       - url: https://docs.paloaltonetworks.com/ngfw/networking/ospf
         title: OSPF Configuration
@@ -3097,7 +3166,7 @@ queries:
     title: Ensure OSPF RFC 1583 compatibility is disabled
     impact: 70
     filters: |
-      panos.virtualRouters.any(ospf.enable == true)
+      panos.system.advancedRouting != true && panos.virtualRouters.any(ospf.enable == true) || panos.system.advancedRouting == true && panos.logicalRouters.any(vrfs.any(ospf.enable == true))
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ccc-06
@@ -3114,13 +3183,15 @@ queries:
       compliance/soc2-2017: soc2-control-cc7-1-1
       compliance/vda-isa-5: vda-isa-5-5-2-1
     mql: |
-      panos.virtualRouters.where(ospf.enable == true).
+      panos.system.advancedRouting == true || panos.virtualRouters.where(ospf.enable == true).
         all(ospf.rfc1583 == false)
+      panos.system.advancedRouting != true || panos.logicalRouters.
+        all(vrfs.where(ospf.enable == true).all(ospf.rfc1583 == false))
     docs:
       desc: |
         This check verifies that RFC 1583 compatibility is turned off in OSPF.
 
-        RFC 1583 compatibility restores the older route preference rules for choosing among external routes to the same destination, which RFC 2328 replaced because the original rules could produce persistent routing loops. The setting is in the OSPF configuration of each virtual router under Network > Virtual Routers, and this check requires it to be disabled.
+        RFC 1583 compatibility restores the older route preference rules for choosing among external routes to the same destination, which RFC 2328 replaced because the original rules could produce persistent routing loops. The setting is in the OSPF configuration of each virtual router under Network > Virtual Routers, and this check requires it to be disabled. On a firewall with the Advanced Routing Engine enabled, the check reads the logical routers under Network > Routing > Logical Routers instead, and ignores any virtual router configuration left from the legacy engine, which is not in use.
 
         **Why this matters**
 
@@ -3172,6 +3243,14 @@ queries:
             commit
             ```
 
+            On a firewall with the Advanced Routing Engine, the setting is on the OSPF instance of the logical router VRF:
+
+            ```text
+            configure
+            set network logical-router <lr-name> vrf <vrf-name> ospf rfc1583 no
+            commit
+            ```
+
     refs:
       - url: https://docs.paloaltonetworks.com/ngfw/networking/ospf
         title: OSPF Configuration
@@ -3180,7 +3259,7 @@ queries:
     title: Ensure OSPF rejects default routes from neighbors
     impact: 80
     filters: |
-      panos.virtualRouters.any(ospf.enable == true)
+      panos.system.advancedRouting != true && panos.virtualRouters.any(ospf.enable == true)
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
@@ -3203,7 +3282,7 @@ queries:
       desc: |
         This check verifies that OSPF is configured to reject default routes learned from neighbors.
 
-        With this option set, the virtual router will not install a 0.0.0.0/0 route received in an OSPF advertisement. It is in the OSPF configuration of each virtual router under Network > Virtual Routers, and this check requires it to be enabled.
+        With this option set, the virtual router will not install a 0.0.0.0/0 route received in an OSPF advertisement. It is in the OSPF configuration of each virtual router under Network > Virtual Routers, and this check requires it to be enabled. The Advanced Routing Engine has no equivalent per-instance setting, so the check does not run on a firewall with that engine enabled.
 
         **Why this matters**
 
