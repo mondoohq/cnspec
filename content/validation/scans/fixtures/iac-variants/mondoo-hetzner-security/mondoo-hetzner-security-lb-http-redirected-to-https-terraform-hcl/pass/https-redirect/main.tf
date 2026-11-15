@@ -5,6 +5,7 @@ resource "hcloud_load_balancer_service" "https" {
   destination_port = 80
 
   http {
-    sticky_sessions = true
+    certificates  = [hcloud_managed_certificate.example.id]
+    redirect_http = true
   }
 }

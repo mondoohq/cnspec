@@ -53,7 +53,6 @@ policies:
       - title: Load Balancers
         checks:
           - uid: mondoo-hetzner-security-lb-http-redirected-to-https
-          - uid: mondoo-hetzner-security-lb-https-service-has-certificate
           - uid: mondoo-hetzner-security-lb-in-private-network
       - title: TLS Certificates
         checks:
@@ -169,7 +168,7 @@ queries:
             resource "hcloud_server" "example" {
               name        = "example"
               image       = "ubuntu-24.04"
-              server_type = "cx22"
+              server_type = "cx23"
               location    = "nbg1"
 
               network {
@@ -277,7 +276,7 @@ queries:
         hcloud server describe <server> -o json | grep -A5 'firewall'
         ```
 
-        A passing server returns a non-empty `public_net.firewalls` or `firewall_ids` array. A failing server returns an empty or absent firewall list.
+        A passing server returns a non-empty `public_net.firewalls` array. A failing server returns an empty `firewalls` array.
       remediation:
         - id: console
           desc: |
@@ -308,7 +307,7 @@ queries:
             resource "hcloud_server" "example" {
               name         = "example"
               image        = "ubuntu-24.04"
-              server_type  = "cx22"
+              server_type  = "cx23"
               location     = "nbg1"
               firewall_ids = [hcloud_firewall.default.id]
             }
@@ -340,7 +339,7 @@ queries:
         values.firewall_ids != null && values.firewall_ids != []
       )
 
-  # No Terraform variants: image deprecation is runtime metadata set by Hetzner on the image (`image.deprecated` timestamp), not a configurable field on `hcloud_server`. Terraform configs only carry the image name string, with no signal whether Hetzner has marked it deprecated.
+  # No Terraform variants: image deprecation is runtime metadata set by Hetzner on the image (the `deprecation` announcement on `hetzner.image`), not a configurable field on `hcloud_server`. Terraform configs only carry the image name string, with no signal whether Hetzner has marked it deprecated.
   - uid: mondoo-hetzner-security-server-image-not-deprecated
     title: Ensure servers do not run a deprecated OS image
     impact: 70
@@ -361,12 +360,12 @@ queries:
       compliance/soc2-2017: soc2-control-cc7-1-5
       compliance/vda-isa-5: vda-isa-5-5-2-5
     mql: |
-      hetzner.servers.where(image != null).all(image.deprecated == null || image.deprecated > time.now)
+      hetzner.servers.where(image != null).all(image.deprecation == empty)
     docs:
       desc: |
-        This check verifies that no Hetzner Cloud server was created from a system image whose deprecation date has passed.
+        This check verifies that no Hetzner Cloud server runs a system image that Hetzner has deprecated.
 
-        Hetzner marks an image deprecated when the upstream operating system reaches end of life or when Hetzner plans to retire the image, and it publishes a deprecation timestamp alongside the image. Once that timestamp is in the past, the image is no longer supported. The fix is to move the server onto a current image, either through **Rebuild** on the server in the Hetzner Cloud Console or with `hcloud server rebuild`, and this check requires that no server run an image whose deprecation date has already elapsed.
+        Hetzner marks an image deprecated when the upstream operating system reaches end of life or when Hetzner plans to retire the image. The image then carries a `deprecation` record with the date the deprecation was announced and an `unavailable_after` date after which no new server can be created from it; servers already running it keep running. The fix is to move the server onto a current image, either through **Rebuild** on the server in the Hetzner Cloud Console or with `hcloud server rebuild`, and this check requires that no server run an image that carries a deprecation record.
 
         **Why this matters**
 
@@ -389,14 +388,13 @@ queries:
 
         ### Audit via CLI
 
-        1. Retrieve the image details for each server and check the `deprecated` field:
+        1. Retrieve the image of each server and check its `deprecation` field:
 
         ```bash
-        hcloud server describe <server> -o json | grep -A5 '"image"'
-        hcloud image describe <image-id> -o json | grep 'deprecated'
+        hcloud server describe <server> -o json | jq '.image | {name, deprecation}'
         ```
 
-        A passing server returns `"deprecated": null` or a `deprecated` date in the future. A failing server returns a `deprecated` date that is in the past.
+        A passing server returns `"deprecation": null`. A failing server returns a `deprecation` object with `announced` and `unavailable_after` dates.
       remediation:
         - id: console
           desc: |
@@ -443,7 +441,7 @@ queries:
             ```hcl
             resource "hcloud_server" "example" {
               name        = "example"
-              server_type = "cx22"
+              server_type = "cx23"
               location    = "nbg1"
               image       = "ubuntu-24.04"
             }
@@ -452,7 +450,6 @@ queries:
       - url: https://docs.hetzner.com/cloud/servers/faq/#what-does-it-mean-when-an-image-is-deprecated
         title: Hetzner image deprecation policy
 
-  # Security-only check (compliance mapping intentionally omitted per maintainer).
   # No Terraform variants: internetReachable is a runtime-computed exposure signal (IP + security group/firewall reachability) with no static config analog.
   - uid: mondoo-hetzner-security-server-not-internet-reachable
     title: Ensure servers are not reachable from the internet
@@ -497,7 +494,7 @@ queries:
         2. Navigate to **Servers** and open each server, then review the **Networking** tab for an assigned public IPv4 or IPv6 address.
         3. Open the **Firewalls** tab and review the inbound rules of every applied firewall; a server with no firewall admits all inbound traffic.
 
-        A passing server either has no public IP, or has firewalls whose inbound rules admit no `0.0.0.0/0` or `::/0` source. A failing server has a public IP and a firewall rule (or absent firewall) that admits traffic from any address.
+        A passing server either has no public IP, or has firewalls whose inbound rules admit no `0.0.0.0/0` or `::/0` source. A failing server has a public IP and a firewall rule, or no firewall, that admits traffic from any address.
 
         ### Audit via CLI
 
@@ -530,7 +527,14 @@ queries:
             hcloud firewall apply-to-resource <firewall> --type server --server <server>
             ```
 
-            A public IP cannot be detached from a running server in place; to remove the public edge entirely, rebuild the server with the public interface disabled (Terraform below).
+            To remove the public edge entirely, power the server off, unassign its primary IPs, and power it back on. Hetzner refuses to unassign a primary IP from a running server, and an unassigned primary IP keeps billing until you delete it:
+
+            ```bash
+            hcloud server poweroff <server>
+            hcloud primary-ip unassign <ipv4-primary-ip>
+            hcloud primary-ip unassign <ipv6-primary-ip>
+            hcloud server poweron <server>
+            ```
         - id: terraform
           desc: |
             Keep servers off the public internet by attaching a firewall whose inbound rules are scoped to trusted CIDRs, and disabling the public interface where it is not needed:
@@ -550,7 +554,7 @@ queries:
             resource "hcloud_server" "example" {
               name         = "example"
               image        = "ubuntu-24.04"
-              server_type  = "cx22"
+              server_type  = "cx23"
               location     = "nbg1"
               firewall_ids = [hcloud_firewall.scoped.id]
 
@@ -609,7 +613,7 @@ queries:
       desc: |
         This check verifies that no Hetzner Cloud Firewall allows inbound TCP traffic on port 22 from the public internet.
 
-        An SSH rule is unrestricted when its source is `0.0.0.0/0` or `::/0`, which admits every address on the internet. SSH exposed that way is one of the most common entry points in cloud infrastructure compromises. You scope the rule under **Firewalls** in the Hetzner Cloud Console by changing its source from `Any IPv4` or `Any IPv6` to a specific trusted CIDR, or with `hcloud firewall add-rule` followed by `hcloud firewall delete-rule`. This check requires that no rule leave port 22 open to either unrestricted source.
+        A source is unrestricted when it is `0.0.0.0/0` or `::/0`, or a range almost as wide: an IPv4 prefix shorter than /8, such as `0.0.0.0/1` paired with `128.0.0.0/1`, or an IPv6 prefix shorter than /12 inside `2000::/3`. A port range such as `20-30` or `any` covers port 22 just as a rule for `22` alone does. Such a source admits all or most of the internet. SSH exposed that way is one of the most common entry points in cloud infrastructure compromises. You scope the rule under **Firewalls** in the Hetzner Cloud Console by changing its source from `Any IPv4` or `Any IPv6` to a specific trusted CIDR, or with `hcloud firewall add-rule` followed by `hcloud firewall delete-rule`. This check requires that no TCP rule leave port 22 open to an unrestricted source.
 
         **Why this matters**
 
@@ -628,9 +632,9 @@ queries:
         1. Log in to the [Hetzner Cloud Console](https://console.hetzner.com/) and select the project.
         2. Navigate to **Firewalls** and open each firewall.
         3. Review the **Rules** tab, focusing on inbound rules.
-        4. Check whether any inbound TCP rule for port 22 lists `Any IPv4` (`0.0.0.0/0`) or `Any IPv6` (`::/0`) as the source.
+        4. Check whether any inbound TCP rule whose port or port range includes 22 lists `Any IPv4` (`0.0.0.0/0`), `Any IPv6` (`::/0`), or another range wider than an IPv4 /8 as the source.
 
-        A passing firewall shows no inbound rule for TCP port 22 with a source of `0.0.0.0/0` or `::/0`. A failing firewall shows an inbound TCP rule for port 22 with an unrestricted source.
+        A passing firewall shows no inbound TCP rule covering port 22 with an unrestricted source. A failing firewall shows one.
 
         ### Audit via CLI
 
@@ -641,9 +645,9 @@ queries:
         hcloud firewall describe <firewall> -o json
         ```
 
-        Review the `rules` array for any entry where `direction` is `in`, `protocol` is `tcp`, `port` is `22`, and `source_ips` contains `0.0.0.0/0` or `::/0`.
+        Review the `rules` array for any entry where `direction` is `in`, `protocol` is `tcp`, `port` is `22`, `any`, or a range that includes 22, and `source_ips` contains `0.0.0.0/0`, `::/0`, or another unrestricted range.
 
-        A passing firewall returns no such rule. A failing firewall returns at least one rule with direction `in`, protocol `tcp`, port `22`, and source IP `0.0.0.0/0` or `::/0`.
+        A passing firewall returns no such rule. A failing firewall returns at least one.
       remediation:
         - id: console
           desc: |
@@ -689,10 +693,8 @@ queries:
     filters: asset.platform == "hetzner-firewall"
     mql: |
       hetzner.firewall.inboundRules.none(
-        protocol == "tcp" && port == "22" && sourceIps.contains("0.0.0.0/0")
-      )
-      hetzner.firewall.inboundRules.none(
-        protocol == "tcp" && port == "22" && sourceIps.contains("::/0")
+        protocol == "tcp" && portStart <= 22 && portEnd >= 22 &&
+        sourceIps.any(_ == /^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[01][0-9]|22[0-3])\.[0-9.]+\/[0-7]|::\/[0-2]|[23][0-9a-f]{3}::\/([0-9]|1[01]))$/i)
       )
   - uid: mondoo-hetzner-security-firewall-no-unrestricted-ssh-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "hcloud_firewall")
@@ -701,8 +703,8 @@ queries:
         blocks.where(type == "rule").all(
           arguments['direction'] != "in" ||
           arguments['protocol'] != "tcp" ||
-          arguments['port'] != "22" ||
-          arguments['source_ips'].containsNone(["0.0.0.0/0", "::/0"])
+          arguments['port'] != /^(any|22|([0-9]|1[0-9]|2[0-2])-(2[2-9]|[3-9]\d|[1-9]\d{2}|[1-9]\d{3}|[1-9]\d{4}))$/ ||
+          arguments['source_ips'].none(_ == /^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[01][0-9]|22[0-3])\.[0-9.]+\/[0-7]|::\/[0-2]|[23][0-9a-f]{3}::\/([0-9]|1[01]))$/i)
         )
       )
   - uid: mondoo-hetzner-security-firewall-no-unrestricted-ssh-terraform-plan
@@ -712,8 +714,8 @@ queries:
         change.after.rule == null || change.after.rule.all(
           _['direction'] != "in" ||
           _['protocol'] != "tcp" ||
-          _['port'] != "22" ||
-          _['source_ips'].containsNone(["0.0.0.0/0", "::/0"])
+          _['port'] != /^(any|22|([0-9]|1[0-9]|2[0-2])-(2[2-9]|[3-9]\d|[1-9]\d{2}|[1-9]\d{3}|[1-9]\d{4}))$/ ||
+          _['source_ips'].none(_ == /^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[01][0-9]|22[0-3])\.[0-9.]+\/[0-7]|::\/[0-2]|[23][0-9a-f]{3}::\/([0-9]|1[01]))$/i)
         )
       )
   - uid: mondoo-hetzner-security-firewall-no-unrestricted-ssh-terraform-state
@@ -723,8 +725,8 @@ queries:
         values.rule == null || values.rule.all(
           _['direction'] != "in" ||
           _['protocol'] != "tcp" ||
-          _['port'] != "22" ||
-          _['source_ips'].containsNone(["0.0.0.0/0", "::/0"])
+          _['port'] != /^(any|22|([0-9]|1[0-9]|2[0-2])-(2[2-9]|[3-9]\d|[1-9]\d{2}|[1-9]\d{3}|[1-9]\d{4}))$/ ||
+          _['source_ips'].none(_ == /^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[01][0-9]|22[0-3])\.[0-9.]+\/[0-7]|::\/[0-2]|[23][0-9a-f]{3}::\/([0-9]|1[01]))$/i)
         )
       )
 
@@ -767,7 +769,7 @@ queries:
       desc: |
         This check verifies that no Hetzner Cloud Firewall allows inbound TCP traffic on port 3389 from the public internet.
 
-        An RDP rule is unrestricted when its source is `0.0.0.0/0` or `::/0`. Internet-facing RDP is one of the most common initial access vectors in ransomware campaigns and targeted intrusions. You remove or scope the rule under **Firewalls** in the Hetzner Cloud Console, or with `hcloud firewall delete-rule`, and this check requires that no rule leave port 3389 open to either unrestricted source.
+        A source is unrestricted when it is `0.0.0.0/0` or `::/0`, or a range almost as wide: an IPv4 prefix shorter than /8, such as `0.0.0.0/1` paired with `128.0.0.0/1`, or an IPv6 prefix shorter than /12 inside `2000::/3`. A port range such as `20-30` or `any` covers port 3389 just as a rule for `3389` alone does. Internet-facing RDP is one of the most common initial access vectors in ransomware campaigns and targeted intrusions. You remove or scope the rule under **Firewalls** in the Hetzner Cloud Console, or with `hcloud firewall delete-rule`, and this check requires that no TCP rule leave port 3389 open to an unrestricted source.
 
         **Why this matters**
 
@@ -786,7 +788,7 @@ queries:
         3. Review the **Rules** tab, focusing on inbound rules.
         4. Check whether any inbound TCP rule for port 3389 lists `Any IPv4` (`0.0.0.0/0`) or `Any IPv6` (`::/0`) as the source.
 
-        A passing firewall shows no inbound rule for TCP port 3389 with an unrestricted source. A failing firewall shows an inbound TCP rule for port 3389 sourced from `0.0.0.0/0` or `::/0`.
+        A passing firewall shows no inbound TCP rule covering port 3389 with an unrestricted source. A failing firewall shows one sourced from `0.0.0.0/0`, `::/0`, or another range wider than an IPv4 /8.
 
         ### Audit via CLI
 
@@ -797,9 +799,9 @@ queries:
         hcloud firewall describe <firewall> -o json
         ```
 
-        Review the `rules` array for any entry where `direction` is `in`, `protocol` is `tcp`, `port` is `3389`, and `source_ips` contains `0.0.0.0/0` or `::/0`.
+        Review the `rules` array for any entry where `direction` is `in`, `protocol` is `tcp`, `port` is `3389`, `any`, or a range that includes 3389, and `source_ips` contains `0.0.0.0/0`, `::/0`, or another unrestricted range.
 
-        A passing firewall returns no such rule. A failing firewall returns at least one rule with direction `in`, protocol `tcp`, port `3389`, and source IP `0.0.0.0/0` or `::/0`.
+        A passing firewall returns no such rule. A failing firewall returns at least one.
       remediation:
         - id: console
           desc: |
@@ -848,10 +850,8 @@ queries:
     filters: asset.platform == "hetzner-firewall"
     mql: |
       hetzner.firewall.inboundRules.none(
-        protocol == "tcp" && port == "3389" && sourceIps.contains("0.0.0.0/0")
-      )
-      hetzner.firewall.inboundRules.none(
-        protocol == "tcp" && port == "3389" && sourceIps.contains("::/0")
+        protocol == "tcp" && portStart <= 3389 && portEnd >= 3389 &&
+        sourceIps.any(_ == /^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[01][0-9]|22[0-3])\.[0-9.]+\/[0-7]|::\/[0-2]|[23][0-9a-f]{3}::\/([0-9]|1[01]))$/i)
       )
   - uid: mondoo-hetzner-security-firewall-no-unrestricted-rdp-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "hcloud_firewall")
@@ -860,8 +860,8 @@ queries:
         blocks.where(type == "rule").all(
           arguments['direction'] != "in" ||
           arguments['protocol'] != "tcp" ||
-          arguments['port'] != "3389" ||
-          arguments['source_ips'].containsNone(["0.0.0.0/0", "::/0"])
+          arguments['port'] != /^(any|3389|([0-9]|[1-9]\d|[1-9]\d{2}|[1-2]\d{3}|3[0-2]\d{2}|33[0-8]\d)-(3389|339[0-9]|3[4-9]\d{2}|[4-9]\d{3}|[1-9]\d{4}))$/ ||
+          arguments['source_ips'].none(_ == /^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[01][0-9]|22[0-3])\.[0-9.]+\/[0-7]|::\/[0-2]|[23][0-9a-f]{3}::\/([0-9]|1[01]))$/i)
         )
       )
   - uid: mondoo-hetzner-security-firewall-no-unrestricted-rdp-terraform-plan
@@ -871,8 +871,8 @@ queries:
         change.after.rule == null || change.after.rule.all(
           _['direction'] != "in" ||
           _['protocol'] != "tcp" ||
-          _['port'] != "3389" ||
-          _['source_ips'].containsNone(["0.0.0.0/0", "::/0"])
+          _['port'] != /^(any|3389|([0-9]|[1-9]\d|[1-9]\d{2}|[1-2]\d{3}|3[0-2]\d{2}|33[0-8]\d)-(3389|339[0-9]|3[4-9]\d{2}|[4-9]\d{3}|[1-9]\d{4}))$/ ||
+          _['source_ips'].none(_ == /^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[01][0-9]|22[0-3])\.[0-9.]+\/[0-7]|::\/[0-2]|[23][0-9a-f]{3}::\/([0-9]|1[01]))$/i)
         )
       )
   - uid: mondoo-hetzner-security-firewall-no-unrestricted-rdp-terraform-state
@@ -882,8 +882,8 @@ queries:
         values.rule == null || values.rule.all(
           _['direction'] != "in" ||
           _['protocol'] != "tcp" ||
-          _['port'] != "3389" ||
-          _['source_ips'].containsNone(["0.0.0.0/0", "::/0"])
+          _['port'] != /^(any|3389|([0-9]|[1-9]\d|[1-9]\d{2}|[1-2]\d{3}|3[0-2]\d{2}|33[0-8]\d)-(3389|339[0-9]|3[4-9]\d{2}|[4-9]\d{3}|[1-9]\d{4}))$/ ||
+          _['source_ips'].none(_ == /^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[01][0-9]|22[0-3])\.[0-9.]+\/[0-7]|::\/[0-2]|[23][0-9a-f]{3}::\/([0-9]|1[01]))$/i)
         )
       )
 
@@ -926,7 +926,7 @@ queries:
       desc: |
         This check verifies that no Hetzner Cloud Firewall allows inbound traffic from the public internet to a common database port.
 
-        The ports covered are MySQL on 3306, PostgreSQL on 5432, MongoDB on 27017, Redis on 6379, Kafka on 9092, Elasticsearch and OpenSearch on 9200, and SQL Server on 1433. A rule fails when its source is `Any IPv4` or `Any IPv6`. You remove or scope those rules on the **Rules** tab of the affected firewall in the Hetzner Cloud Console, or with `hcloud firewall delete-rule` once per offending port. Database services should be reachable only from the application tier, ideally over a Hetzner private network, never directly from the internet.
+        The ports covered are MySQL on 3306, PostgreSQL on 5432, MongoDB on 27017, Redis on 6379, Kafka on 9092, Elasticsearch and OpenSearch on 9200, and SQL Server on 1433. A TCP rule fails when its port or port range includes one of those ports and its source is unrestricted: `0.0.0.0/0`, `::/0`, an IPv4 prefix shorter than /8, or an IPv6 prefix shorter than /12 inside `2000::/3`. A rule for `any` port or `3000-10000` exposes several of them at once. You remove or scope those rules on the **Rules** tab of the affected firewall in the Hetzner Cloud Console, or with `hcloud firewall delete-rule` once per offending port. Database services should be reachable only from the application tier, ideally over a Hetzner private network, never directly from the internet.
 
         **Why this matters**
 
@@ -947,7 +947,7 @@ queries:
         3. Review the **Rules** tab, focusing on inbound rules.
         4. Check whether any inbound TCP rule specifies a port of `3306`, `5432`, `27017`, `6379`, `9092`, `9200`, or `1433` with a source of `Any IPv4` (`0.0.0.0/0`) or `Any IPv6` (`::/0`).
 
-        A passing firewall shows no inbound rule for those database ports sourced from `0.0.0.0/0` or `::/0`. A failing firewall shows at least one such inbound rule permitting unrestricted internet access to a database port.
+        A passing firewall shows no inbound rule covering those database ports from an unrestricted source. A failing firewall shows at least one such inbound rule permitting unrestricted internet access to a database port.
 
         ### Audit via CLI
 
@@ -958,7 +958,7 @@ queries:
         hcloud firewall describe <firewall> -o json
         ```
 
-        Review the `rules` array for entries where `direction` is `in`, `protocol` is `tcp`, `port` is any of `3306`, `5432`, `27017`, `6379`, `9092`, `9200`, or `1433`, and `source_ips` contains `0.0.0.0/0` or `::/0`.
+        Review the `rules` array for entries where `direction` is `in`, `protocol` is `tcp`, `port` is `any`, one of `3306`, `5432`, `27017`, `6379`, `9092`, `9200`, or `1433`, or a range that includes one, and `source_ips` contains `0.0.0.0/0`, `::/0`, or another unrestricted range.
 
         A passing firewall returns no such rule. A failing firewall returns at least one inbound rule matching one of those database ports with an unrestricted source.
       remediation:
@@ -1006,46 +1006,32 @@ queries:
     filters: asset.platform == "hetzner-firewall"
     mql: |
       hetzner.firewall.inboundRules.none(
-        protocol == "tcp" && port == "3306" && sourceIps.contains("0.0.0.0/0")
+        protocol == "tcp" && portStart <= 3306 && portEnd >= 3306 &&
+        sourceIps.any(_ == /^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[01][0-9]|22[0-3])\.[0-9.]+\/[0-7]|::\/[0-2]|[23][0-9a-f]{3}::\/([0-9]|1[01]))$/i)
       )
       hetzner.firewall.inboundRules.none(
-        protocol == "tcp" && port == "3306" && sourceIps.contains("::/0")
+        protocol == "tcp" && portStart <= 5432 && portEnd >= 5432 &&
+        sourceIps.any(_ == /^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[01][0-9]|22[0-3])\.[0-9.]+\/[0-7]|::\/[0-2]|[23][0-9a-f]{3}::\/([0-9]|1[01]))$/i)
       )
       hetzner.firewall.inboundRules.none(
-        protocol == "tcp" && port == "5432" && sourceIps.contains("0.0.0.0/0")
+        protocol == "tcp" && portStart <= 27017 && portEnd >= 27017 &&
+        sourceIps.any(_ == /^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[01][0-9]|22[0-3])\.[0-9.]+\/[0-7]|::\/[0-2]|[23][0-9a-f]{3}::\/([0-9]|1[01]))$/i)
       )
       hetzner.firewall.inboundRules.none(
-        protocol == "tcp" && port == "5432" && sourceIps.contains("::/0")
+        protocol == "tcp" && portStart <= 6379 && portEnd >= 6379 &&
+        sourceIps.any(_ == /^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[01][0-9]|22[0-3])\.[0-9.]+\/[0-7]|::\/[0-2]|[23][0-9a-f]{3}::\/([0-9]|1[01]))$/i)
       )
       hetzner.firewall.inboundRules.none(
-        protocol == "tcp" && port == "27017" && sourceIps.contains("0.0.0.0/0")
+        protocol == "tcp" && portStart <= 9092 && portEnd >= 9092 &&
+        sourceIps.any(_ == /^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[01][0-9]|22[0-3])\.[0-9.]+\/[0-7]|::\/[0-2]|[23][0-9a-f]{3}::\/([0-9]|1[01]))$/i)
       )
       hetzner.firewall.inboundRules.none(
-        protocol == "tcp" && port == "27017" && sourceIps.contains("::/0")
+        protocol == "tcp" && portStart <= 9200 && portEnd >= 9200 &&
+        sourceIps.any(_ == /^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[01][0-9]|22[0-3])\.[0-9.]+\/[0-7]|::\/[0-2]|[23][0-9a-f]{3}::\/([0-9]|1[01]))$/i)
       )
       hetzner.firewall.inboundRules.none(
-        protocol == "tcp" && port == "6379" && sourceIps.contains("0.0.0.0/0")
-      )
-      hetzner.firewall.inboundRules.none(
-        protocol == "tcp" && port == "6379" && sourceIps.contains("::/0")
-      )
-      hetzner.firewall.inboundRules.none(
-        protocol == "tcp" && port == "9092" && sourceIps.contains("0.0.0.0/0")
-      )
-      hetzner.firewall.inboundRules.none(
-        protocol == "tcp" && port == "9092" && sourceIps.contains("::/0")
-      )
-      hetzner.firewall.inboundRules.none(
-        protocol == "tcp" && port == "9200" && sourceIps.contains("0.0.0.0/0")
-      )
-      hetzner.firewall.inboundRules.none(
-        protocol == "tcp" && port == "9200" && sourceIps.contains("::/0")
-      )
-      hetzner.firewall.inboundRules.none(
-        protocol == "tcp" && port == "1433" && sourceIps.contains("0.0.0.0/0")
-      )
-      hetzner.firewall.inboundRules.none(
-        protocol == "tcp" && port == "1433" && sourceIps.contains("::/0")
+        protocol == "tcp" && portStart <= 1433 && portEnd >= 1433 &&
+        sourceIps.any(_ == /^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[01][0-9]|22[0-3])\.[0-9.]+\/[0-7]|::\/[0-2]|[23][0-9a-f]{3}::\/([0-9]|1[01]))$/i)
       )
   - uid: mondoo-hetzner-security-firewall-no-unrestricted-db-ports-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "hcloud_firewall")
@@ -1054,8 +1040,14 @@ queries:
         blocks.where(type == "rule").all(
           arguments['direction'] != "in" ||
           arguments['protocol'] != "tcp" ||
-          arguments['port'].notIn(["3306", "5432", "27017", "6379", "9092", "9200", "1433"]) ||
-          arguments['source_ips'].containsNone(["0.0.0.0/0", "::/0"])
+          arguments['port'] != /^(any|3306|([0-9]|[1-9]\d|[1-9]\d{2}|[1-2]\d{3}|3[0-2]\d{2}|330[0-6])-(330[6-9]|33[1-9]\d|3[4-9]\d{2}|[4-9]\d{3}|[1-9]\d{4}))$/ &&
+          arguments['port'] != /^(any|5432|([0-9]|[1-9]\d|[1-9]\d{2}|[1-4]\d{3}|5[0-3]\d{2}|54[0-2]\d|543[0-2])-(543[2-9]|54[4-9]\d|5[5-9]\d{2}|[6-9]\d{3}|[1-9]\d{4}))$/ &&
+          arguments['port'] != /^(any|27017|([0-9]|[1-9]\d|[1-9]\d{2}|[1-9]\d{3}|1[0-9]\d{3}|2[0-6]\d{3}|2700[0-9]|2701[0-7])-(2701[7-9]|270[2-9]\d|27[1-9]\d{2}|2[8-9]\d{3}|[3-9]\d{4}))$/ &&
+          arguments['port'] != /^(any|6379|([0-9]|[1-9]\d|[1-9]\d{2}|[1-5]\d{3}|6[0-2]\d{2}|63[0-7]\d)-(6379|63[8-9]\d|6[4-9]\d{2}|[7-9]\d{3}|[1-9]\d{4}))$/ &&
+          arguments['port'] != /^(any|9092|([0-9]|[1-9]\d|[1-9]\d{2}|[1-8]\d{3}|90[0-8]\d|909[0-2])-(909[2-9]|9[1-9]\d{2}|[1-9]\d{4}))$/ &&
+          arguments['port'] != /^(any|9200|([0-9]|[1-9]\d|[1-9]\d{2}|[1-8]\d{3}|9[0-1]\d{2}|9200)-(9[2-9]\d{2}|[1-9]\d{4}))$/ &&
+          arguments['port'] != /^(any|1433|([0-9]|[1-9]\d|[1-9]\d{2}|1[0-3]\d{2}|14[0-2]\d|143[0-3])-(143[3-9]|14[4-9]\d|1[5-9]\d{2}|[2-9]\d{3}|[1-9]\d{4}))$/ ||
+          arguments['source_ips'].none(_ == /^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[01][0-9]|22[0-3])\.[0-9.]+\/[0-7]|::\/[0-2]|[23][0-9a-f]{3}::\/([0-9]|1[01]))$/i)
         )
       )
   - uid: mondoo-hetzner-security-firewall-no-unrestricted-db-ports-terraform-plan
@@ -1065,8 +1057,14 @@ queries:
         change.after.rule == null || change.after.rule.all(
           _['direction'] != "in" ||
           _['protocol'] != "tcp" ||
-          _['port'].notIn(["3306", "5432", "27017", "6379", "9092", "9200", "1433"]) ||
-          _['source_ips'].containsNone(["0.0.0.0/0", "::/0"])
+          _['port'] != /^(any|3306|([0-9]|[1-9]\d|[1-9]\d{2}|[1-2]\d{3}|3[0-2]\d{2}|330[0-6])-(330[6-9]|33[1-9]\d|3[4-9]\d{2}|[4-9]\d{3}|[1-9]\d{4}))$/ &&
+          _['port'] != /^(any|5432|([0-9]|[1-9]\d|[1-9]\d{2}|[1-4]\d{3}|5[0-3]\d{2}|54[0-2]\d|543[0-2])-(543[2-9]|54[4-9]\d|5[5-9]\d{2}|[6-9]\d{3}|[1-9]\d{4}))$/ &&
+          _['port'] != /^(any|27017|([0-9]|[1-9]\d|[1-9]\d{2}|[1-9]\d{3}|1[0-9]\d{3}|2[0-6]\d{3}|2700[0-9]|2701[0-7])-(2701[7-9]|270[2-9]\d|27[1-9]\d{2}|2[8-9]\d{3}|[3-9]\d{4}))$/ &&
+          _['port'] != /^(any|6379|([0-9]|[1-9]\d|[1-9]\d{2}|[1-5]\d{3}|6[0-2]\d{2}|63[0-7]\d)-(6379|63[8-9]\d|6[4-9]\d{2}|[7-9]\d{3}|[1-9]\d{4}))$/ &&
+          _['port'] != /^(any|9092|([0-9]|[1-9]\d|[1-9]\d{2}|[1-8]\d{3}|90[0-8]\d|909[0-2])-(909[2-9]|9[1-9]\d{2}|[1-9]\d{4}))$/ &&
+          _['port'] != /^(any|9200|([0-9]|[1-9]\d|[1-9]\d{2}|[1-8]\d{3}|9[0-1]\d{2}|9200)-(9[2-9]\d{2}|[1-9]\d{4}))$/ &&
+          _['port'] != /^(any|1433|([0-9]|[1-9]\d|[1-9]\d{2}|1[0-3]\d{2}|14[0-2]\d|143[0-3])-(143[3-9]|14[4-9]\d|1[5-9]\d{2}|[2-9]\d{3}|[1-9]\d{4}))$/ ||
+          _['source_ips'].none(_ == /^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[01][0-9]|22[0-3])\.[0-9.]+\/[0-7]|::\/[0-2]|[23][0-9a-f]{3}::\/([0-9]|1[01]))$/i)
         )
       )
   - uid: mondoo-hetzner-security-firewall-no-unrestricted-db-ports-terraform-state
@@ -1076,8 +1074,14 @@ queries:
         values.rule == null || values.rule.all(
           _['direction'] != "in" ||
           _['protocol'] != "tcp" ||
-          _['port'].notIn(["3306", "5432", "27017", "6379", "9092", "9200", "1433"]) ||
-          _['source_ips'].containsNone(["0.0.0.0/0", "::/0"])
+          _['port'] != /^(any|3306|([0-9]|[1-9]\d|[1-9]\d{2}|[1-2]\d{3}|3[0-2]\d{2}|330[0-6])-(330[6-9]|33[1-9]\d|3[4-9]\d{2}|[4-9]\d{3}|[1-9]\d{4}))$/ &&
+          _['port'] != /^(any|5432|([0-9]|[1-9]\d|[1-9]\d{2}|[1-4]\d{3}|5[0-3]\d{2}|54[0-2]\d|543[0-2])-(543[2-9]|54[4-9]\d|5[5-9]\d{2}|[6-9]\d{3}|[1-9]\d{4}))$/ &&
+          _['port'] != /^(any|27017|([0-9]|[1-9]\d|[1-9]\d{2}|[1-9]\d{3}|1[0-9]\d{3}|2[0-6]\d{3}|2700[0-9]|2701[0-7])-(2701[7-9]|270[2-9]\d|27[1-9]\d{2}|2[8-9]\d{3}|[3-9]\d{4}))$/ &&
+          _['port'] != /^(any|6379|([0-9]|[1-9]\d|[1-9]\d{2}|[1-5]\d{3}|6[0-2]\d{2}|63[0-7]\d)-(6379|63[8-9]\d|6[4-9]\d{2}|[7-9]\d{3}|[1-9]\d{4}))$/ &&
+          _['port'] != /^(any|9092|([0-9]|[1-9]\d|[1-9]\d{2}|[1-8]\d{3}|90[0-8]\d|909[0-2])-(909[2-9]|9[1-9]\d{2}|[1-9]\d{4}))$/ &&
+          _['port'] != /^(any|9200|([0-9]|[1-9]\d|[1-9]\d{2}|[1-8]\d{3}|9[0-1]\d{2}|9200)-(9[2-9]\d{2}|[1-9]\d{4}))$/ &&
+          _['port'] != /^(any|1433|([0-9]|[1-9]\d|[1-9]\d{2}|1[0-3]\d{2}|14[0-2]\d|143[0-3])-(143[3-9]|14[4-9]\d|1[5-9]\d{2}|[2-9]\d{3}|[1-9]\d{4}))$/ ||
+          _['source_ips'].none(_ == /^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[01][0-9]|22[0-3])\.[0-9.]+\/[0-7]|::\/[0-2]|[23][0-9a-f]{3}::\/([0-9]|1[01]))$/i)
         )
       )
 
@@ -1120,7 +1124,7 @@ queries:
       desc: |
         This check verifies that no Hetzner Cloud Firewall has an inbound rule permitting traffic on all ports from the public internet.
 
-        The rule forms that qualify are a port of `any`, `1-65535`, or `0-65535` combined with a source of `0.0.0.0/0` or `::/0`. A rule that opens every port from everywhere is equivalent to having no firewall at all. You replace it on the **Rules** tab of the affected firewall in the Hetzner Cloud Console, or with `hcloud firewall delete-rule`, and this check requires that no such rule exist on any firewall.
+        The rule forms that qualify are a port of `any` or `1-65535`, on any protocol that has ports, combined with an unrestricted source: `0.0.0.0/0`, `::/0`, an IPv4 prefix shorter than /8, or an IPv6 prefix shorter than /12 inside `2000::/3`. ICMP, ESP, and GRE rules have no ports and do not count. A rule that opens every port from everywhere is equivalent to having no firewall at all. You replace it on the **Rules** tab of the affected firewall in the Hetzner Cloud Console, or with `hcloud firewall delete-rule`, and this check requires that no such rule exist on any firewall.
 
         **Why this matters**
 
@@ -1130,14 +1134,14 @@ queries:
 
         This is the most permissive firewall state that can be expressed, and it represents a complete failure of the network access control layer rather than a partial weakness in it. Nothing narrower elsewhere in the rule set compensates, because the wide rule already admits everything.
 
-        Replace it with explicit narrow rules for only the ports the workload requires, scoped to trusted source CIDRs where possible, so every other port is implicitly denied regardless of what is running on the server. Add the narrow rules before deleting the wide one: Hetzner firewalls deny all other inbound traffic by default, so removing the only inbound rule immediately blocks every connection to the attached servers. Because the check fails on any inbound all-ports rule, remove them for every protocol and for both unrestricted sources, since deleting only the TCP and `0.0.0.0/0` rule leaves UDP, ICMP, and `::/0` rules in place.
+        Replace it with explicit narrow rules for only the ports the workload requires, scoped to trusted source CIDRs where possible, so every other port is implicitly denied regardless of what is running on the server. Add the narrow rules before deleting the wide one: Hetzner firewalls deny all other inbound traffic by default, so removing the only inbound rule immediately blocks every connection to the attached servers. Because the check fails on any inbound all-ports rule, remove them for TCP and UDP alike.
       audit: |
         ### Audit via Console
 
         1. Log in to the [Hetzner Cloud Console](https://console.hetzner.com/) and select the project.
         2. Navigate to **Firewalls** and open each firewall.
         3. Review the **Rules** tab, focusing on inbound rules.
-        4. Check whether any inbound rule has the port set to `Any`, `1-65535`, or `0-65535` with a source of `Any IPv4` (`0.0.0.0/0`) or `Any IPv6` (`::/0`).
+        4. Check whether any inbound rule has the port set to `Any` or `1-65535` with a source of `Any IPv4` (`0.0.0.0/0`), `Any IPv6` (`::/0`), or another range wider than an IPv4 /8.
 
         A passing firewall shows no inbound rule permitting the full port range from the public internet. A failing firewall shows an inbound rule with an unrestricted port range and an unrestricted source.
 
@@ -1150,7 +1154,7 @@ queries:
         hcloud firewall describe <firewall> -o json
         ```
 
-        Review the `rules` array for entries where `direction` is `in`, `port` is `any`, `1-65535`, or `0-65535`, and `source_ips` contains `0.0.0.0/0` or `::/0`.
+        Review the `rules` array for entries where `direction` is `in`, `port` is `any` or `1-65535`, and `source_ips` contains `0.0.0.0/0`, `::/0`, or another unrestricted range.
 
         A passing firewall returns no such rule. A failing firewall returns at least one inbound rule that opens the full port range from an unrestricted source.
       remediation:
@@ -1164,7 +1168,7 @@ queries:
             Add the narrow rules before deleting the wide-open rule. Hetzner firewalls deny all other inbound traffic by default, so removing the only inbound rule immediately blocks every connection to the attached servers.
         - id: cli
           desc: |
-            `delete-rule` removes one rule at a time, matched by direction, protocol, port, and source. Because the check fails on any inbound all-ports rule, you must repeat the deletion for every protocol that has a wide-open rule and for every unrestricted source, including IPv6. Removing only the `tcp` and `0.0.0.0/0` rule leaves UDP, ICMP, and `::/0` rules in place, so the firewall still fails the check.
+            `delete-rule` removes one rule at a time, matched by direction, protocol, port, and source. The source list must match the rule exactly, so a rule written with both `0.0.0.0/0` and `::/0` is deleted with `--source-ips 0.0.0.0/0,::/0`. Because the check fails on any inbound all-ports rule, repeat the deletion for every TCP and UDP rule that opens all ports. Removing only the TCP rule leaves the UDP one in place, so the firewall still fails the check.
 
             Run `hcloud firewall describe <firewall> -o json` first to enumerate the offending rules, then delete each one:
 
@@ -1181,16 +1185,12 @@ queries:
               --direction in --protocol udp --port any --source-ips 0.0.0.0/0
             hcloud firewall delete-rule <firewall> \
               --direction in --protocol udp --port any --source-ips ::/0
-            hcloud firewall delete-rule <firewall> \
-              --direction in --protocol icmp --source-ips 0.0.0.0/0
-            hcloud firewall delete-rule <firewall> \
-              --direction in --protocol icmp --source-ips ::/0
             ```
 
-            Adjust the `--port` value to match the rule actually in place (`any`, `1-65535`, or `0-65535`); `--port` is omitted for `icmp`. After deleting the wide-open rules, add narrow per-service rules that expose only the required ports.
+            Adjust the `--port` value to match the rule actually in place (`any` or `1-65535`). After deleting the wide-open rules, add narrow per-service rules that expose only the required ports.
         - id: terraform
           desc: |
-            Never declare an inbound `rule` whose `port` is `any`, `1-65535`, or `0-65535` with `source_ips` of `0.0.0.0/0` or `::/0`. Replace it with narrow per-service rules:
+            Never declare an inbound `rule` whose `port` is `any` or `1-65535` with `source_ips` of `0.0.0.0/0`, `::/0`, or another range wider than an IPv4 /8. Replace it with narrow per-service rules:
 
             ```hcl
             resource "hcloud_firewall" "default" {
@@ -1218,20 +1218,18 @@ queries:
   - uid: mondoo-hetzner-security-firewall-no-all-ports-open-hetzner
     filters: asset.platform == "hetzner-firewall"
     mql: |
-      hetzner.firewall.inboundRules.none(port == "any" && sourceIps.contains("0.0.0.0/0"))
-      hetzner.firewall.inboundRules.none(port == "any" && sourceIps.contains("::/0"))
-      hetzner.firewall.inboundRules.none(port == "1-65535" && sourceIps.contains("0.0.0.0/0"))
-      hetzner.firewall.inboundRules.none(port == "1-65535" && sourceIps.contains("::/0"))
-      hetzner.firewall.inboundRules.none(port == "0-65535" && sourceIps.contains("0.0.0.0/0"))
-      hetzner.firewall.inboundRules.none(port == "0-65535" && sourceIps.contains("::/0"))
+      hetzner.firewall.inboundRules.none(
+        portStart <= 1 && portEnd >= 65535 &&
+        sourceIps.any(_ == /^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[01][0-9]|22[0-3])\.[0-9.]+\/[0-7]|::\/[0-2]|[23][0-9a-f]{3}::\/([0-9]|1[01]))$/i)
+      )
   - uid: mondoo-hetzner-security-firewall-no-all-ports-open-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "hcloud_firewall")
     mql: |
       terraform.resources("hcloud_firewall").all(
         blocks.where(type == "rule").all(
           arguments['direction'] != "in" ||
-          arguments['port'].notIn(["any", "1-65535", "0-65535"]) ||
-          arguments['source_ips'].containsNone(["0.0.0.0/0", "::/0"])
+          arguments['port'] != /^(any|[01]-65535)$/ ||
+          arguments['source_ips'].none(_ == /^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[01][0-9]|22[0-3])\.[0-9.]+\/[0-7]|::\/[0-2]|[23][0-9a-f]{3}::\/([0-9]|1[01]))$/i)
         )
       )
   - uid: mondoo-hetzner-security-firewall-no-all-ports-open-terraform-plan
@@ -1240,8 +1238,8 @@ queries:
       terraform.plan.resourceChanges.where(type == "hcloud_firewall").all(
         change.after.rule == null || change.after.rule.all(
           _['direction'] != "in" ||
-          _['port'].notIn(["any", "1-65535", "0-65535"]) ||
-          _['source_ips'].containsNone(["0.0.0.0/0", "::/0"])
+          _['port'] != /^(any|[01]-65535)$/ ||
+          _['source_ips'].none(_ == /^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[01][0-9]|22[0-3])\.[0-9.]+\/[0-7]|::\/[0-2]|[23][0-9a-f]{3}::\/([0-9]|1[01]))$/i)
         )
       )
   - uid: mondoo-hetzner-security-firewall-no-all-ports-open-terraform-state
@@ -1250,8 +1248,8 @@ queries:
       terraform.state.resources.where(type == "hcloud_firewall").all(
         values.rule == null || values.rule.all(
           _['direction'] != "in" ||
-          _['port'].notIn(["any", "1-65535", "0-65535"]) ||
-          _['source_ips'].containsNone(["0.0.0.0/0", "::/0"])
+          _['port'] != /^(any|[01]-65535)$/ ||
+          _['source_ips'].none(_ == /^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[01][0-9]|22[0-3])\.[0-9.]+\/[0-7]|::\/[0-2]|[23][0-9a-f]{3}::\/([0-9]|1[01]))$/i)
         )
       )
 
@@ -1294,7 +1292,7 @@ queries:
       desc: |
         This check verifies that no Hetzner Cloud Firewall defines an outbound rule permitting traffic on all ports to the public internet.
 
-        The rule forms that qualify are a port of `any`, `1-65535`, or `0-65535` combined with a destination of `0.0.0.0/0` or `::/0`. Hetzner already allows all outbound traffic when a firewall defines no egress rules, so this check is aimed at the case where an explicit egress rule widens outbound access back to every port and every destination after narrower rules were put in place. You remove it on the **Rules** tab of the affected firewall in the Hetzner Cloud Console, or with `hcloud firewall delete-rule`.
+        The rule forms that qualify are a port of `any` or `1-65535` combined with an unrestricted destination: `0.0.0.0/0`, `::/0`, an IPv4 prefix shorter than /8, or an IPv6 prefix shorter than /12 inside `2000::/3`. Hetzner already allows all outbound traffic when a firewall defines no egress rules, so this check is aimed at the case where an explicit egress rule widens outbound access back to every port and every destination after narrower rules were put in place. You remove it on the **Rules** tab of the affected firewall in the Hetzner Cloud Console, or with `hcloud firewall delete-rule`.
 
         **Why this matters**
 
@@ -1311,7 +1309,7 @@ queries:
         1. Log in to the [Hetzner Cloud Console](https://console.hetzner.com/) and select the project.
         2. Navigate to **Firewalls** and open each firewall.
         3. Review the **Rules** tab, focusing on outbound rules.
-        4. Check whether any outbound rule has the port set to `Any`, `1-65535`, or `0-65535` with a destination of `Any IPv4` (`0.0.0.0/0`) or `Any IPv6` (`::/0`).
+        4. Check whether any outbound rule has the port set to `Any` or `1-65535` with a destination of `Any IPv4` (`0.0.0.0/0`), `Any IPv6` (`::/0`), or another range wider than an IPv4 /8.
 
         A passing firewall defines no outbound rule permitting the full port range to the public internet. A failing firewall has an outbound rule with an unrestricted port range and an unrestricted destination.
 
@@ -1324,7 +1322,7 @@ queries:
         hcloud firewall describe <firewall> -o json
         ```
 
-        Review the `rules` array for entries where `direction` is `out`, `port` is `any`, `1-65535`, or `0-65535`, and `destination_ips` contains `0.0.0.0/0` or `::/0`.
+        Review the `rules` array for entries where `direction` is `out`, `port` is `any` or `1-65535`, and `destination_ips` contains `0.0.0.0/0`, `::/0`, or another unrestricted range.
 
         A passing firewall returns no such rule. A failing firewall returns at least one outbound rule that opens the full port range to an unrestricted destination.
       remediation:
@@ -1348,10 +1346,10 @@ queries:
               --direction out --protocol udp --port any --destination-ips ::/0
             ```
 
-            Adjust the `--port` value to match the rule actually in place (`any`, `1-65535`, or `0-65535`). After deleting the wide-open rules, add narrow per-destination rules that permit only the required outbound ports.
+            Adjust the `--port` value and the destination list to match the rule actually in place, since `delete-rule` matches them exactly. After deleting the wide-open rules, add narrow per-destination rules that permit only the required outbound ports.
         - id: terraform
           desc: |
-            Never declare an outbound `rule` whose `port` is `any`, `1-65535`, or `0-65535` with `destination_ips` of `0.0.0.0/0` or `::/0`. Replace it with narrow per-destination rules:
+            Never declare an outbound `rule` whose `port` is `any` or `1-65535` with `destination_ips` of `0.0.0.0/0`, `::/0`, or another range wider than an IPv4 /8. Replace it with narrow per-destination rules:
 
             ```hcl
             resource "hcloud_firewall" "default" {
@@ -1379,20 +1377,18 @@ queries:
   - uid: mondoo-hetzner-security-firewall-no-unrestricted-egress-hetzner
     filters: asset.platform == "hetzner-firewall"
     mql: |
-      hetzner.firewall.outboundRules.none(port == "any" && destinationIps.contains("0.0.0.0/0"))
-      hetzner.firewall.outboundRules.none(port == "any" && destinationIps.contains("::/0"))
-      hetzner.firewall.outboundRules.none(port == "1-65535" && destinationIps.contains("0.0.0.0/0"))
-      hetzner.firewall.outboundRules.none(port == "1-65535" && destinationIps.contains("::/0"))
-      hetzner.firewall.outboundRules.none(port == "0-65535" && destinationIps.contains("0.0.0.0/0"))
-      hetzner.firewall.outboundRules.none(port == "0-65535" && destinationIps.contains("::/0"))
+      hetzner.firewall.outboundRules.none(
+        portStart <= 1 && portEnd >= 65535 &&
+        destinationIps.any(_ == /^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[01][0-9]|22[0-3])\.[0-9.]+\/[0-7]|::\/[0-2]|[23][0-9a-f]{3}::\/([0-9]|1[01]))$/i)
+      )
   - uid: mondoo-hetzner-security-firewall-no-unrestricted-egress-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "hcloud_firewall")
     mql: |
       terraform.resources("hcloud_firewall").all(
         blocks.where(type == "rule").all(
           arguments['direction'] != "out" ||
-          arguments['port'].notIn(["any", "1-65535", "0-65535"]) ||
-          arguments['destination_ips'].containsNone(["0.0.0.0/0", "::/0"])
+          arguments['port'] != /^(any|[01]-65535)$/ ||
+          arguments['destination_ips'].none(_ == /^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[01][0-9]|22[0-3])\.[0-9.]+\/[0-7]|::\/[0-2]|[23][0-9a-f]{3}::\/([0-9]|1[01]))$/i)
         )
       )
   - uid: mondoo-hetzner-security-firewall-no-unrestricted-egress-terraform-plan
@@ -1401,8 +1397,8 @@ queries:
       terraform.plan.resourceChanges.where(type == "hcloud_firewall").all(
         change.after.rule == null || change.after.rule.all(
           _['direction'] != "out" ||
-          _['port'].notIn(["any", "1-65535", "0-65535"]) ||
-          _['destination_ips'].containsNone(["0.0.0.0/0", "::/0"])
+          _['port'] != /^(any|[01]-65535)$/ ||
+          _['destination_ips'].none(_ == /^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[01][0-9]|22[0-3])\.[0-9.]+\/[0-7]|::\/[0-2]|[23][0-9a-f]{3}::\/([0-9]|1[01]))$/i)
         )
       )
   - uid: mondoo-hetzner-security-firewall-no-unrestricted-egress-terraform-state
@@ -1411,8 +1407,8 @@ queries:
       terraform.state.resources.where(type == "hcloud_firewall").all(
         values.rule == null || values.rule.all(
           _['direction'] != "out" ||
-          _['port'].notIn(["any", "1-65535", "0-65535"]) ||
-          _['destination_ips'].containsNone(["0.0.0.0/0", "::/0"])
+          _['port'] != /^(any|[01]-65535)$/ ||
+          _['destination_ips'].none(_ == /^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[01][0-9]|22[0-3])\.[0-9.]+\/[0-7]|::\/[0-2]|[23][0-9a-f]{3}::\/([0-9]|1[01]))$/i)
         )
       )
 
@@ -1577,9 +1573,9 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check verifies that every Hetzner Cloud load balancer redirects plaintext HTTP requests to HTTPS rather than serving a plain HTTP service.
+        This check verifies that every Hetzner Cloud load balancer with an HTTPS service redirects plaintext HTTP requests to HTTPS, and that no load balancer serves a plain HTTP service.
 
-        Hetzner implements the redirect as an option of the HTTPS service, not of the HTTP service. With it enabled, the load balancer answers port 80 itself with a 301 redirect to the HTTPS equivalent, so a separate plain HTTP service is no longer needed. You enable it under **Services** on the load balancer in the Hetzner Cloud Console by deleting the plain HTTP service on port 80 and turning on **Redirect HTTP to HTTPS** on the HTTPS service, or with `hcloud load-balancer update-service --http-redirect-http=true`. Without the redirect, clients that initiate HTTP connections get their responses over an unencrypted channel.
+        Hetzner implements the redirect as an option of the HTTPS service, not of the HTTP service. With it enabled, the load balancer answers port 80 itself with a 301 redirect to the HTTPS equivalent, so a separate plain HTTP service is no longer needed. You enable it under **Services** on the load balancer in the Hetzner Cloud Console by deleting the plain HTTP service on port 80 and turning on **Redirect HTTP to HTTPS** on the HTTPS service, or with `hcloud load-balancer update-service --http-redirect-http=true`. A plain HTTP service answers clients over an unencrypted channel, and an HTTPS service without the redirect leaves clients that type an `http://` address with no answer at all. The check fails on a plain HTTP service, and on a load balancer whose HTTPS services all have the redirect turned off; one HTTPS service with the redirect is enough, because it answers port 80 for the whole load balancer.
 
         **Why this matters**
 
@@ -1656,7 +1652,7 @@ queries:
     filters: asset.platform == "hetzner-loadbalancer"
     mql: |
       hetzner.loadBalancer.services.none(protocol == "http")
-      hetzner.loadBalancer.services.where(protocol == "https").all(http["redirectHttp"] == true)
+      hetzner.loadBalancer.services.none(protocol == "https") || hetzner.loadBalancer.services.where(protocol == "https").any(http["redirectHttp"] == true)
   - uid: mondoo-hetzner-security-lb-http-redirected-to-https-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "hcloud_load_balancer_service")
     mql: |
@@ -1687,148 +1683,6 @@ queries:
           values.http.all(_['redirect_http'] == true)
         )
 
-  - uid: mondoo-hetzner-security-lb-https-service-has-certificate
-    title: Ensure HTTPS load balancer services have a TLS certificate attached
-    impact: 90
-    tags:
-      compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
-      compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-e-2-ii-transmission-security-encryption
-      compliance/iso-27001-2022: iso-27001-2022-a-8-24
-      compliance/nis-2: nis-2-21-2-h
-      compliance/nist-csf-1: nist-csf-1-pr-ds-2
-      compliance/nist-csf-2: nist-csf-2-pr-ds-02
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
-      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
-      compliance/owasp-top-10-2025: owasp-top-10-2025-a04
-      compliance/pci-dss-4: pcidss-requirement-4-2-1
-      compliance/soc2-2017: soc2-control-cc6-7-2
-      compliance/vda-isa-5: vda-isa-5-5-1-2
-    variants:
-      - uid: mondoo-hetzner-security-lb-https-service-has-certificate-hetzner
-        tags:
-          mondoo.com/filter-title: Hetzner Cloud
-          mondoo.com/filter-icon: hetzner
-      - uid: mondoo-hetzner-security-lb-https-service-has-certificate-terraform-hcl
-        tags:
-          mondoo.com/filter-title: Terraform HCL
-          mondoo.com/filter-icon: terraform
-      - uid: mondoo-hetzner-security-lb-https-service-has-certificate-terraform-plan
-        tags:
-          mondoo.com/filter-title: Terraform Plan
-          mondoo.com/filter-icon: terraform
-      - uid: mondoo-hetzner-security-lb-https-service-has-certificate-terraform-state
-        tags:
-          mondoo.com/filter-title: Terraform State
-          mondoo.com/filter-icon: terraform
-    docs:
-      desc: |
-        This check verifies that every Hetzner Cloud load balancer service configured for HTTPS has at least one TLS certificate attached.
-
-        An HTTPS listener with no certificate cannot complete a TLS handshake, so clients either receive certificate errors or fall back to unencrypted connections. You attach one under **Services** on the load balancer in the Hetzner Cloud Console by editing the HTTPS service and adding an existing certificate or creating a Hetzner-managed certificate for the domain, or with `hcloud load-balancer update-service --http-certificates`. The service is identified by its listen port, so the update must target the port the existing HTTPS service already listens on.
-
-        **Why this matters**
-
-        Without a certificate the load balancer cannot establish a valid TLS session at all. Clients receive certificate errors that degrade trust in the service and, worse, condition users to click through the very warnings that are supposed to stop a real attack.
-
-        Some client configurations respond to a failed HTTPS handshake by falling back to HTTP. That silently removes encryption from the connection and exposes the traffic to interception without anyone seeing a failure, which is the fail-open outcome the listener was meant to prevent.
-
-        Certificate-related TLS failures also tend to surface as hard-to-diagnose connectivity errors rather than clear messages. They disrupt users and dependent services, which makes a missing certificate an availability concern as much as a security one.
-
-        Attaching a certificate lets the load balancer complete handshakes and deliver encrypted sessions to every client. Prefer Hetzner-managed certificates so renewal is handled automatically through Let's Encrypt and no one has to track expiry dates by hand.
-      audit: |
-        ### Audit via Console
-
-        1. Log in to the [Hetzner Cloud Console](https://console.hetzner.com/) and select the project.
-        2. Navigate to **Load Balancers** and open each load balancer.
-        3. Click the **Services** tab.
-        4. Find any service configured for HTTPS (port 443) and verify that at least one certificate is listed under **Certificates**.
-
-        A passing load balancer shows at least one certificate attached to every HTTPS service. A failing load balancer shows an HTTPS service with no certificates attached.
-
-        ### Audit via CLI
-
-        1. List all load balancers and inspect their services:
-
-        ```bash
-        hcloud load-balancer list -o columns=id,name
-        hcloud load-balancer describe <lb> -o json
-        ```
-
-        In the `services` array, find entries where `protocol` is `https` and check whether `http.certificates` is a non-empty array.
-
-        A passing load balancer returns a non-empty `certificates` array for every HTTPS service. A failing load balancer returns an empty `certificates` array (`[]`) for an HTTPS service.
-      remediation:
-        - id: console
-          desc: |
-            1. Navigate to **Load Balancers** and open the affected load balancer.
-            2. Go to **Services** and edit the HTTPS service.
-            3. Under **Certificates**, attach an existing certificate or create a Hetzner-managed certificate for the domain.
-        - id: cli
-          desc: |
-            The check fails when an HTTPS service already exists but has no certificate attached. Use `update-service` to attach a certificate to that existing listener; `add-service` would attempt to create a second service on the same listen port and fail because the listener already exists.
-
-            ```bash
-            hcloud load-balancer update-service <lb> \
-              --listen-port 443 \
-              --http-certificates <certificate>
-            ```
-
-            The service is identified by its listen port, so `--listen-port` must match the existing HTTPS service. Use `add-service` only when no HTTPS service exists yet on that port.
-        - id: terraform
-          desc: |
-            Attach at least one certificate to every HTTPS `hcloud_load_balancer_service` via `http.certificates`:
-
-            ```hcl
-            resource "hcloud_managed_certificate" "example" {
-              name         = "example"
-              domain_names = ["example.com"]
-            }
-
-            resource "hcloud_load_balancer_service" "https" {
-              load_balancer_id = hcloud_load_balancer.example.id
-              protocol         = "https"
-              listen_port      = 443
-              destination_port = 80
-
-              http {
-                certificates = [hcloud_managed_certificate.example.id]
-              }
-            }
-            ```
-    refs:
-      - url: https://docs.hetzner.com/networking/load-balancers/overview/
-        title: Hetzner Cloud Load Balancers overview
-
-  - uid: mondoo-hetzner-security-lb-https-service-has-certificate-hetzner
-    filters: asset.platform == "hetzner-loadbalancer"
-    mql: |
-      hetzner.loadBalancer.services.where(protocol == "https").all(certificates != empty)
-  - uid: mondoo-hetzner-security-lb-https-service-has-certificate-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "hcloud_load_balancer_service")
-    mql: |
-      terraform.resources("hcloud_load_balancer_service").all(
-        arguments['protocol'] != "https" ||
-        blocks.where(type == "http").any(
-          arguments['certificates'] != null && arguments['certificates'] != []
-        )
-      )
-  - uid: mondoo-hetzner-security-lb-https-service-has-certificate-terraform-plan
-    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "hcloud_load_balancer_service")
-    mql: |
-      terraform.plan.resourceChanges.where(type == "hcloud_load_balancer_service").all(
-        change.after.protocol != "https" ||
-        change.after.http.any(_['certificates'] != null && _['certificates'] != [])
-      )
-  - uid: mondoo-hetzner-security-lb-https-service-has-certificate-terraform-state
-    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "hcloud_load_balancer_service")
-    mql: |
-      terraform.state.resources.where(type == "hcloud_load_balancer_service").all(
-        values.protocol != "https" ||
-        values.http.any(_['certificates'] != null && _['certificates'] != [])
-      )
-
   # No Terraform variants: a load balancer's private-network attachment is expressed
   # by a separate `hcloud_load_balancer_network` resource keyed by `load_balancer_id`,
   # not by an argument on `hcloud_load_balancer`. Asserting "every load balancer has an
@@ -1856,7 +1710,7 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-1-5
       compliance/vda-isa-5: vda-isa-5-5-2-7
     mql: |
-      hetzner.loadBalancer.privateNet != empty
+      hetzner.loadBalancer { privateNet != empty }
     docs:
       desc: |
         This check verifies that every Hetzner Cloud load balancer is attached to at least one private network.
@@ -2164,7 +2018,7 @@ queries:
         1. List all primary IPs and inspect the `blocked` field for each:
 
         ```bash
-        hcloud primary-ip list -o columns=id,name,ip,server
+        hcloud primary-ip list -o columns=id,name,ip,assignee
         hcloud primary-ip describe <primary-ip> -o json | grep '"blocked"'
         ```
 
@@ -2236,13 +2090,14 @@ queries:
 
         ### Audit via CLI
 
-        1. List the SSH keys in the project and inspect each key's fingerprint and public key:
+        1. List the algorithm of each SSH key in the project, then the size of each key:
 
         ```bash
-        hcloud ssh-key list
+        hcloud ssh-key list -o json | jq -r '.[] | .name + " " + (.public_key | split(" ")[0])'
+        hcloud ssh-key list -o json | jq -r '.[].public_key' | ssh-keygen -l -f -
         ```
 
-        A passing key's public key begins with `ssh-ed25519`, `ecdsa-sha2-*`, or `ssh-rsa` with a 2048-bit-or-larger modulus. A failing key begins with `ssh-dss` or is a shorter RSA key.
+        Current OpenSSH releases no longer parse DSA keys, so `ssh-keygen` skips them silently; the first command is the one that shows them. A passing key is `ssh-ed25519`, `ecdsa-sha2-*`, or `ssh-rsa` reported at 2048 bits or more. A failing key is `ssh-dss`, or `ssh-rsa` reported below 2048 bits.
       remediation:
         - id: console
           desc: |
@@ -2322,14 +2177,15 @@ queries:
 
         ### Audit via CLI
 
-        1. List all certificates and inspect each certificate's details:
+        1. List all certificates, then decode each certificate body to read its issuer, subject, and signature algorithm:
 
         ```bash
         hcloud certificate list
-        hcloud certificate describe <certificate>
+        hcloud certificate describe <certificate> -o json | jq -r .certificate \
+          | openssl x509 -noout -issuer -subject -text | grep -E 'issuer=|subject=|Signature Algorithm' | head -3
         ```
 
-        A passing certificate shows a recognized issuer distinct from its subject and a strong signature algorithm. A failing certificate shows the subject and issuer as identical (self-signed) or a SHA-1/MD5 signature algorithm.
+        A passing certificate shows an issuer distinct from its subject and a SHA-256-or-stronger signature algorithm. A failing certificate shows the subject and issuer as identical (self-signed) or a `sha1WithRSAEncryption` or `md5WithRSAEncryption` signature algorithm.
       remediation:
         - id: console
           desc: |
@@ -2375,10 +2231,8 @@ queries:
       - url: https://docs.hetzner.com/networking/certificates/overview/
         title: Hetzner Cloud Certificates overview
 
-  # No Terraform variants: Hetzner Storage Boxes are not managed by the hcloud
-  # Terraform provider; reachableExternally is an access setting of the Storage Box
-  # surfaced only through the live Hetzner API, with no Terraform resource to
-  # evaluate on terraform-hcl/plan/state assets.
+  # No Terraform variants yet: hcloud_storage_box and hcloud_storage_box_subaccount
+  # carry reachable_externally in their access_settings, so a variant is possible.
   - uid: mondoo-hetzner-security-storage-box-not-externally-reachable
     title: Ensure Storage Boxes are not reachable from the public internet
     impact: 85
@@ -2399,12 +2253,12 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-1-5
       compliance/vda-isa-5: vda-isa-5-5-2-7
     mql: |
-      hetzner.storageBoxes.all(reachableExternally == false)
+      hetzner.storageBoxes.all(reachableExternally == false && subaccounts.all(reachableExternally == false))
     docs:
       desc: |
-        This check verifies that no Hetzner Storage Box is reachable from outside the Hetzner network.
+        This check verifies that no Hetzner Storage Box, and no subaccount of one, is reachable from outside the Hetzner network.
 
-        A Storage Box holds backups and file data and serves it over protocols including Samba/CIFS, WebDAV, and SSH/SFTP. When external reachability is on, those enabled protocols are published to the public internet rather than restricted to hosts inside the Hetzner network. You turn it off in the access settings of the box under **Storage Boxes** in the Hetzner Cloud Console by disabling **Reachable externally**, or with `hcloud storage-box update-access-settings --reachable-externally=false`.
+        A Storage Box holds backups and file data and serves it over protocols including Samba/CIFS, WebDAV, and SSH/SFTP. When external reachability is on, those enabled protocols are published to the public internet rather than restricted to hosts inside the Hetzner network. Each subaccount has its own credentials and its own **Reachable externally** setting, independent of the main account, so a box whose main account is internal is still exposed through a subaccount that is reachable externally. You turn it off in the access settings of the box and of each subaccount under **Storage Boxes** in the Hetzner Cloud Console, or with `hcloud storage-box update-access-settings` and `hcloud storage-box subaccount update-access-settings`.
 
         **Why this matters**
 
@@ -2420,40 +2274,68 @@ queries:
 
         1. Log in to the [Hetzner Cloud Console](https://console.hetzner.com/) and select the project.
         2. Navigate to **Storage Boxes** and open each Storage Box.
-        3. Review the access settings for external reachability.
+        3. Review the access settings for external reachability, then open the **Subaccounts** tab and review the access settings of each subaccount.
 
-        A passing Storage Box has external reachability disabled. A failing Storage Box is reachable from outside the Hetzner network.
+        A passing Storage Box has external reachability disabled on the main account and on every subaccount. A failing Storage Box has it enabled on either.
 
         ### Audit via CLI
 
-        1. List the Storage Boxes and inspect each box's access settings:
+        1. List the Storage Boxes and inspect the access settings of each box and of its subaccounts:
 
         ```bash
         hcloud storage-box list
         hcloud storage-box describe <storage-box>
+        hcloud storage-box subaccount list <storage-box> -o json | jq '.[] | {name, access_settings}'
         ```
 
-        A passing Storage Box reports external reachability as disabled. A failing Storage Box reports it as enabled.
+        A passing Storage Box reports `Reachable Externally: false`, and every subaccount reports `"reachable_externally": false`. A failing Storage Box reports `true` for the box or for any subaccount.
       remediation:
         - id: console
           desc: |
             To disable external reachability in the Hetzner Cloud Console:
 
             1. Navigate to **Storage Boxes** and open the affected box.
-            2. In the access settings, disable **Reachable externally** (and disable any file-sharing protocols the box does not need).
-            3. Confirm that your backup jobs and clients reach the box over the internal Hetzner network.
+            2. In the access settings, disable **Reachable externally**, and disable any file-sharing protocols the box does not need.
+            3. Open the **Subaccounts** tab and disable **Reachable externally** on every subaccount.
+            4. Confirm that your backup jobs and clients reach the box over the internal Hetzner network.
         - id: cli
           desc: |
             To disable external reachability using the `hcloud` CLI:
 
             ```bash
             hcloud storage-box update-access-settings <storage-box> --reachable-externally=false
+            hcloud storage-box subaccount update-access-settings <storage-box> <subaccount> --reachable-externally=false
             ```
 
-            Verify that internal clients can still reach the box afterward.
-        # No Terraform remediation: Hetzner Storage Boxes are not managed by the
-        # hcloud Terraform provider; external reachability can only be changed through
-        # the Hetzner Cloud Console or the hcloud CLI.
+            Run the subaccount command once for each subaccount that reports `reachable_externally` as `true`. Verify that internal clients can still reach the box afterward.
+        - id: terraform
+          desc: |
+            Set `reachable_externally = false` in the `access_settings` of every `hcloud_storage_box` and `hcloud_storage_box_subaccount`:
+
+            ```hcl
+            resource "hcloud_storage_box" "backup" {
+              name             = "backup"
+              storage_box_type = "bx11"
+              location         = "fsn1"
+              password         = var.storage_box_password
+
+              access_settings = {
+                reachable_externally = false
+                ssh_enabled          = true
+              }
+            }
+
+            resource "hcloud_storage_box_subaccount" "app" {
+              storage_box_id = hcloud_storage_box.backup.id
+              home_directory = "app"
+              password       = var.subaccount_password
+
+              access_settings = {
+                reachable_externally = false
+                ssh_enabled          = true
+              }
+            }
+            ```
     refs:
       - url: https://docs.hetzner.com/storage/storage-box/general/
         title: Hetzner Storage Box overview
