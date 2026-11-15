@@ -9,6 +9,11 @@ resource "azurerm_application_gateway" "fail" {
     capacity = 2
   }
 
+  ssl_policy {
+    policy_type = "Predefined"
+    policy_name = "AppGwSslPolicy20220101S"
+  }
+
   gateway_ip_configuration {
     name      = "gateway-ip-config"
     subnet_id = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/example-rg/providers/Microsoft.Network/virtualNetworks/example-vnet/subnets/appgw-subnet"

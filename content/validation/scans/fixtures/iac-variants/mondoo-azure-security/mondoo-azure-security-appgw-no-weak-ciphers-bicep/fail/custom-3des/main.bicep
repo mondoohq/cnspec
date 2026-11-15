@@ -8,8 +8,12 @@ resource appGateway 'Microsoft.Network/applicationGateways@2023-09-01' = {
       capacity: 2
     }
     sslPolicy: {
-      policyType: 'Predefined'
-      policyName: 'AppGwSslPolicy20220101'
+      policyType: 'Custom'
+      minProtocolVersion: 'TLSv1_2'
+      cipherSuites: [
+        'TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384'
+        'TLS_RSA_WITH_3DES_EDE_CBC_SHA'
+      ]
     }
     gatewayIPConfigurations: [
       {

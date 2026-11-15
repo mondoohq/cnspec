@@ -1,4 +1,4 @@
-resource "azurerm_application_gateway" "pass" {
+resource "azurerm_application_gateway" "fail" {
   name                = "example-appgw"
   resource_group_name = "example-rg"
   location            = "eastus"
@@ -11,7 +11,17 @@ resource "azurerm_application_gateway" "pass" {
 
   ssl_policy {
     policy_type = "Predefined"
-    policy_name = "AppGwSslPolicy20220101"
+    policy_name = "AppGwSslPolicy20220101S"
+  }
+
+  ssl_profile {
+    name = "legacy-clients"
+
+    ssl_policy {
+      policy_type          = "Custom"
+      min_protocol_version = "TLSv1_1"
+      cipher_suites        = ["TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384"]
+    }
   }
 
   gateway_ip_configuration {

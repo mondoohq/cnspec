@@ -9,10 +9,14 @@ resource "azurerm_application_gateway" "fail" {
     capacity = 2
   }
 
-  ssl_policy {
-    policy_type          = "Custom"
-    min_protocol_version = "TLSv1_1"
-    cipher_suites        = ["TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384"]
+  ssl_profile {
+    name = "legacy-clients"
+
+    ssl_policy {
+      policy_type          = "Custom"
+      min_protocol_version = "TLSv1_2"
+      cipher_suites        = ["TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384", "TLS_RSA_WITH_3DES_EDE_CBC_SHA"]
+    }
   }
 
   gateway_ip_configuration {
