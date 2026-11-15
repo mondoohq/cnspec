@@ -24,3 +24,12 @@ resource synapseWorkspace 'Microsoft.Synapse/workspaces@2021-06-01' = {
     }
   }
 }
+
+resource synapseKey 'Microsoft.Synapse/workspaces/keys@2021-06-01' = {
+  parent: synapseWorkspace
+  name: 'default'
+  properties: {
+    isActiveCMK: true
+    keyVaultUrl: 'https://kv-contoso-prod.vault.azure.net/keys/synapse-cmk'
+  }
+}

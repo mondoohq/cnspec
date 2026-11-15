@@ -15,3 +15,10 @@ resource "azurerm_synapse_workspace" "example" {
     key_name           = "cmkkey"
   }
 }
+
+resource "azurerm_synapse_workspace_key" "example" {
+  synapse_workspace_id                = azurerm_synapse_workspace.example.id
+  customer_managed_key_name           = "cmkkey"
+  customer_managed_key_versionless_id = "https://myvault.vault.azure.net/keys/mykey"
+  active                              = true
+}

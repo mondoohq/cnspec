@@ -14,5 +14,8 @@ resource mysql 'Microsoft.DBforMySQL/flexibleServers@2023-12-30' = {
   properties: {
     administratorLogin: 'dbadmin'
     version: '8.0.21'
+    backup: {
+      geoRedundantBackup: 'Disabled'
+    }
   }
 }
