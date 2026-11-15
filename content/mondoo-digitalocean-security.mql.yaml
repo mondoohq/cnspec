@@ -624,6 +624,8 @@ queries:
 
         The port field of a rule holds a single port such as `22`, a range such as `20-30`, or `all` for every port. A world-open range that contains 22 reaches SSH exactly as an exact port 22 rule does, so this check fails any of those forms.
 
+        Source addresses count as unrestricted when, taken together, they cover every IPv4 or IPv6 address, such as `0.0.0.0/1` plus `128.0.0.0/1`. The Terraform version of this check is stricter: it treats any single range of `/7` or broader in public IPv4 space, or a comparably broad range in global IPv6 space such as `2000::/3`, as unrestricted, in any spelling.
+
         **Why this matters**
 
         SSH open to the internet is subjected to continuous automated credential-stuffing and brute-force login attempts from global scanning infrastructure. The volume is not background noise that can be ignored; it is a permanent adversarial workload against every account that has a weak password or a weak key.
@@ -723,15 +725,11 @@ queries:
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "digitalocean_firewall")
     mql: |
       terraform.resources("digitalocean_firewall").all(
-        blocks.where(type == "inbound_rule").none(
-          arguments["protocol"] == "tcp" &&
-          arguments["port_range"] == /^(22|all|0|(\d|1\d|2[0-2])-(2[2-9]|[3-9]\d|\d{3,5}))$/ &&
-          arguments["source_addresses"].contains("0.0.0.0/0")
-        ) &&
-        blocks.where(type == "inbound_rule").none(
-          arguments["protocol"] == "tcp" &&
-          arguments["port_range"] == /^(22|all|0|(\d|1\d|2[0-2])-(2[2-9]|[3-9]\d|\d{3,5}))$/ &&
-          arguments["source_addresses"].contains("::/0")
+        blocks.where(type == "inbound_rule").all(
+          arguments["protocol"] != "tcp" ||
+          arguments["port_range"] != /^(22|all|0|(\d|1\d|2[0-2])-(2[2-9]|[3-9]\d|\d{3,5}))$/ ||
+          arguments["source_addresses"] == empty ||
+          arguments["source_addresses"].none(_ == /^([0-9.]+\/0*[0-2]|0*([0-9]|[1-9][0-9]|1[0-9]{2}|2[01][0-9]|22[0-3])\.[0-9.]+\/0*[3-7]|[0-9a-f:.]*:[0-9a-f:.]*\/0*0|(::|0*[0-9a-f]{1,3}:|0*[0-7][0-9a-f]{3}:)[0-9a-f:.]*\/0*1|(::|0*[0-9a-f]{1,3}:|0*[0-3][0-9a-f]{3}:)[0-9a-f:.]*\/0*2|0*[23][0-9a-f]{3}:[0-9a-f:.]*\/0*([3-9]|1[01]))$/i)
         )
       )
   - uid: mondoo-digitalocean-security-firewall-no-unrestricted-ssh-terraform-plan
@@ -739,15 +737,11 @@ queries:
     mql: |
       terraform.plan.resourceChanges.where(type == "digitalocean_firewall").all(
         change.after["inbound_rule"] == empty ||
-        change.after["inbound_rule"].none(
-          _["protocol"] == "tcp" &&
-          _["port_range"] == /^(22|all|0|(\d|1\d|2[0-2])-(2[2-9]|[3-9]\d|\d{3,5}))$/ &&
-          _["source_addresses"].contains("0.0.0.0/0")
-        ) &&
-        change.after["inbound_rule"].none(
-          _["protocol"] == "tcp" &&
-          _["port_range"] == /^(22|all|0|(\d|1\d|2[0-2])-(2[2-9]|[3-9]\d|\d{3,5}))$/ &&
-          _["source_addresses"].contains("::/0")
+        change.after["inbound_rule"].all(
+          _["protocol"] != "tcp" ||
+          _["port_range"] != /^(22|all|0|(\d|1\d|2[0-2])-(2[2-9]|[3-9]\d|\d{3,5}))$/ ||
+          _["source_addresses"] == empty ||
+          _["source_addresses"].none(_ == /^([0-9.]+\/0*[0-2]|0*([0-9]|[1-9][0-9]|1[0-9]{2}|2[01][0-9]|22[0-3])\.[0-9.]+\/0*[3-7]|[0-9a-f:.]*:[0-9a-f:.]*\/0*0|(::|0*[0-9a-f]{1,3}:|0*[0-7][0-9a-f]{3}:)[0-9a-f:.]*\/0*1|(::|0*[0-9a-f]{1,3}:|0*[0-3][0-9a-f]{3}:)[0-9a-f:.]*\/0*2|0*[23][0-9a-f]{3}:[0-9a-f:.]*\/0*([3-9]|1[01]))$/i)
         )
       )
   - uid: mondoo-digitalocean-security-firewall-no-unrestricted-ssh-terraform-state
@@ -755,15 +749,11 @@ queries:
     mql: |
       terraform.state.resources.where(type == "digitalocean_firewall").all(
         values["inbound_rule"] == empty ||
-        values["inbound_rule"].none(
-          _["protocol"] == "tcp" &&
-          _["port_range"] == /^(22|all|0|(\d|1\d|2[0-2])-(2[2-9]|[3-9]\d|\d{3,5}))$/ &&
-          _["source_addresses"].contains("0.0.0.0/0")
-        ) &&
-        values["inbound_rule"].none(
-          _["protocol"] == "tcp" &&
-          _["port_range"] == /^(22|all|0|(\d|1\d|2[0-2])-(2[2-9]|[3-9]\d|\d{3,5}))$/ &&
-          _["source_addresses"].contains("::/0")
+        values["inbound_rule"].all(
+          _["protocol"] != "tcp" ||
+          _["port_range"] != /^(22|all|0|(\d|1\d|2[0-2])-(2[2-9]|[3-9]\d|\d{3,5}))$/ ||
+          _["source_addresses"] == empty ||
+          _["source_addresses"].none(_ == /^([0-9.]+\/0*[0-2]|0*([0-9]|[1-9][0-9]|1[0-9]{2}|2[01][0-9]|22[0-3])\.[0-9.]+\/0*[3-7]|[0-9a-f:.]*:[0-9a-f:.]*\/0*0|(::|0*[0-9a-f]{1,3}:|0*[0-7][0-9a-f]{3}:)[0-9a-f:.]*\/0*1|(::|0*[0-9a-f]{1,3}:|0*[0-3][0-9a-f]{3}:)[0-9a-f:.]*\/0*2|0*[23][0-9a-f]{3}:[0-9a-f:.]*\/0*([3-9]|1[01]))$/i)
         )
       )
 
@@ -809,6 +799,8 @@ queries:
         A Cloud Firewall inbound rule permitting TCP port 3389 from `0.0.0.0/0` or `::/0` publishes the Remote Desktop endpoint of every Droplet the firewall covers. RDP should never be reachable from untrusted networks. Inbound rules are edited under Networking then Firewalls in the DigitalOcean Cloud Control Panel, or with `doctl compute firewall add-rules`.
 
         The port field of a rule holds a single port such as `3389`, a range such as `3300-3400`, or `all` for every port. A world-open range that contains 3389 reaches Remote Desktop exactly as an exact port 3389 rule does, so this check fails any of those forms.
+
+        Source addresses count as unrestricted when, taken together, they cover every IPv4 or IPv6 address, such as `0.0.0.0/1` plus `128.0.0.0/1`. The Terraform version of this check is stricter: it treats any single range of `/7` or broader in public IPv4 space, or a comparably broad range in global IPv6 space such as `2000::/3`, as unrestricted, in any spelling.
 
         **Why this matters**
 
@@ -915,15 +907,11 @@ queries:
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "digitalocean_firewall")
     mql: |
       terraform.resources("digitalocean_firewall").all(
-        blocks.where(type == "inbound_rule").none(
-          arguments["protocol"] == "tcp" &&
-          arguments["port_range"] == /^(3389|all|0|(\d{1,3}|[12]\d{3}|3[0-2]\d{2}|33[0-7]\d|338\d)-(3389|339\d|3[4-9]\d{2}|[4-9]\d{3}|\d{5}))$/ &&
-          arguments["source_addresses"].contains("0.0.0.0/0")
-        ) &&
-        blocks.where(type == "inbound_rule").none(
-          arguments["protocol"] == "tcp" &&
-          arguments["port_range"] == /^(3389|all|0|(\d{1,3}|[12]\d{3}|3[0-2]\d{2}|33[0-7]\d|338\d)-(3389|339\d|3[4-9]\d{2}|[4-9]\d{3}|\d{5}))$/ &&
-          arguments["source_addresses"].contains("::/0")
+        blocks.where(type == "inbound_rule").all(
+          arguments["protocol"] != "tcp" ||
+          arguments["port_range"] != /^(3389|all|0|(\d{1,3}|[12]\d{3}|3[0-2]\d{2}|33[0-7]\d|338\d)-(3389|339\d|3[4-9]\d{2}|[4-9]\d{3}|\d{5}))$/ ||
+          arguments["source_addresses"] == empty ||
+          arguments["source_addresses"].none(_ == /^([0-9.]+\/0*[0-2]|0*([0-9]|[1-9][0-9]|1[0-9]{2}|2[01][0-9]|22[0-3])\.[0-9.]+\/0*[3-7]|[0-9a-f:.]*:[0-9a-f:.]*\/0*0|(::|0*[0-9a-f]{1,3}:|0*[0-7][0-9a-f]{3}:)[0-9a-f:.]*\/0*1|(::|0*[0-9a-f]{1,3}:|0*[0-3][0-9a-f]{3}:)[0-9a-f:.]*\/0*2|0*[23][0-9a-f]{3}:[0-9a-f:.]*\/0*([3-9]|1[01]))$/i)
         )
       )
   - uid: mondoo-digitalocean-security-firewall-no-unrestricted-rdp-terraform-plan
@@ -931,15 +919,11 @@ queries:
     mql: |
       terraform.plan.resourceChanges.where(type == "digitalocean_firewall").all(
         change.after["inbound_rule"] == empty ||
-        change.after["inbound_rule"].none(
-          _["protocol"] == "tcp" &&
-          _["port_range"] == /^(3389|all|0|(\d{1,3}|[12]\d{3}|3[0-2]\d{2}|33[0-7]\d|338\d)-(3389|339\d|3[4-9]\d{2}|[4-9]\d{3}|\d{5}))$/ &&
-          _["source_addresses"].contains("0.0.0.0/0")
-        ) &&
-        change.after["inbound_rule"].none(
-          _["protocol"] == "tcp" &&
-          _["port_range"] == /^(3389|all|0|(\d{1,3}|[12]\d{3}|3[0-2]\d{2}|33[0-7]\d|338\d)-(3389|339\d|3[4-9]\d{2}|[4-9]\d{3}|\d{5}))$/ &&
-          _["source_addresses"].contains("::/0")
+        change.after["inbound_rule"].all(
+          _["protocol"] != "tcp" ||
+          _["port_range"] != /^(3389|all|0|(\d{1,3}|[12]\d{3}|3[0-2]\d{2}|33[0-7]\d|338\d)-(3389|339\d|3[4-9]\d{2}|[4-9]\d{3}|\d{5}))$/ ||
+          _["source_addresses"] == empty ||
+          _["source_addresses"].none(_ == /^([0-9.]+\/0*[0-2]|0*([0-9]|[1-9][0-9]|1[0-9]{2}|2[01][0-9]|22[0-3])\.[0-9.]+\/0*[3-7]|[0-9a-f:.]*:[0-9a-f:.]*\/0*0|(::|0*[0-9a-f]{1,3}:|0*[0-7][0-9a-f]{3}:)[0-9a-f:.]*\/0*1|(::|0*[0-9a-f]{1,3}:|0*[0-3][0-9a-f]{3}:)[0-9a-f:.]*\/0*2|0*[23][0-9a-f]{3}:[0-9a-f:.]*\/0*([3-9]|1[01]))$/i)
         )
       )
   - uid: mondoo-digitalocean-security-firewall-no-unrestricted-rdp-terraform-state
@@ -947,15 +931,11 @@ queries:
     mql: |
       terraform.state.resources.where(type == "digitalocean_firewall").all(
         values["inbound_rule"] == empty ||
-        values["inbound_rule"].none(
-          _["protocol"] == "tcp" &&
-          _["port_range"] == /^(3389|all|0|(\d{1,3}|[12]\d{3}|3[0-2]\d{2}|33[0-7]\d|338\d)-(3389|339\d|3[4-9]\d{2}|[4-9]\d{3}|\d{5}))$/ &&
-          _["source_addresses"].contains("0.0.0.0/0")
-        ) &&
-        values["inbound_rule"].none(
-          _["protocol"] == "tcp" &&
-          _["port_range"] == /^(3389|all|0|(\d{1,3}|[12]\d{3}|3[0-2]\d{2}|33[0-7]\d|338\d)-(3389|339\d|3[4-9]\d{2}|[4-9]\d{3}|\d{5}))$/ &&
-          _["source_addresses"].contains("::/0")
+        values["inbound_rule"].all(
+          _["protocol"] != "tcp" ||
+          _["port_range"] != /^(3389|all|0|(\d{1,3}|[12]\d{3}|3[0-2]\d{2}|33[0-7]\d|338\d)-(3389|339\d|3[4-9]\d{2}|[4-9]\d{3}|\d{5}))$/ ||
+          _["source_addresses"] == empty ||
+          _["source_addresses"].none(_ == /^([0-9.]+\/0*[0-2]|0*([0-9]|[1-9][0-9]|1[0-9]{2}|2[01][0-9]|22[0-3])\.[0-9.]+\/0*[3-7]|[0-9a-f:.]*:[0-9a-f:.]*\/0*0|(::|0*[0-9a-f]{1,3}:|0*[0-7][0-9a-f]{3}:)[0-9a-f:.]*\/0*1|(::|0*[0-9a-f]{1,3}:|0*[0-3][0-9a-f]{3}:)[0-9a-f:.]*\/0*2|0*[23][0-9a-f]{3}:[0-9a-f:.]*\/0*([3-9]|1[01]))$/i)
         )
       )
 
@@ -1001,6 +981,8 @@ queries:
         The ports covered are MySQL on 3306, PostgreSQL on 5432, MongoDB on 27017, Redis on 6379, Kafka on 9092, and Elasticsearch or OpenSearch on 9200. Database connectivity should be confined to private networks, so an inbound rule pairing any of these ports with `0.0.0.0/0` or `::/0` fails this check. Rules are edited under Networking then Firewalls in the DigitalOcean Cloud Control Panel, or with `doctl compute firewall add-rules`.
 
         The port field of a rule holds a single port such as `5432`, a range such as `5000-6000`, or `all` for every port. A world-open range that contains one of these ports reaches the database exactly as an exact port rule does, so this check fails any of those forms.
+
+        Source addresses count as unrestricted when, taken together, they cover every IPv4 or IPv6 address, such as `0.0.0.0/1` plus `128.0.0.0/1`. The Terraform version of this check is stricter: it treats any single range of `/7` or broader in public IPv4 space, or a comparably broad range in global IPv6 space such as `2000::/3`, as unrestricted, in any spelling.
 
         **Why this matters**
 
@@ -1105,15 +1087,11 @@ queries:
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "digitalocean_firewall")
     mql: |
       terraform.resources("digitalocean_firewall").all(
-        blocks.where(type == "inbound_rule").none(
-          arguments["protocol"] == "tcp" &&
-          arguments["port_range"] == /^(3306|5432|27017|6379|9092|9200|all|0|(\d{1,3}|[12]\d{3}|3[0-2]\d{2}|330[0-6])-(330[6-9]|33[1-9]\d|3[4-9]\d{2}|[4-9]\d{3}|\d{5})|(\d{1,3}|[1-4]\d{3}|5[0-3]\d{2}|54[0-2]\d|543[0-2])-(543[2-9]|54[4-9]\d|5[5-9]\d{2}|[6-9]\d{3}|\d{5})|(\d{1,4}|1\d{4}|2[0-5]\d{3}|26\d{3}|2700\d|2701[0-7])-(2701[7-9]|270[2-9]\d|27[1-9]\d{2}|2[89]\d{3}|[3-9]\d{4})|(\d{1,3}|[1-5]\d{3}|6[0-2]\d{2}|63[0-6]\d|637\d)-(6379|63[89]\d|6[4-9]\d{2}|[7-9]\d{3}|\d{5})|(\d{1,3}|[1-8]\d{3}|90[0-8]\d|909[0-2])-(909[2-9]|9[1-9]\d{2}|\d{5})|(\d{1,3}|[1-8]\d{3}|9[01]\d{2}|9200)-(920\d|92[1-9]\d|9[3-9]\d{2}|\d{5}))$/ &&
-          arguments["source_addresses"].contains("0.0.0.0/0")
-        ) &&
-        blocks.where(type == "inbound_rule").none(
-          arguments["protocol"] == "tcp" &&
-          arguments["port_range"] == /^(3306|5432|27017|6379|9092|9200|all|0|(\d{1,3}|[12]\d{3}|3[0-2]\d{2}|330[0-6])-(330[6-9]|33[1-9]\d|3[4-9]\d{2}|[4-9]\d{3}|\d{5})|(\d{1,3}|[1-4]\d{3}|5[0-3]\d{2}|54[0-2]\d|543[0-2])-(543[2-9]|54[4-9]\d|5[5-9]\d{2}|[6-9]\d{3}|\d{5})|(\d{1,4}|1\d{4}|2[0-5]\d{3}|26\d{3}|2700\d|2701[0-7])-(2701[7-9]|270[2-9]\d|27[1-9]\d{2}|2[89]\d{3}|[3-9]\d{4})|(\d{1,3}|[1-5]\d{3}|6[0-2]\d{2}|63[0-6]\d|637\d)-(6379|63[89]\d|6[4-9]\d{2}|[7-9]\d{3}|\d{5})|(\d{1,3}|[1-8]\d{3}|90[0-8]\d|909[0-2])-(909[2-9]|9[1-9]\d{2}|\d{5})|(\d{1,3}|[1-8]\d{3}|9[01]\d{2}|9200)-(920\d|92[1-9]\d|9[3-9]\d{2}|\d{5}))$/ &&
-          arguments["source_addresses"].contains("::/0")
+        blocks.where(type == "inbound_rule").all(
+          arguments["protocol"] != "tcp" ||
+          arguments["port_range"] != /^(3306|5432|27017|6379|9092|9200|all|0|(\d{1,3}|[12]\d{3}|3[0-2]\d{2}|330[0-6])-(330[6-9]|33[1-9]\d|3[4-9]\d{2}|[4-9]\d{3}|\d{5})|(\d{1,3}|[1-4]\d{3}|5[0-3]\d{2}|54[0-2]\d|543[0-2])-(543[2-9]|54[4-9]\d|5[5-9]\d{2}|[6-9]\d{3}|\d{5})|(\d{1,4}|1\d{4}|2[0-5]\d{3}|26\d{3}|2700\d|2701[0-7])-(2701[7-9]|270[2-9]\d|27[1-9]\d{2}|2[89]\d{3}|[3-9]\d{4})|(\d{1,3}|[1-5]\d{3}|6[0-2]\d{2}|63[0-6]\d|637\d)-(6379|63[89]\d|6[4-9]\d{2}|[7-9]\d{3}|\d{5})|(\d{1,3}|[1-8]\d{3}|90[0-8]\d|909[0-2])-(909[2-9]|9[1-9]\d{2}|\d{5})|(\d{1,3}|[1-8]\d{3}|9[01]\d{2}|9200)-(920\d|92[1-9]\d|9[3-9]\d{2}|\d{5}))$/ ||
+          arguments["source_addresses"] == empty ||
+          arguments["source_addresses"].none(_ == /^([0-9.]+\/0*[0-2]|0*([0-9]|[1-9][0-9]|1[0-9]{2}|2[01][0-9]|22[0-3])\.[0-9.]+\/0*[3-7]|[0-9a-f:.]*:[0-9a-f:.]*\/0*0|(::|0*[0-9a-f]{1,3}:|0*[0-7][0-9a-f]{3}:)[0-9a-f:.]*\/0*1|(::|0*[0-9a-f]{1,3}:|0*[0-3][0-9a-f]{3}:)[0-9a-f:.]*\/0*2|0*[23][0-9a-f]{3}:[0-9a-f:.]*\/0*([3-9]|1[01]))$/i)
         )
       )
   - uid: mondoo-digitalocean-security-firewall-no-unrestricted-db-ports-terraform-plan
@@ -1121,15 +1099,11 @@ queries:
     mql: |
       terraform.plan.resourceChanges.where(type == "digitalocean_firewall").all(
         change.after["inbound_rule"] == empty ||
-        change.after["inbound_rule"].none(
-          _["protocol"] == "tcp" &&
-          _["port_range"] == /^(3306|5432|27017|6379|9092|9200|all|0|(\d{1,3}|[12]\d{3}|3[0-2]\d{2}|330[0-6])-(330[6-9]|33[1-9]\d|3[4-9]\d{2}|[4-9]\d{3}|\d{5})|(\d{1,3}|[1-4]\d{3}|5[0-3]\d{2}|54[0-2]\d|543[0-2])-(543[2-9]|54[4-9]\d|5[5-9]\d{2}|[6-9]\d{3}|\d{5})|(\d{1,4}|1\d{4}|2[0-5]\d{3}|26\d{3}|2700\d|2701[0-7])-(2701[7-9]|270[2-9]\d|27[1-9]\d{2}|2[89]\d{3}|[3-9]\d{4})|(\d{1,3}|[1-5]\d{3}|6[0-2]\d{2}|63[0-6]\d|637\d)-(6379|63[89]\d|6[4-9]\d{2}|[7-9]\d{3}|\d{5})|(\d{1,3}|[1-8]\d{3}|90[0-8]\d|909[0-2])-(909[2-9]|9[1-9]\d{2}|\d{5})|(\d{1,3}|[1-8]\d{3}|9[01]\d{2}|9200)-(920\d|92[1-9]\d|9[3-9]\d{2}|\d{5}))$/ &&
-          _["source_addresses"].contains("0.0.0.0/0")
-        ) &&
-        change.after["inbound_rule"].none(
-          _["protocol"] == "tcp" &&
-          _["port_range"] == /^(3306|5432|27017|6379|9092|9200|all|0|(\d{1,3}|[12]\d{3}|3[0-2]\d{2}|330[0-6])-(330[6-9]|33[1-9]\d|3[4-9]\d{2}|[4-9]\d{3}|\d{5})|(\d{1,3}|[1-4]\d{3}|5[0-3]\d{2}|54[0-2]\d|543[0-2])-(543[2-9]|54[4-9]\d|5[5-9]\d{2}|[6-9]\d{3}|\d{5})|(\d{1,4}|1\d{4}|2[0-5]\d{3}|26\d{3}|2700\d|2701[0-7])-(2701[7-9]|270[2-9]\d|27[1-9]\d{2}|2[89]\d{3}|[3-9]\d{4})|(\d{1,3}|[1-5]\d{3}|6[0-2]\d{2}|63[0-6]\d|637\d)-(6379|63[89]\d|6[4-9]\d{2}|[7-9]\d{3}|\d{5})|(\d{1,3}|[1-8]\d{3}|90[0-8]\d|909[0-2])-(909[2-9]|9[1-9]\d{2}|\d{5})|(\d{1,3}|[1-8]\d{3}|9[01]\d{2}|9200)-(920\d|92[1-9]\d|9[3-9]\d{2}|\d{5}))$/ &&
-          _["source_addresses"].contains("::/0")
+        change.after["inbound_rule"].all(
+          _["protocol"] != "tcp" ||
+          _["port_range"] != /^(3306|5432|27017|6379|9092|9200|all|0|(\d{1,3}|[12]\d{3}|3[0-2]\d{2}|330[0-6])-(330[6-9]|33[1-9]\d|3[4-9]\d{2}|[4-9]\d{3}|\d{5})|(\d{1,3}|[1-4]\d{3}|5[0-3]\d{2}|54[0-2]\d|543[0-2])-(543[2-9]|54[4-9]\d|5[5-9]\d{2}|[6-9]\d{3}|\d{5})|(\d{1,4}|1\d{4}|2[0-5]\d{3}|26\d{3}|2700\d|2701[0-7])-(2701[7-9]|270[2-9]\d|27[1-9]\d{2}|2[89]\d{3}|[3-9]\d{4})|(\d{1,3}|[1-5]\d{3}|6[0-2]\d{2}|63[0-6]\d|637\d)-(6379|63[89]\d|6[4-9]\d{2}|[7-9]\d{3}|\d{5})|(\d{1,3}|[1-8]\d{3}|90[0-8]\d|909[0-2])-(909[2-9]|9[1-9]\d{2}|\d{5})|(\d{1,3}|[1-8]\d{3}|9[01]\d{2}|9200)-(920\d|92[1-9]\d|9[3-9]\d{2}|\d{5}))$/ ||
+          _["source_addresses"] == empty ||
+          _["source_addresses"].none(_ == /^([0-9.]+\/0*[0-2]|0*([0-9]|[1-9][0-9]|1[0-9]{2}|2[01][0-9]|22[0-3])\.[0-9.]+\/0*[3-7]|[0-9a-f:.]*:[0-9a-f:.]*\/0*0|(::|0*[0-9a-f]{1,3}:|0*[0-7][0-9a-f]{3}:)[0-9a-f:.]*\/0*1|(::|0*[0-9a-f]{1,3}:|0*[0-3][0-9a-f]{3}:)[0-9a-f:.]*\/0*2|0*[23][0-9a-f]{3}:[0-9a-f:.]*\/0*([3-9]|1[01]))$/i)
         )
       )
   - uid: mondoo-digitalocean-security-firewall-no-unrestricted-db-ports-terraform-state
@@ -1137,15 +1111,11 @@ queries:
     mql: |
       terraform.state.resources.where(type == "digitalocean_firewall").all(
         values["inbound_rule"] == empty ||
-        values["inbound_rule"].none(
-          _["protocol"] == "tcp" &&
-          _["port_range"] == /^(3306|5432|27017|6379|9092|9200|all|0|(\d{1,3}|[12]\d{3}|3[0-2]\d{2}|330[0-6])-(330[6-9]|33[1-9]\d|3[4-9]\d{2}|[4-9]\d{3}|\d{5})|(\d{1,3}|[1-4]\d{3}|5[0-3]\d{2}|54[0-2]\d|543[0-2])-(543[2-9]|54[4-9]\d|5[5-9]\d{2}|[6-9]\d{3}|\d{5})|(\d{1,4}|1\d{4}|2[0-5]\d{3}|26\d{3}|2700\d|2701[0-7])-(2701[7-9]|270[2-9]\d|27[1-9]\d{2}|2[89]\d{3}|[3-9]\d{4})|(\d{1,3}|[1-5]\d{3}|6[0-2]\d{2}|63[0-6]\d|637\d)-(6379|63[89]\d|6[4-9]\d{2}|[7-9]\d{3}|\d{5})|(\d{1,3}|[1-8]\d{3}|90[0-8]\d|909[0-2])-(909[2-9]|9[1-9]\d{2}|\d{5})|(\d{1,3}|[1-8]\d{3}|9[01]\d{2}|9200)-(920\d|92[1-9]\d|9[3-9]\d{2}|\d{5}))$/ &&
-          _["source_addresses"].contains("0.0.0.0/0")
-        ) &&
-        values["inbound_rule"].none(
-          _["protocol"] == "tcp" &&
-          _["port_range"] == /^(3306|5432|27017|6379|9092|9200|all|0|(\d{1,3}|[12]\d{3}|3[0-2]\d{2}|330[0-6])-(330[6-9]|33[1-9]\d|3[4-9]\d{2}|[4-9]\d{3}|\d{5})|(\d{1,3}|[1-4]\d{3}|5[0-3]\d{2}|54[0-2]\d|543[0-2])-(543[2-9]|54[4-9]\d|5[5-9]\d{2}|[6-9]\d{3}|\d{5})|(\d{1,4}|1\d{4}|2[0-5]\d{3}|26\d{3}|2700\d|2701[0-7])-(2701[7-9]|270[2-9]\d|27[1-9]\d{2}|2[89]\d{3}|[3-9]\d{4})|(\d{1,3}|[1-5]\d{3}|6[0-2]\d{2}|63[0-6]\d|637\d)-(6379|63[89]\d|6[4-9]\d{2}|[7-9]\d{3}|\d{5})|(\d{1,3}|[1-8]\d{3}|90[0-8]\d|909[0-2])-(909[2-9]|9[1-9]\d{2}|\d{5})|(\d{1,3}|[1-8]\d{3}|9[01]\d{2}|9200)-(920\d|92[1-9]\d|9[3-9]\d{2}|\d{5}))$/ &&
-          _["source_addresses"].contains("::/0")
+        values["inbound_rule"].all(
+          _["protocol"] != "tcp" ||
+          _["port_range"] != /^(3306|5432|27017|6379|9092|9200|all|0|(\d{1,3}|[12]\d{3}|3[0-2]\d{2}|330[0-6])-(330[6-9]|33[1-9]\d|3[4-9]\d{2}|[4-9]\d{3}|\d{5})|(\d{1,3}|[1-4]\d{3}|5[0-3]\d{2}|54[0-2]\d|543[0-2])-(543[2-9]|54[4-9]\d|5[5-9]\d{2}|[6-9]\d{3}|\d{5})|(\d{1,4}|1\d{4}|2[0-5]\d{3}|26\d{3}|2700\d|2701[0-7])-(2701[7-9]|270[2-9]\d|27[1-9]\d{2}|2[89]\d{3}|[3-9]\d{4})|(\d{1,3}|[1-5]\d{3}|6[0-2]\d{2}|63[0-6]\d|637\d)-(6379|63[89]\d|6[4-9]\d{2}|[7-9]\d{3}|\d{5})|(\d{1,3}|[1-8]\d{3}|90[0-8]\d|909[0-2])-(909[2-9]|9[1-9]\d{2}|\d{5})|(\d{1,3}|[1-8]\d{3}|9[01]\d{2}|9200)-(920\d|92[1-9]\d|9[3-9]\d{2}|\d{5}))$/ ||
+          _["source_addresses"] == empty ||
+          _["source_addresses"].none(_ == /^([0-9.]+\/0*[0-2]|0*([0-9]|[1-9][0-9]|1[0-9]{2}|2[01][0-9]|22[0-3])\.[0-9.]+\/0*[3-7]|[0-9a-f:.]*:[0-9a-f:.]*\/0*0|(::|0*[0-9a-f]{1,3}:|0*[0-7][0-9a-f]{3}:)[0-9a-f:.]*\/0*1|(::|0*[0-9a-f]{1,3}:|0*[0-3][0-9a-f]{3}:)[0-9a-f:.]*\/0*2|0*[23][0-9a-f]{3}:[0-9a-f:.]*\/0*([3-9]|1[01]))$/i)
         )
       )
 
@@ -1189,6 +1159,8 @@ queries:
         This check verifies that no Cloud Firewall opens the full port range to the internet.
 
         A DigitalOcean inbound rule expresses every port as `0`, `all`, `1-65535`, or `0-65535`. Paired with a source of `0.0.0.0/0` or `::/0`, any of these admits all traffic from all hosts. Firewalls should expose only the specific ports the workload requires, set under Networking then Firewalls in the DigitalOcean Cloud Control Panel or with `doctl compute firewall add-rules`.
+
+        Source addresses count as unrestricted when, taken together, they cover every IPv4 or IPv6 address, such as `0.0.0.0/1` plus `128.0.0.0/1`. The Terraform version of this check is stricter: it treats any single range of `/7` or broader in public IPv4 space, or a comparably broad range in global IPv6 space such as `2000::/3`, as unrestricted, in any spelling.
 
         **Why this matters**
 
@@ -1284,13 +1256,10 @@ queries:
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "digitalocean_firewall")
     mql: |
       terraform.resources("digitalocean_firewall").all(
-        blocks.where(type == "inbound_rule").none(
-          arguments["port_range"] == /^(0|all|1-65535|0-65535)$/ &&
-          arguments["source_addresses"].contains("0.0.0.0/0")
-        ) &&
-        blocks.where(type == "inbound_rule").none(
-          arguments["port_range"] == /^(0|all|1-65535|0-65535)$/ &&
-          arguments["source_addresses"].contains("::/0")
+        blocks.where(type == "inbound_rule").all(
+          arguments["port_range"] != /^(0|all|1-65535|0-65535)$/ ||
+          arguments["source_addresses"] == empty ||
+          arguments["source_addresses"].none(_ == /^([0-9.]+\/0*[0-2]|0*([0-9]|[1-9][0-9]|1[0-9]{2}|2[01][0-9]|22[0-3])\.[0-9.]+\/0*[3-7]|[0-9a-f:.]*:[0-9a-f:.]*\/0*0|(::|0*[0-9a-f]{1,3}:|0*[0-7][0-9a-f]{3}:)[0-9a-f:.]*\/0*1|(::|0*[0-9a-f]{1,3}:|0*[0-3][0-9a-f]{3}:)[0-9a-f:.]*\/0*2|0*[23][0-9a-f]{3}:[0-9a-f:.]*\/0*([3-9]|1[01]))$/i)
         )
       )
   - uid: mondoo-digitalocean-security-firewall-no-all-ports-open-terraform-plan
@@ -1298,11 +1267,10 @@ queries:
     mql: |
       terraform.plan.resourceChanges.where(type == "digitalocean_firewall").all(
         change.after["inbound_rule"] == empty ||
-        change.after["inbound_rule"].none(
-          _["port_range"] == /^(0|all|1-65535|0-65535)$/ && _["source_addresses"].contains("0.0.0.0/0")
-        ) &&
-        change.after["inbound_rule"].none(
-          _["port_range"] == /^(0|all|1-65535|0-65535)$/ && _["source_addresses"].contains("::/0")
+        change.after["inbound_rule"].all(
+          _["port_range"] != /^(0|all|1-65535|0-65535)$/ ||
+          _["source_addresses"] == empty ||
+          _["source_addresses"].none(_ == /^([0-9.]+\/0*[0-2]|0*([0-9]|[1-9][0-9]|1[0-9]{2}|2[01][0-9]|22[0-3])\.[0-9.]+\/0*[3-7]|[0-9a-f:.]*:[0-9a-f:.]*\/0*0|(::|0*[0-9a-f]{1,3}:|0*[0-7][0-9a-f]{3}:)[0-9a-f:.]*\/0*1|(::|0*[0-9a-f]{1,3}:|0*[0-3][0-9a-f]{3}:)[0-9a-f:.]*\/0*2|0*[23][0-9a-f]{3}:[0-9a-f:.]*\/0*([3-9]|1[01]))$/i)
         )
       )
   - uid: mondoo-digitalocean-security-firewall-no-all-ports-open-terraform-state
@@ -1310,11 +1278,10 @@ queries:
     mql: |
       terraform.state.resources.where(type == "digitalocean_firewall").all(
         values["inbound_rule"] == empty ||
-        values["inbound_rule"].none(
-          _["port_range"] == /^(0|all|1-65535|0-65535)$/ && _["source_addresses"].contains("0.0.0.0/0")
-        ) &&
-        values["inbound_rule"].none(
-          _["port_range"] == /^(0|all|1-65535|0-65535)$/ && _["source_addresses"].contains("::/0")
+        values["inbound_rule"].all(
+          _["port_range"] != /^(0|all|1-65535|0-65535)$/ ||
+          _["source_addresses"] == empty ||
+          _["source_addresses"].none(_ == /^([0-9.]+\/0*[0-2]|0*([0-9]|[1-9][0-9]|1[0-9]{2}|2[01][0-9]|22[0-3])\.[0-9.]+\/0*[3-7]|[0-9a-f:.]*:[0-9a-f:.]*\/0*0|(::|0*[0-9a-f]{1,3}:|0*[0-7][0-9a-f]{3}:)[0-9a-f:.]*\/0*1|(::|0*[0-9a-f]{1,3}:|0*[0-3][0-9a-f]{3}:)[0-9a-f:.]*\/0*2|0*[23][0-9a-f]{3}:[0-9a-f:.]*\/0*([3-9]|1[01]))$/i)
         )
       )
 
