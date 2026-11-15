@@ -27137,7 +27137,7 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check verifies that Amazon Inspector is enabled and actively scanning EC2 instances, requiring at least one `AWS_EC2_INSTANCE` coverage entry with an `ACTIVE` status. Inspector is not enabled by default, so instances receive no automated vulnerability assessment until it is turned on.
+        This check verifies that Amazon Inspector EC2 scanning is enabled, requiring the account's Inspector status to report EC2 scanning as `ENABLED` in every scanned region. It reads the enablement status rather than scan coverage, so an account with Inspector enabled and no instances to scan passes. Inspector is not enabled by default, so instances receive no automated vulnerability assessment until it is turned on.
 
         Scanning is enabled under account management in the Inspector console, or with `aws inspector2 enable --resource-types EC2`.
 
@@ -27206,9 +27206,8 @@ queries:
   - uid: mondoo-aws-security-inspector-ec2-scanning-enabled-aws
     filters: asset.platform == "aws"
     mql: |
-      aws.inspector.coverages.where(
-        resourceType == "AWS_EC2_INSTANCE" && statusCode == "ACTIVE"
-      ).length > 0
+      aws.inspector.accountStatuses != empty
+      aws.inspector.accountStatuses.all(ec2Status == "ENABLED")
   - uid: mondoo-aws-security-inspector-ec2-scanning-enabled-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_inspector2_enabler" || nameLabel == "aws_guardduty_organization_configuration")
     mql: |
@@ -27267,7 +27266,7 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check verifies that Amazon Inspector is enabled and actively scanning container images in Amazon ECR, requiring at least one `AWS_ECR_CONTAINER_IMAGE` coverage entry with an `ACTIVE` status. Inspector ECR scanning is not active by default.
+        This check verifies that Amazon Inspector ECR scanning is enabled, requiring the account's Inspector status to report ECR scanning as `ENABLED` in every scanned region. It reads the enablement status rather than scan coverage, so an account with Inspector enabled and no images to scan passes. Inspector ECR scanning is not active by default.
 
         Scanning is enabled under account management in the Inspector console, or with `aws inspector2 enable --resource-types ECR`.
 
@@ -27335,9 +27334,8 @@ queries:
   - uid: mondoo-aws-security-inspector-ecr-scanning-enabled-aws
     filters: asset.platform == "aws"
     mql: |
-      aws.inspector.coverages.where(
-        resourceType == "AWS_ECR_CONTAINER_IMAGE" && statusCode == "ACTIVE"
-      ).length > 0
+      aws.inspector.accountStatuses != empty
+      aws.inspector.accountStatuses.all(ecrStatus == "ENABLED")
   - uid: mondoo-aws-security-inspector-ecr-scanning-enabled-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_inspector2_enabler" || nameLabel == "aws_guardduty_organization_configuration")
     mql: |
@@ -27396,7 +27394,7 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check verifies that Amazon Inspector is enabled and actively scanning Lambda functions, requiring at least one `AWS_LAMBDA_FUNCTION` coverage entry with an `ACTIVE` status. Inspector does not scan Lambda functions by default.
+        This check verifies that Amazon Inspector Lambda scanning is enabled, requiring the account's Inspector status to report Lambda standard scanning as `ENABLED` in every scanned region. It reads the enablement status rather than scan coverage, so an account with Inspector enabled and no functions to scan passes. Inspector does not scan Lambda functions by default.
 
         Scanning is enabled under account management in the Inspector console, or with `aws inspector2 enable --resource-types LAMBDA LAMBDA_CODE`.
 
@@ -27464,9 +27462,8 @@ queries:
   - uid: mondoo-aws-security-inspector-lambda-scanning-enabled-aws
     filters: asset.platform == "aws"
     mql: |
-      aws.inspector.coverages.where(
-        resourceType == "AWS_LAMBDA_FUNCTION" && statusCode == "ACTIVE"
-      ).length > 0
+      aws.inspector.accountStatuses != empty
+      aws.inspector.accountStatuses.all(lambdaStatus == "ENABLED")
   - uid: mondoo-aws-security-inspector-lambda-scanning-enabled-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_inspector2_enabler" || nameLabel == "aws_guardduty_organization_configuration")
     mql: |
@@ -52527,7 +52524,7 @@ queries:
           mondoo.com/filter-icon: aws
     docs:
       desc: |
-        This check verifies that every IAM role whose trust policy names an AWS account outside the scanned account also constrains that grant with a condition. An accepted condition is `aws:PrincipalOrgID`, `sts:ExternalId`, `aws:PrincipalArn`, or `aws:MultiFactorAuthPresent`. A trust policy that lists an external account with no condition lets any principal in that account assume the role, so the security of your role rests entirely on the access controls of an account you do not administer. Roles that trust only principals inside the scanned account, or that trust AWS service principals, are not evaluated.
+        This check verifies that every IAM role whose trust policy names an AWS account outside the scanned account also constrains that grant with a condition. An accepted condition is `aws:PrincipalOrgID`, `sts:ExternalId`, or `aws:PrincipalArn` under an equals or like operator, or `aws:MultiFactorAuthPresent` set to `true`. A value that matches everything does not count: a value made only of `*` and `?` wildcards, an organization ID of `o-*`, or a principal ARN whose account field is wildcarded, such as `arn:aws:iam::*:role/admin`. When a condition lists several values, every one of them must scope. A trust policy that lists an external account with no condition lets any principal in that account assume the role, so the security of your role rests entirely on the access controls of an account you do not administer. Roles that trust only principals inside the scanned account, or that trust AWS service principals, are not evaluated.
 
         Conditions are added on the **Trust relationships** tab of the role in the IAM console, or by applying a revised document with `aws iam update-assume-role-policy`.
 
@@ -52548,7 +52545,7 @@ queries:
         3. Select a role and choose the **Trust relationships** tab.
         4. Compare each account ID under `Principal` against your own account ID, then check whether the statement carries a `Condition`.
 
-        A passing role either trusts only your own account and AWS services, or constrains external principals with a `Condition` such as `aws:PrincipalOrgID`, `sts:ExternalId`, or `aws:MultiFactorAuthPresent`. A failing role names an external account with no `Condition`.
+        A passing role either trusts only your own account and AWS services, or constrains external principals with a `Condition` such as `aws:PrincipalOrgID`, `sts:ExternalId`, or `aws:MultiFactorAuthPresent`. A failing role names an external account with no `Condition`, or with one that does not narrow who can assume it, such as `aws:MultiFactorAuthPresent` set to `false` or `sts:ExternalId` matched against `*`.
 
         ### Audit via CLI
 
@@ -52670,13 +52667,15 @@ queries:
     mql: |
       aws.iam.roles.where(assumableByExternalAccounts != empty).all(
         assumeRolePolicyStatements.where(effect == "Allow" && principals["AWS"] != empty).all(
-          conditions["StringEquals"]["aws:PrincipalOrgID"] != empty ||
-          conditions["StringLike"]["aws:PrincipalOrgID"] != empty ||
-          conditions["StringEquals"]["sts:ExternalId"] != empty ||
-          conditions["StringLike"]["sts:ExternalId"] != empty ||
-          conditions["StringEquals"]["aws:PrincipalArn"] != empty ||
-          conditions["ArnLike"]["aws:PrincipalArn"] != empty ||
-          conditions["Bool"]["aws:MultiFactorAuthPresent"] != empty
+          conditions["StringEquals"]["aws:PrincipalOrgID"] != empty && conditions["StringEquals"]["aws:PrincipalOrgID"].contains(/^(o-)?[*?]*$/) == false ||
+          conditions["StringLike"]["aws:PrincipalOrgID"] != empty && conditions["StringLike"]["aws:PrincipalOrgID"].contains(/^(o-)?[*?]*$/) == false ||
+          conditions["StringEquals"]["sts:ExternalId"] != empty && conditions["StringEquals"]["sts:ExternalId"].contains(/^[*?]+$/) == false ||
+          conditions["StringLike"]["sts:ExternalId"] != empty && conditions["StringLike"]["sts:ExternalId"].contains(/^[*?]+$/) == false ||
+          conditions["ArnEquals"]["aws:PrincipalArn"] != empty && conditions["ArnEquals"]["aws:PrincipalArn"].contains(/^[*?]+$|^arn:[^:]*:[^:]*:[^:]*:[^:]*[*?]/) == false ||
+          conditions["ArnLike"]["aws:PrincipalArn"] != empty && conditions["ArnLike"]["aws:PrincipalArn"].contains(/^[*?]+$|^arn:[^:]*:[^:]*:[^:]*:[^:]*[*?]/) == false ||
+          conditions["StringEquals"]["aws:PrincipalArn"] != empty && conditions["StringEquals"]["aws:PrincipalArn"].contains(/^[*?]+$|^arn:[^:]*:[^:]*:[^:]*:[^:]*[*?]/) == false ||
+          conditions["StringLike"]["aws:PrincipalArn"] != empty && conditions["StringLike"]["aws:PrincipalArn"].contains(/^[*?]+$|^arn:[^:]*:[^:]*:[^:]*:[^:]*[*?]/) == false ||
+          conditions["Bool"]["aws:MultiFactorAuthPresent"] == "true"
         )
       )
 
@@ -85494,9 +85493,16 @@ queries:
       terraform.resources("aws_kms_key")
         .where(arguments["policy"].where(_["Statement"] != null) != empty)
         .all(
-          arguments.policy.first["Statement"].where(_["Effect"] == "Allow").none(
-            _["Principal"] == "*" || _["Principal"]["AWS"] == "*"
-          )
+          arguments.policy.first["Statement"]
+            .where(_["Effect"] == "Allow")
+            .where(_["Principal"] == "*" || _["Principal"]["AWS"].contains("*"))
+            .all(
+              _["Condition"] != empty &&
+              _["Condition"]
+                .where(key == /^(ForAnyValue:|ForAllValues:)?(StringEquals|StringEqualsIgnoreCase|StringLike|ArnEquals|ArnLike)(IfExists)?$/i)
+                .values
+                .where(_.where(key == /^(aws:(SourceArn|SourceAccount|SourceOwner|PrincipalOrgID|PrincipalOrgPaths|PrincipalAccount|PrincipalArn|SourceOrgID|SourceOrgPaths|ResourceOrgID|SourceVpc|SourceVpce)|kms:CallerAccount)$/i && value.contains("*") == false) != empty) != empty
+            )
         )
       refs = terraform.resources
         .where(nameLabel == "aws_kms_key")
@@ -85510,7 +85516,14 @@ queries:
         .all(
           blocks.where(type == "statement")
             .where(arguments["effect"] != "Deny")
-            .where(blocks.where(type == "condition") == empty)
+            .where(
+              blocks.where(
+                type == "condition" &&
+                arguments["test"] == /^(ForAnyValue:|ForAllValues:)?(StringEquals|StringEqualsIgnoreCase|StringLike|ArnEquals|ArnLike)(IfExists)?$/i &&
+                arguments["variable"] == /^(aws:(SourceArn|SourceAccount|SourceOwner|PrincipalOrgID|PrincipalOrgPaths|PrincipalAccount|PrincipalArn|SourceOrgID|SourceOrgPaths|ResourceOrgID|SourceVpc|SourceVpce)|kms:CallerAccount)$/i &&
+                arguments["values"].contains("*") == false
+              ) == empty
+            )
             .all(
               blocks.where(type == "principals").none(
                 arguments["type"] == "AWS" && arguments["identifiers"].where(_ == "*") != empty
@@ -85522,27 +85535,48 @@ queries:
     mql: |
       terraform.plan.resourceChanges.where(type == "aws_kms_key").all(
         change.after["policy"] == empty ||
-        change.after["policy"].json["Statement"].where(_["Effect"] == "Allow").none(
-          _["Principal"] == "*" || _["Principal"]["AWS"] == "*"
-        )
+        change.after["policy"].json["Statement"]
+          .where(_["Effect"] == "Allow")
+          .where(_["Principal"] == "*" || _["Principal"]["AWS"].contains("*"))
+          .all(
+            _["Condition"] != empty &&
+            _["Condition"]
+              .where(key == /^(ForAnyValue:|ForAllValues:)?(StringEquals|StringEqualsIgnoreCase|StringLike|ArnEquals|ArnLike)(IfExists)?$/i)
+              .values
+              .where(_.where(key == /^(aws:(SourceArn|SourceAccount|SourceOwner|PrincipalOrgID|PrincipalOrgPaths|PrincipalAccount|PrincipalArn|SourceOrgID|SourceOrgPaths|ResourceOrgID|SourceVpc|SourceVpce)|kms:CallerAccount)$/i && value.contains("*") == false) != empty) != empty
+          )
       )
   - uid: mondoo-aws-security-kms-key-no-public-access-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_kms_key")
     mql: |
       terraform.state.resources.where(type == "aws_kms_key").all(
         values["policy"] == empty ||
-        values["policy"].json["Statement"].where(_["Effect"] == "Allow").none(
-          _["Principal"] == "*" || _["Principal"]["AWS"] == "*"
-        )
+        values["policy"].json["Statement"]
+          .where(_["Effect"] == "Allow")
+          .where(_["Principal"] == "*" || _["Principal"]["AWS"].contains("*"))
+          .all(
+            _["Condition"] != empty &&
+            _["Condition"]
+              .where(key == /^(ForAnyValue:|ForAllValues:)?(StringEquals|StringEqualsIgnoreCase|StringLike|ArnEquals|ArnLike)(IfExists)?$/i)
+              .values
+              .where(_.where(key == /^(aws:(SourceArn|SourceAccount|SourceOwner|PrincipalOrgID|PrincipalOrgPaths|PrincipalAccount|PrincipalArn|SourceOrgID|SourceOrgPaths|ResourceOrgID|SourceVpc|SourceVpce)|kms:CallerAccount)$/i && value.contains("*") == false) != empty) != empty
+          )
       )
   - uid: mondoo-aws-security-kms-key-no-public-access-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::KMS::Key")
     mql: |
       cloudformation.template.resources.where(type == "AWS::KMS::Key").all(
         properties['KeyPolicy'] == empty ||
-        properties['KeyPolicy']['Statement'].where(_["Effect"] == "Allow").none(
-          _["Principal"] == "*" || _["Principal"]["AWS"] == "*"
-        )
+        properties['KeyPolicy']['Statement']
+          .where(_["Effect"] == "Allow")
+          .where(_["Principal"] == "*" || _["Principal"]["AWS"].contains("*"))
+          .all(
+            _["Condition"] != empty &&
+            _["Condition"]
+              .where(key == /^(ForAnyValue:|ForAllValues:)?(StringEquals|StringEqualsIgnoreCase|StringLike|ArnEquals|ArnLike)(IfExists)?$/i)
+              .values
+              .where(_.where(key == /^(aws:(SourceArn|SourceAccount|SourceOwner|PrincipalOrgID|PrincipalOrgPaths|PrincipalAccount|PrincipalArn|SourceOrgID|SourceOrgPaths|ResourceOrgID|SourceVpc|SourceVpce)|kms:CallerAccount)$/i && value.contains("*") == false) != empty) != empty
+          )
       )
 
   - uid: mondoo-aws-security-lakeformation-no-iam-allowed-principals
