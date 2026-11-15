@@ -157,7 +157,6 @@ policies:
           - uid: mondoo-azure-security-ensure-activity-log-alert-exists-for-create-update-delete-network-security-group
           - uid: mondoo-azure-security-network-watcher-flow-logs-enabled
           - uid: mondoo-azure-security-network-ddos-protection-enabled
-          - uid: mondoo-azure-security-network-vnet-vm-protection-enabled
           - uid: mondoo-azure-security-network-subnet-default-outbound-disabled
           - uid: mondoo-azure-security-network-database-ports-restricted
           - uid: mondoo-azure-security-vpn-gateway-generation2
@@ -285,7 +284,6 @@ policies:
           - uid: mondoo-azure-security-batch-pool-disk-encryption
       - title: Application Gateway
         checks:
-          - uid: mondoo-azure-security-appgw-ssl-policy-tls12
           - uid: mondoo-azure-security-appgw-min-tls-version
           - uid: mondoo-azure-security-appgw-no-weak-ciphers
           - uid: mondoo-azure-security-application-gateway-no-public-frontend
@@ -815,8 +813,10 @@ queries:
         List NSGs and check for SSH access rules:
 
         ```bash
-        az network nsg list --query "[].{NSG: name, Rules: securityRules[?access=='Allow' && protocol=='Tcp' && direction=='Inbound' && (destinationPortRange=='22' || destinationPortRanges.contains('22')) && (sourceAddressPrefix=='*' || sourceAddressPrefix=='0.0.0.0' || sourceAddressPrefix=='Internet' || sourceAddressPrefix=='/0' || sourceAddressPrefix=='internet' || sourceAddressPrefix=='any')]}" -o table
+        az network nsg list --query "[].{NSG: name, Rules: securityRules[?access=='Allow' && direction=='Inbound' && (protocol=='Tcp' || protocol=='*') && (destinationPortRange=='22' || destinationPortRange=='*' || contains(destinationPortRanges, '22')) && (sourceAddressPrefix=='*' || sourceAddressPrefix=='0.0.0.0' || sourceAddressPrefix=='Internet' || ends_with(sourceAddressPrefix || '', '/0'))].name}" -o json
         ```
+
+        An NSG listed with a non-empty `Rules` array fails. The query matches single ports only, so also review any rule whose port range, such as `20-100`, spans port 22.
       remediation:
         - id: portal
           desc: |
@@ -1060,8 +1060,10 @@ queries:
         List NSGs and verify RDP access rules:
 
         ```bash
-        az network nsg list --query "[].{NSG: name, Rules: securityRules[?access=='Allow' && protocol=='Tcp' && direction=='Inbound' && (destinationPortRange=='3389' || destinationPortRanges.contains('3389')) && (sourceAddressPrefix=='*' || sourceAddressPrefix=='0.0.0.0' || sourceAddressPrefix=='Internet' || sourceAddressPrefix=='/0' || sourceAddressPrefix=='internet' || sourceAddressPrefix=='any')]}" -o table
+        az network nsg list --query "[].{NSG: name, Rules: securityRules[?access=='Allow' && direction=='Inbound' && (protocol=='Tcp' || protocol=='*') && (destinationPortRange=='3389' || destinationPortRange=='*' || contains(destinationPortRanges, '3389')) && (sourceAddressPrefix=='*' || sourceAddressPrefix=='0.0.0.0' || sourceAddressPrefix=='Internet' || ends_with(sourceAddressPrefix || '', '/0'))].name}" -o json
         ```
+
+        An NSG listed with a non-empty `Rules` array fails. The query matches single ports only, so also review any rule whose port range, such as `20-100`, spans port 3389.
       remediation:
         - id: portal
           desc: |
@@ -1305,8 +1307,10 @@ queries:
         List NSGs and verify VNC access rules:
 
         ```bash
-        az network nsg list --query "[].{NSG: name, Rules: securityRules[?access=='Allow' && protocol=='Tcp' && direction=='Inbound' && (destinationPortRange=='5900' || destinationPortRanges.contains('5900')) && (sourceAddressPrefix=='*' || sourceAddressPrefix=='0.0.0.0' || sourceAddressPrefix=='Internet' || sourceAddressPrefix=='/0' || sourceAddressPrefix=='internet' || sourceAddressPrefix=='any')]}" -o table
+        az network nsg list --query "[].{NSG: name, Rules: securityRules[?access=='Allow' && direction=='Inbound' && (protocol=='Tcp' || protocol=='*') && (destinationPortRange=='5900' || destinationPortRange=='*' || contains(destinationPortRanges, '5900')) && (sourceAddressPrefix=='*' || sourceAddressPrefix=='0.0.0.0' || sourceAddressPrefix=='Internet' || ends_with(sourceAddressPrefix || '', '/0'))].name}" -o json
         ```
+
+        An NSG listed with a non-empty `Rules` array fails. The query matches single ports only, so also review any rule whose port range, such as `20-100`, spans port 5900.
       remediation:
         - id: portal
           desc: |
@@ -5449,7 +5453,7 @@ queries:
         Use the Azure CLI to review NSG rules across your Azure environment:
 
         ```bash
-        az network nsg rule list --query "[].{NSG:networkSecurityGroup, Protocol:protocol, Access:access, Direction:direction, SourceAddressPrefix:sourceAddressPrefix, DestinationPortRange:destinationPortRange}" -o table
+        az network nsg list --query "[].{NSG: name, Rules: securityRules[?access=='Allow' && direction=='Inbound' && (protocol=='Udp' || protocol=='*') && (sourceAddressPrefix=='*' || sourceAddressPrefix=='0.0.0.0' || sourceAddressPrefix=='Internet' || ends_with(sourceAddressPrefix || '', '/0'))].{Name: name, Ports: destinationPortRange, PortList: destinationPortRanges}}" -o json
         ```
 
         Ensure no rule improperly exposes the specified UDP ports to the internet.
@@ -7401,9 +7405,9 @@ queries:
           mondoo.com/filter-icon: bicep
     docs:
       desc: |
-        This check verifies that network traffic through your security groups is being recorded, by requiring Network Watcher flow logs to be enabled.
+        This check verifies that network traffic in every region is being recorded, by requiring each Network Watcher to have at least one enabled flow log.
 
-        Flow logs are off when a Network Watcher is provisioned, so network activity goes unrecorded until they are turned on. In the portal they are configured under Network Watcher, then NSG flow logs, where Flow logs is set to On for a given network security group and a storage account and retention period are supplied. From the CLI it is `az network watcher flow-log create --nsg --storage-account --enabled true --retention 90`. In Terraform the resource is `azurerm_network_watcher_flow_log` with `enabled` set and a `retention_policy` block; in Bicep it is `enabled` on the flow log resource.
+        Flow logs are off when a Network Watcher is provisioned, so network activity goes unrecorded until they are turned on. In the portal they are configured under Network Watcher, then Flow logs, where a virtual network flow log is created for a virtual network, subnet, or network interface with a storage account and retention period. Azure no longer accepts new flow logs that target a network security group. From the CLI it is `az network watcher flow-log create --vnet --storage-account --enabled true --retention 90`. In Terraform the resource is `azurerm_network_watcher_flow_log` with `enabled` set and a `retention_policy` block; in Bicep it is `enabled` on the flow log resource.
 
         **Why this matters**
 
@@ -7418,8 +7422,10 @@ queries:
         **Manual Audit via Azure Portal:**
 
         1. Navigate to **Network Watcher** in the Azure Portal.
-        2. Select **NSG flow logs** under **Logs**.
-        3. Verify that flow logs are enabled for all relevant network security groups.
+        2. Select **Flow logs** under **Logs**.
+        3. Verify that every region with a Network Watcher has at least one flow log whose status is enabled.
+
+        A region with no enabled flow log fails.
 
         **Automated Audit with Azure CLI:**
 
@@ -14412,142 +14418,6 @@ queries:
       bicep.resources.where(type == "Microsoft.Network/virtualNetworks").all(
         properties["enableDdosProtection"] == true
       )
-  - uid: mondoo-azure-security-network-vnet-vm-protection-enabled
-    title: Ensure VM protection is enabled on virtual networks
-    impact: 40
-    tags:
-      compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
-      compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
-      compliance/iso-27001-2022: iso-27001-2022-a-8-20
-      compliance/nis-2: nis-2-21-2-e
-      compliance/nist-csf-1: nist-csf-1-pr-ac-5
-      compliance/nist-csf-2: nist-csf-2-pr-ir-01
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
-      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
-      compliance/owasp-top-10-2025: owasp-top-10-2025-a02
-      compliance/pci-dss-4: pcidss-requirement-1-3-1
-      compliance/soc2-2017: soc2-control-cc6-6-4
-      compliance/vda-isa-5: vda-isa-5-5-2-7
-    variants:
-      # No Terraform variants: the azurerm provider cannot express enableVmProtection on virtual networks
-      - uid: mondoo-azure-security-network-vnet-vm-protection-enabled-azure
-        tags:
-          mondoo.com/filter-title: Azure Virtual Network
-          mondoo.com/filter-icon: azure
-      - uid: mondoo-azure-security-network-vnet-vm-protection-enabled-bicep
-        tags:
-          mondoo.com/filter-title: Bicep
-          mondoo.com/filter-icon: bicep
-    docs:
-      desc: |
-        This check verifies that a virtual network refuses to host compute in subnets that have no traffic filtering, by requiring VM protection to be enabled on it.
-
-        VM protection requires every subnet in the virtual network to have a network security group associated before virtual machines can be deployed into it. This check requires the property to be on. In the portal it is enabled under the virtual network's Properties. From the CLI it is `az network vnet update --vm-protection true`. In Bicep the property is `enableVmProtection` on the virtual network.
-
-        **Why this matters**
-
-        A subnet without a network security group applies no filtering at all, so anything deployed there receives whatever traffic reaches it. VM protection turns that from a condition someone has to notice into one the platform will not allow, blocking the deployment rather than accepting it and hoping the gap is caught in review.
-
-        Environments with several teams deploying into shared networks are where this bites. A subnet created quickly for a test, or one whose network security group was detached during troubleshooting and never reattached, is an easy mistake to make and a hard one to see. VM protection is the enforcement layer at the virtual network scope that catches it even when the subnet-level control has been removed.
-
-        Requiring filtering on every subnet also means east-west traffic inside the network is subject to rules rather than flowing freely, which limits how far an attacker can move once inside. Applying the requirement at the network level keeps that posture uniform regardless of who deploys or where, and makes an accidental regression something that has to be deliberately bypassed.
-
-        The azurerm Terraform provider does not expose this property. To manage it as code, use the AzAPI provider to set `enableVmProtection` on the existing virtual network.
-      audit: |
-        **Manual Audit via Azure Portal:**
-
-        1. Navigate to **Virtual networks** in the Azure Portal.
-        2. Select a virtual network.
-        3. Under **Overview** or **Properties**, verify that VM protection is set to **Enabled**.
-
-        **Automated Audit with Azure CLI:**
-
-        ```bash
-        az network vnet list --query "[].{Name:name, ResourceGroup:resourceGroup, VMProtection:enableVmProtection}" -o table
-        ```
-
-        **Automated Audit with PowerShell:**
-
-        ```powershell
-        Get-AzVirtualNetwork | Select-Object Name, ResourceGroupName, EnableVmProtection | Format-Table
-        ```
-
-        Ensure all virtual networks have EnableVmProtection set to True.
-      remediation:
-        - id: portal
-          desc: |
-            To ensure VM protection is enabled on virtual networks using the Azure Portal:
-
-            1. Navigate to **Virtual networks** in the Azure Portal.
-            2. Select the VNet.
-            3. Under **Properties**, enable **VM protection**.
-            4. Select **Save**.
-        - id: cli
-          desc: |
-            To ensure VM protection is enabled on virtual networks using the Azure CLI:
-
-            ```bash
-            az network vnet update --resource-group <ResourceGroupName> --name <VNetName> --vm-protection true
-            ```
-        - id: powershell
-          desc: |
-            To ensure VM protection is enabled on virtual networks using PowerShell:
-
-            ```powershell
-            $vnet = Get-AzVirtualNetwork -ResourceGroupName <ResourceGroupName> -Name <VNetName>
-            $vnet.EnableVmProtection = $true
-            Set-AzVirtualNetwork -VirtualNetwork $vnet
-            ```
-        - id: terraform
-          desc: |
-            The azurerm provider does not expose VM protection on virtual networks. To ensure VM protection is enabled on virtual networks in Terraform, use the AzAPI provider:
-
-            ```hcl
-            resource "azapi_update_resource" "vnet_vm_protection" {
-              type        = "Microsoft.Network/virtualNetworks@2024-05-01"
-              resource_id = azurerm_virtual_network.example.id
-
-              body = {
-                properties = {
-                  enableVmProtection = true
-                }
-              }
-            }
-            ```
-        - id: bicep
-          desc: |
-            To ensure VM protection is enabled on virtual networks in Bicep:
-
-            ```bicep
-            resource vnet 'Microsoft.Network/virtualNetworks@2024-05-01' = {
-              name: 'example-vnet'
-              location: resourceGroup().location
-              properties: {
-                enableVmProtection: true
-                addressSpace: {
-                  addressPrefixes: [
-                    '10.0.0.0/16'
-                  ]
-                }
-              }
-            }
-            ```
-    refs:
-      - url: https://learn.microsoft.com/en-us/azure/virtual-network/virtual-networks-overview
-        title: What is Azure Virtual Network?
-  - uid: mondoo-azure-security-network-vnet-vm-protection-enabled-azure
-    filters: |
-      asset.platform == "azure-virtual-network"
-    mql: |
-      azure.subscription.network.virtualNetwork.enableVmProtection == true
-  - uid: mondoo-azure-security-network-vnet-vm-protection-enabled-bicep
-    filters: asset.platform == "bicep" && bicep.resources.any(type == "Microsoft.Network/virtualNetworks")
-    mql: |
-      bicep.resources.where(type == "Microsoft.Network/virtualNetworks").all(
-        properties["enableVmProtection"] == true
-      )
   - uid: mondoo-azure-security-network-subnet-default-outbound-disabled
     title: Ensure default outbound access is disabled on subnets
     impact: 60
@@ -14794,8 +14664,10 @@ queries:
         List NSGs and check for database port access rules:
 
         ```bash
-        az network nsg list --query "[].{NSG: name, Rules: securityRules[?access=='Allow' && protocol=='Tcp' && direction=='Inbound' && (destinationPortRange=='1433' || destinationPortRange=='3306' || destinationPortRange=='5432' || destinationPortRange=='27017') && (sourceAddressPrefix=='*' || sourceAddressPrefix=='0.0.0.0' || sourceAddressPrefix=='Internet' || sourceAddressPrefix=='/0' || sourceAddressPrefix=='internet' || sourceAddressPrefix=='any')]}" -o table
+        az network nsg list --query "[].{NSG: name, Rules: securityRules[?access=='Allow' && direction=='Inbound' && (protocol=='Tcp' || protocol=='*') && (destinationPortRange=='*' || contains(['1433','3306','5432','27017'], destinationPortRange || '') || length(destinationPortRanges[?contains(['1433','3306','5432','27017'], @)]) > \`0\`) && (sourceAddressPrefix=='*' || sourceAddressPrefix=='0.0.0.0' || sourceAddressPrefix=='Internet' || ends_with(sourceAddressPrefix || '', '/0'))].name}" -o json
         ```
+
+        An NSG listed with a non-empty `Rules` array fails. The query matches single ports only, so also review any rule whose port range spans one of the database ports.
 
         **Automated Audit with PowerShell:**
 
@@ -17664,7 +17536,7 @@ queries:
     variants:
       - uid: mondoo-azure-security-firewall-threat-intel-deny-azure
         tags:
-          mondoo.com/filter-title: Azure Subscription
+          mondoo.com/filter-title: Azure Firewall
           mondoo.com/filter-icon: azure
       - uid: mondoo-azure-security-firewall-threat-intel-deny-terraform-hcl
         tags:
@@ -17735,6 +17607,14 @@ queries:
             ```bash
             az network firewall update --name <FirewallName> --resource-group <ResourceGroupName> --threat-intel-mode Deny
             ```
+
+            For a firewall managed by a firewall policy, the policy's mode is the one that applies, so set it there:
+
+            ```bash
+            az network firewall policy update --name <PolicyName> --resource-group <ResourceGroupName> --threat-intel-mode Deny
+            ```
+
+            Azure rejects `Deny` on a Basic-tier policy, so a Basic firewall cannot pass this check.
         - id: powershell
           desc: |
             To ensure Azure Firewall threat intelligence is set to Deny mode using PowerShell:
@@ -17831,7 +17711,7 @@ queries:
     variants:
       - uid: mondoo-azure-security-firewall-premium-sku-azure
         tags:
-          mondoo.com/filter-title: Azure Subscription
+          mondoo.com/filter-title: Azure Firewall
           mondoo.com/filter-icon: azure
       - uid: mondoo-azure-security-firewall-premium-sku-terraform-hcl
         tags:
@@ -17992,7 +17872,7 @@ queries:
     variants:
       - uid: mondoo-azure-security-firewall-policy-configured-azure
         tags:
-          mondoo.com/filter-title: Azure Subscription
+          mondoo.com/filter-title: Azure Firewall
           mondoo.com/filter-icon: azure
       - uid: mondoo-azure-security-firewall-policy-configured-terraform-hcl
         tags:
@@ -18174,7 +18054,7 @@ queries:
     variants:
       - uid: mondoo-azure-security-firewall-idps-enabled-azure
         tags:
-          mondoo.com/filter-title: Azure Subscription
+          mondoo.com/filter-title: Azure Firewall
           mondoo.com/filter-icon: azure
       - uid: mondoo-azure-security-firewall-idps-enabled-terraform-hcl
         tags:
@@ -18196,7 +18076,7 @@ queries:
       desc: |
         This check verifies that the intrusion detection engine on an Azure Firewall Policy drops matching traffic instead of only recording it.
 
-        Intrusion Detection and Prevention System (IDPS) mode is set on the **IDPS** page under **Settings** of the firewall policy, through `--idps-mode` on `az network firewall policy update`, or through the `mode` argument of the `intrusion_detection` block. The check requires `Deny`, shown in the portal as **Alert and deny**.
+        Intrusion Detection and Prevention System (IDPS) mode is set on the **IDPS** page under **Settings** of the firewall policy, through `--idps-mode` on `az network firewall policy update`, or through the `mode` argument of the `intrusion_detection` block. The check requires `Deny`, shown in the portal as **Alert and deny**. A firewall with no policy attached fails, because IDPS is configured only on a firewall policy.
 
         **Why this matters**
 
@@ -18292,9 +18172,9 @@ queries:
         title: Azure Firewall Premium features
   - uid: mondoo-azure-security-firewall-idps-enabled-azure
     filters: |
-      asset.platform == "azure-firewall" &&
-      azure.subscription.networkService.firewall.policy != empty
+      asset.platform == "azure-firewall"
     mql: |
+      azure.subscription.networkService.firewall.policy != empty &&
       azure.subscription.networkService.firewall.policy.intrusionDetectionMode == "Deny"
   - uid: mondoo-azure-security-firewall-idps-enabled-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_firewall_policy")
@@ -19921,225 +19801,6 @@ queries:
     mql: |
       bicep.resources.where(type == "Microsoft.ContainerService/managedClusters").all(
         properties["storageProfile"]["diskCSIDriver"]["enabled"] == true
-      )
-  - uid: mondoo-azure-security-appgw-ssl-policy-tls12
-    title: Ensure Application Gateways enforce TLS 1.2 or higher
-    impact: 80
-    tags:
-      compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-04
-      compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
-      compliance/iso-27001-2022: iso-27001-2022-a-8-24
-      compliance/nis-2: nis-2-21-2-h
-      compliance/nist-csf-1: nist-csf-1-pr-ds-2
-      compliance/nist-csf-2: nist-csf-2-pr-ds-02
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
-      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
-      compliance/owasp-top-10-2025: owasp-top-10-2025-a04
-      compliance/pci-dss-4: pcidss-requirement-4-2-1
-      compliance/soc2-2017: soc2-control-cc6-7-2
-      compliance/vda-isa-5: vda-isa-5-5-1-2
-    variants:
-      - uid: mondoo-azure-security-appgw-ssl-policy-tls12-azure
-        tags:
-          mondoo.com/filter-title: Azure Subscription
-          mondoo.com/filter-icon: azure
-      - uid: mondoo-azure-security-appgw-ssl-policy-tls12-terraform-hcl
-        tags:
-          mondoo.com/filter-title: Terraform HCL
-          mondoo.com/filter-icon: terraform
-      - uid: mondoo-azure-security-appgw-ssl-policy-tls12-terraform-plan
-        tags:
-          mondoo.com/filter-title: Terraform Plan
-          mondoo.com/filter-icon: terraform
-      - uid: mondoo-azure-security-appgw-ssl-policy-tls12-terraform-state
-        tags:
-          mondoo.com/filter-title: Terraform State
-          mondoo.com/filter-icon: terraform
-      - uid: mondoo-azure-security-appgw-ssl-policy-tls12-bicep
-        tags:
-          mondoo.com/filter-title: Bicep
-          mondoo.com/filter-icon: bicep
-    docs:
-      desc: |
-        This check verifies that an Application Gateway has an SSL policy pinning the protocol floor, either explicitly or through a modern predefined policy.
-
-        The setting lives under **SSL settings** at the gateway level in the portal and is written as `sslPolicy` on the gateway resource. The check passes when the policy sets `minProtocolVersion` to `TLSv1_2` or `TLSv1_3`, or when it selects a predefined policy from the `AppGwSslPolicy2022` family such as `AppGwSslPolicy20220101S`. A gateway with no SSL policy at all fails, because a newly created gateway may accept TLS 1.0 and 1.1 until a policy is set.
-
-        **Why this matters**
-
-        TLS 1.0 and 1.1 carry known weaknesses, including BEAST and POODLE, that let an observer compromise an encrypted session. Setting a floor of TLS 1.2 also denies a client or an intermediary the option of negotiating down to those versions, which removes the whole class of attack that depends on a downgrade.
-
-        The gateway terminates TLS for everything behind it, so this one setting governs the transport security of every listener and backend pool it fronts and removes the need to harden each origin service separately.
-
-        Newer protocol versions also bring stronger cipher suites and retire weak algorithms, and PCI DSS and comparable standards name TLS 1.2 as the minimum for protected communications.
-
-        Accepting a predefined policy is usually safer than assembling a custom one, since the `AppGwSslPolicy2022` policies pair a protocol floor with a curated cipher list and leave less room for a hand-built mistake.
-      audit: |
-        **Automated Audit with Azure CLI:**
-
-        ```bash
-        az network application-gateway list --query "[].{Name:name, SSLPolicy:sslPolicy}"
-        ```
-      remediation:
-        - id: portal
-          desc: |
-            To ensure Application Gateways enforce TLS 1.2 or higher using the Azure Portal:
-
-            1. Navigate to **Application gateways** in the Azure Portal.
-            2. Select the Application Gateway.
-            3. Under **Settings**, select **SSL settings** (gateway-level).
-            4. Set the **Minimum protocol version** to **TLSv1.2**.
-            5. Alternatively, select a predefined SSL policy such as **AppGwSslPolicy20220101S**.
-            6. Select **Save**.
-        - id: cli
-          desc: |
-            To ensure Application Gateways enforce TLS 1.2 or higher using the Azure CLI:
-
-            ```bash
-            az network application-gateway ssl-policy set --gateway-name <GatewayName> --resource-group <ResourceGroupName> --policy-type Custom --min-protocol-version TLSv1_2 --cipher-suites TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384 TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
-            ```
-
-            Or use a predefined policy that enforces TLS 1.2:
-
-            ```bash
-            az network application-gateway ssl-policy set --gateway-name <GatewayName> --resource-group <ResourceGroupName> --policy-type Predefined --name AppGwSslPolicy20220101S
-            ```
-        - id: terraform
-          desc: |
-            To ensure Application Gateways enforce TLS 1.2 or higher in Terraform:
-
-            ```hcl
-            resource "azurerm_application_gateway" "example" {
-              name                = "example-appgw"
-              resource_group_name = azurerm_resource_group.example.name
-              location            = azurerm_resource_group.example.location
-
-              ...
-
-              ssl_policy {
-                policy_type = "Predefined"
-                policy_name = "AppGwSslPolicy20220101S"
-              }
-
-              sku {
-                name     = "Standard_v2"
-                tier     = "Standard_v2"
-                capacity = 2
-              }
-
-              gateway_ip_configuration {
-                name      = "gateway-ip-config"
-                subnet_id = azurerm_subnet.example.id
-              }
-
-              frontend_ip_configuration {
-                name                 = "frontend-ip-config"
-                public_ip_address_id = azurerm_public_ip.example.id
-              }
-
-              frontend_port {
-                name = "https-port"
-                port = 443
-              }
-
-              backend_address_pool {
-                name = "backend-pool"
-              }
-
-              backend_http_settings {
-                name                  = "backend-https"
-                cookie_based_affinity = "Disabled"
-                port                  = 443
-                protocol              = "Https"
-                request_timeout       = 60
-              }
-
-              http_listener {
-                name                           = "https-listener"
-                frontend_ip_configuration_name = "frontend-ip-config"
-                frontend_port_name             = "https-port"
-                protocol                       = "Https"
-                ssl_certificate_name           = "example-cert"
-              }
-
-              request_routing_rule {
-                name                       = "https-rule"
-                rule_type                  = "Basic"
-                priority                   = 100
-                http_listener_name         = "https-listener"
-                backend_address_pool_name  = "backend-pool"
-                backend_http_settings_name = "backend-https"
-              }
-            }
-            ```
-        - id: bicep
-          desc: |
-            To ensure Application Gateways enforce TLS 1.2 or higher in Bicep:
-
-            ```bicep
-            resource appGateway 'Microsoft.Network/applicationGateways@2024-05-01' = {
-              name: 'example-appgw'
-              location: resourceGroup().location
-              properties: {
-                sslPolicy: {
-                  policyType: 'Predefined'
-                  policyName: 'AppGwSslPolicy20220101S'
-                }
-                // ...
-              }
-            }
-            ```
-    refs:
-      - url: https://learn.microsoft.com/en-us/azure/application-gateway/application-gateway-ssl-policy-overview
-        title: Application Gateway SSL policy overview
-  - uid: mondoo-azure-security-appgw-ssl-policy-tls12-azure
-    filters: asset.platform == "azure-application-gateway"
-    mql: |
-      azure.subscription.networkService.applicationGateway.properties["sslPolicy"] != null
-      azure.subscription.networkService.applicationGateway.properties["sslPolicy"]["minProtocolVersion"].in(
-        ["TLSv1_2", "TLSv1_3"]
-      ) ||
-      azure.subscription.networkService.applicationGateway.properties["sslPolicy"]["policyName"] == /AppGwSslPolicy2022/
-  - uid: mondoo-azure-security-appgw-ssl-policy-tls12-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_application_gateway")
-    mql: |
-      terraform.resources("azurerm_application_gateway").all(
-        blocks.where(type == "ssl_policy") != empty &&
-        blocks.where(type == "ssl_policy").all(
-          arguments['min_protocol_version'] == "TLSv1_2" ||
-          arguments['min_protocol_version'] == "TLSv1_3" ||
-          arguments['policy_name'] == /AppGwSslPolicy2022/
-        )
-      )
-  - uid: mondoo-azure-security-appgw-ssl-policy-tls12-terraform-plan
-    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_application_gateway")
-    mql: |
-      terraform.plan.resourceChanges.where(type == "azurerm_application_gateway").all(
-        change.after.ssl_policy != null &&
-        change.after.ssl_policy.any(
-          _['min_protocol_version'].in(["TLSv1_2", "TLSv1_3"]) ||
-          _['policy_name'] == /AppGwSslPolicy2022/
-        )
-      )
-  - uid: mondoo-azure-security-appgw-ssl-policy-tls12-terraform-state
-    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_application_gateway")
-    mql: |
-      terraform.state.resources.where(type == "azurerm_application_gateway").all(
-        values.ssl_policy != null &&
-        values.ssl_policy.any(
-          _['min_protocol_version'].in(["TLSv1_2", "TLSv1_3"]) ||
-          _['policy_name'] == /AppGwSslPolicy2022/
-        )
-      )
-  - uid: mondoo-azure-security-appgw-ssl-policy-tls12-bicep
-    filters: asset.platform == "bicep" && bicep.resources.any(type == "Microsoft.Network/applicationGateways")
-    mql: |
-      bicep.resources.where(type == "Microsoft.Network/applicationGateways").all(
-        properties["sslPolicy"]["minProtocolVersion"] == "TLSv1_2" ||
-        properties["sslPolicy"]["minProtocolVersion"] == "TLSv1_3" ||
-        properties["sslPolicy"]["policyName"] == /AppGwSslPolicy2022/
       )
   - uid: mondoo-azure-security-vpn-gateway-ikev2
     title: Ensure VPN gateways use route-based type for IKEv2 protocol support
@@ -26017,7 +25678,7 @@ queries:
     variants:
       - uid: mondoo-azure-security-appgw-min-tls-version-azure
         tags:
-          mondoo.com/filter-title: Azure Subscription
+          mondoo.com/filter-title: Azure Application Gateway
           mondoo.com/filter-icon: azure
       - uid: mondoo-azure-security-appgw-min-tls-version-terraform-hcl
         tags:
@@ -26037,9 +25698,9 @@ queries:
           mondoo.com/filter-icon: bicep
     docs:
       desc: |
-        This check verifies that the minimum protocol version negotiated by an Application Gateway is TLS 1.2 or later.
+        This check verifies that the minimum protocol version negotiated by an Application Gateway is TLS 1.2 or later, on the gateway itself and on every SSL profile its listeners can use.
 
-        The value appears as **Minimum protocol version** under **SSL settings** in the portal and is set with `--min-protocol-version` on `az network application-gateway ssl-policy set` or through `min_protocol_version` in the `ssl_policy` block. The check accepts `TLSv1_2` and `TLSv1_3`, and fails `TLSv1_0`, `TLSv1_1`, or an unset value.
+        The gateway-wide SSL policy appears under **SSL settings** in the portal and is set with `az network application-gateway ssl-policy set` or through the `ssl_policy` block. It passes when it sets a minimum protocol version of `TLSv1_2` or `TLSv1_3`, when it selects the predefined policy `AppGwSslPolicy20170401S`, `AppGwSslPolicy20220101`, or `AppGwSslPolicy20220101S`, or when it is left unset on a `Standard_v2` or `WAF_v2` gateway, because Azure then applies its default `AppGwSslPolicy20220101`. Microsoft documents that default for API version 2023-02-01 and later, and `AppGwSslPolicy20150501`, which allows TLS 1.0, for earlier API versions, so the Terraform and Bicep versions of this check require an explicit policy on any other SKU, and the Bicep version also requires an API version of 2023-02-01 or later before it accepts an unset policy. An SSL profile overrides the gateway policy for the listeners it is attached to, so each profile must meet the same floor. Azure rejects a gateway policy below TLS 1.2, but it still accepts an SSL profile with a minimum version of `TLSv1_1`.
 
         **Why this matters**
 
@@ -26049,16 +25710,16 @@ queries:
 
         The requirement is written into industry standards as well. PCI DSS names TLS 1.2 as the minimum for protected communications, and other baselines follow the same line.
 
-        This check reads the protocol floor alone. A companion check in this policy accepts a modern predefined policy such as `AppGwSslPolicy20220101S` that supplies the floor implicitly, and another covers the cipher suites the policy permits, so setting the minimum version is one part of the gateway transport hardening rather than the whole of it.
+        This check reads the protocol floor alone. A companion check covers the cipher suites the policies permit, so setting the minimum version is one part of the gateway transport hardening rather than the whole of it.
       audit: |
         ### Audit via Portal
 
         1. Navigate to **Application gateways** in the Azure Portal.
         2. Select the Application Gateway.
-        3. Under **Settings**, select **SSL settings**.
-        4. Review the **Minimum protocol version** field.
+        3. Under **Settings**, select **Listeners**, then **SSL settings**, and review the default SSL policy.
+        4. On the same page, open each SSL profile and review its SSL policy.
 
-        A passing resource shows a minimum protocol version of **TLSv1_2** or **TLSv1_3**. A failing resource shows **TLSv1_0**, **TLSv1_1**, or an unset minimum version.
+        A passing gateway shows a minimum protocol version of **TLSv1_2** or **TLSv1_3**, or one of the predefined policies `AppGwSslPolicy20170401S`, `AppGwSslPolicy20220101`, or `AppGwSslPolicy20220101S`, on the gateway and on every SSL profile. A gateway or profile allowing **TLSv1_0** or **TLSv1_1** fails.
 
         ### Audit via CLI
 
@@ -26068,10 +25729,10 @@ queries:
         az network application-gateway show \
           --resource-group <ResourceGroupName> \
           --name <GatewayName> \
-          --query "sslPolicy.minProtocolVersion" -o tsv
+          --query "{gateway:sslPolicy, default:defaultPredefinedSslPolicy, profiles:sslProfiles[].{name:name, policy:sslPolicy}}" -o json
         ```
 
-        A passing resource returns `TLSv1_2` or `TLSv1_3`. A failing resource returns `TLSv1_0`, `TLSv1_1`, or an empty value.
+        A passing gateway reports `TLSv1_2` or `TLSv1_3` as `minProtocolVersion`, or one of the predefined policies above as `policyName`, for the gateway and for every profile. A `null` gateway policy means the default policy shown in `default` applies. A `minProtocolVersion` of `TLSv1_0` or `TLSv1_1` fails.
       remediation:
         - id: portal
           desc: |
@@ -26080,14 +25741,21 @@ queries:
             1. Navigate to **Application gateways** in the Azure Portal.
             2. Select the Application Gateway.
             3. Under **Settings**, select **SSL settings**.
-            4. Set the **Minimum protocol version** to **TLSv1_2**.
+            4. Set the **Minimum protocol version** to **TLSv1_2**, or select the predefined policy **AppGwSslPolicy20220101S**.
             5. Select **Save**.
+            6. Repeat for each SSL profile listed on the same page.
         - id: cli
           desc: |
-            To ensure Application Gateway enforces TLS 1.2+ using the Azure CLI:
+            To ensure Application Gateway enforces TLS 1.2+ using the Azure CLI, set the gateway policy:
 
             ```bash
-            az network application-gateway ssl-policy set --gateway-name <GatewayName> --resource-group <ResourceGroupName> --min-protocol-version TLSv1_2 --policy-type Custom --cipher-suites TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384 TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+            az network application-gateway ssl-policy set --gateway-name <GatewayName> --resource-group <ResourceGroupName> --policy-type Predefined --name AppGwSslPolicy20220101S
+            ```
+
+            Then set the same policy on each SSL profile:
+
+            ```bash
+            az network application-gateway ssl-profile update --gateway-name <GatewayName> --resource-group <ResourceGroupName> --name <ProfileName> --policy-type Predefined --policy-name AppGwSslPolicy20220101S
             ```
         - id: terraform
           desc: |
@@ -26188,42 +25856,111 @@ queries:
   - uid: mondoo-azure-security-appgw-min-tls-version-azure
     filters: asset.platform == "azure-application-gateway"
     mql: |
-      azure.subscription.networkService.applicationGateway.sslMinProtocolVersion.in(
-        ["TLSv1_2", "TLSv1_3"]
+      strongPolicies = ["AppGwSslPolicy20170401S", "AppGwSslPolicy20220101", "AppGwSslPolicy20220101S"]
+      appGateway = azure.subscription.networkService.applicationGateway
+      appGateway.sslMinProtocolVersion.in(["TLSv1_2", "TLSv1_3"]) ||
+      appGateway.properties["sslPolicy"]["policyName"].in(strongPolicies) ||
+      appGateway.properties["sslPolicy"] == empty && appGateway.defaultPredefinedSslPolicy.in(strongPolicies)
+      appGateway.sslProfiles.all(
+        sslMinProtocolVersion.in(["TLSv1_2", "TLSv1_3"]) ||
+        sslPolicyName.in(strongPolicies) ||
+        sslPolicyType == empty && sslPolicyName == empty
       )
   - uid: mondoo-azure-security-appgw-min-tls-version-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_application_gateway")
     mql: |
       terraform.resources("azurerm_application_gateway").all(
-        blocks.where(type == "ssl_policy") != empty &&
+        blocks.where(type == "ssl_policy") != empty ||
+        blocks.where(type == "sku").any(arguments['name'] == "Standard_v2" || arguments['name'] == "WAF_v2")
+      )
+      terraform.resources("azurerm_application_gateway").all(
         blocks.where(type == "ssl_policy").all(
-          arguments['min_protocol_version'] == "TLSv1_2" || arguments['min_protocol_version'] == "TLSv1_3"
+          arguments['min_protocol_version'] == "TLSv1_2" || arguments['min_protocol_version'] == "TLSv1_3" ||
+          arguments['policy_name'] == "AppGwSslPolicy20170401S" ||
+          arguments['policy_name'] == "AppGwSslPolicy20220101" ||
+          arguments['policy_name'] == "AppGwSslPolicy20220101S"
+        ) &&
+        blocks.where(type == "ssl_profile").all(
+          blocks.where(type == "ssl_policy").all(
+            arguments['min_protocol_version'] == "TLSv1_2" || arguments['min_protocol_version'] == "TLSv1_3" ||
+            arguments['policy_name'] == "AppGwSslPolicy20170401S" ||
+            arguments['policy_name'] == "AppGwSslPolicy20220101" ||
+            arguments['policy_name'] == "AppGwSslPolicy20220101S"
+          )
         )
       )
   - uid: mondoo-azure-security-appgw-min-tls-version-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_application_gateway")
     mql: |
       terraform.plan.resourceChanges.where(type == "azurerm_application_gateway").all(
-        change.after['ssl_policy'] != empty &&
+        change.after['ssl_policy'] != empty ||
+        change.after['sku'].any(_['name'] == "Standard_v2" || _['name'] == "WAF_v2")
+      )
+      terraform.plan.resourceChanges.where(type == "azurerm_application_gateway").all(
         change.after['ssl_policy'].all(
-          _['min_protocol_version'] == "TLSv1_2" || _['min_protocol_version'] == "TLSv1_3"
+          _['min_protocol_version'] == "TLSv1_2" || _['min_protocol_version'] == "TLSv1_3" ||
+          _['policy_name'] == "AppGwSslPolicy20170401S" ||
+          _['policy_name'] == "AppGwSslPolicy20220101" ||
+          _['policy_name'] == "AppGwSslPolicy20220101S"
+        ) &&
+        change.after['ssl_profile'].all(
+          _['ssl_policy'].all(
+            _['min_protocol_version'] == "TLSv1_2" || _['min_protocol_version'] == "TLSv1_3" ||
+            _['policy_name'] == "AppGwSslPolicy20170401S" ||
+            _['policy_name'] == "AppGwSslPolicy20220101" ||
+            _['policy_name'] == "AppGwSslPolicy20220101S"
+          )
         )
       )
   - uid: mondoo-azure-security-appgw-min-tls-version-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_application_gateway")
     mql: |
       terraform.state.resources.where(type == "azurerm_application_gateway").all(
-        values['ssl_policy'] != empty &&
+        values['ssl_policy'] != empty ||
+        values['sku'].any(_['name'] == "Standard_v2" || _['name'] == "WAF_v2")
+      )
+      terraform.state.resources.where(type == "azurerm_application_gateway").all(
         values['ssl_policy'].all(
-          _['min_protocol_version'] == "TLSv1_2" || _['min_protocol_version'] == "TLSv1_3"
+          _['min_protocol_version'] == "TLSv1_2" || _['min_protocol_version'] == "TLSv1_3" ||
+          _['policy_name'] == "AppGwSslPolicy20170401S" ||
+          _['policy_name'] == "AppGwSslPolicy20220101" ||
+          _['policy_name'] == "AppGwSslPolicy20220101S"
+        ) &&
+        values['ssl_profile'].all(
+          _['ssl_policy'].all(
+            _['min_protocol_version'] == "TLSv1_2" || _['min_protocol_version'] == "TLSv1_3" ||
+            _['policy_name'] == "AppGwSslPolicy20170401S" ||
+            _['policy_name'] == "AppGwSslPolicy20220101" ||
+            _['policy_name'] == "AppGwSslPolicy20220101S"
+          )
         )
       )
   - uid: mondoo-azure-security-appgw-min-tls-version-bicep
     filters: asset.platform == "bicep" && bicep.resources.any(type == "Microsoft.Network/applicationGateways")
     mql: |
       bicep.resources.where(type == "Microsoft.Network/applicationGateways").all(
+        properties["sslPolicy"] != empty ||
+        properties["sku"]["name"] == "Standard_v2" && apiVersion >= "2023-02-01" ||
+        properties["sku"]["name"] == "WAF_v2" && apiVersion >= "2023-02-01"
+      )
+      bicep.resources.where(type == "Microsoft.Network/applicationGateways").all(
+        properties["sslPolicy"] == empty ||
         properties["sslPolicy"]["minProtocolVersion"] == "TLSv1_2" ||
-        properties["sslPolicy"]["minProtocolVersion"] == "TLSv1_3"
+        properties["sslPolicy"]["minProtocolVersion"] == "TLSv1_3" ||
+        properties["sslPolicy"]["policyName"] == "AppGwSslPolicy20170401S" ||
+        properties["sslPolicy"]["policyName"] == "AppGwSslPolicy20220101" ||
+        properties["sslPolicy"]["policyName"] == "AppGwSslPolicy20220101S"
+      )
+      bicep.resources.where(type == "Microsoft.Network/applicationGateways").all(
+        properties["sslProfiles"] == empty ||
+        properties["sslProfiles"].all(
+          _["properties"]["sslPolicy"] == empty ||
+          _["properties"]["sslPolicy"]["minProtocolVersion"] == "TLSv1_2" ||
+          _["properties"]["sslPolicy"]["minProtocolVersion"] == "TLSv1_3" ||
+          _["properties"]["sslPolicy"]["policyName"] == "AppGwSslPolicy20170401S" ||
+          _["properties"]["sslPolicy"]["policyName"] == "AppGwSslPolicy20220101" ||
+          _["properties"]["sslPolicy"]["policyName"] == "AppGwSslPolicy20220101S"
+        )
       )
   - uid: mondoo-azure-security-appgw-no-weak-ciphers
     title: Ensure Application Gateway has no weak SSL ciphers
@@ -26246,7 +25983,7 @@ queries:
     variants:
       - uid: mondoo-azure-security-appgw-no-weak-ciphers-azure
         tags:
-          mondoo.com/filter-title: Azure Subscription
+          mondoo.com/filter-title: Azure Application Gateway
           mondoo.com/filter-icon: azure
       - uid: mondoo-azure-security-appgw-no-weak-ciphers-terraform-hcl
         tags:
@@ -26278,7 +26015,7 @@ queries:
 
         PCI DSS and NIST guidance prohibit these suites outright, and a gateway offering them will fail an external scan however strong the rest of the configuration is.
 
-        Predefined policies such as `AppGwSslPolicy20220101` already exclude them and are usually a better starting point than a hand-written list. The Terraform and Bicep forms of this check can only assert that an `ssl_policy` is defined, because a template naming a predefined policy does not enumerate its suites; the resolved cipher list is readable only once the gateway exists.
+        Predefined policies such as `AppGwSslPolicy20220101` already exclude them and are usually a better starting point than a hand-written list. The check reads the cipher list of the gateway policy and of every SSL profile, since a profile overrides the gateway policy for the listeners it is attached to. A predefined policy names no suites of its own, so the check accepts it by name: `AppGwSslPolicy20170401`, `AppGwSslPolicy20170401S`, `AppGwSslPolicy20220101`, and `AppGwSslPolicy20220101S` exclude these families and pass, while `AppGwSslPolicy20150501` includes two `3DES` suites and fails. A custom policy with TLS 1.3 as its minimum version also lists no suites and passes, because every TLS 1.3 suite is strong. An unset policy passes only on a `Standard_v2` or `WAF_v2` gateway, where Azure applies its default `AppGwSslPolicy20220101` for API version 2023-02-01 and later; the Terraform and Bicep versions of this check require an explicit policy on any other SKU, and the Bicep version also requires that API version.
       audit: |
         ### Audit via Portal
 
@@ -26300,7 +26037,7 @@ queries:
           --query "sslPolicy" -o json
         ```
 
-        A passing resource returns an SSL policy with no `RC4`, `3DES`, `NULL`, or `EXPORT` entries in the `cipherSuites` list. A failing resource includes one or more of these weak cipher suite names.
+        Repeat with `--query "sslProfiles[].{name:name, policy:sslPolicy}"` for the SSL profiles. A passing gateway has no `RC4`, `3DES`, `NULL`, or `EXPORT` entries in any `cipherSuites` list. A failing gateway includes one or more of these weak cipher suite names in its own policy or in a profile.
       remediation:
         - id: portal
           desc: |
@@ -26429,31 +26166,113 @@ queries:
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_application_gateway")
     mql: |
       terraform.resources("azurerm_application_gateway").all(
-        blocks.where(type == "ssl_policy") != empty
+        blocks.where(type == "ssl_policy") != empty ||
+        blocks.where(type == "sku").any(arguments['name'] == "Standard_v2" || arguments['name'] == "WAF_v2")
+      )
+      terraform.resources("azurerm_application_gateway").all(
+        blocks.where(type == "ssl_policy").all(
+          arguments['cipher_suites'] != empty && arguments['cipher_suites'].none(_ == /RC4|3DES|NULL|EXPORT/) ||
+          arguments['cipher_suites'] == empty && arguments['min_protocol_version'] == "TLSv1_3" ||
+          arguments['cipher_suites'] == empty && arguments['policy_type'] != "Custom" && arguments['policy_type'] != "CustomV2" &&
+            arguments['policy_name'] == /^AppGwSslPolicy(20170401S?|20220101S?)$/
+        ) &&
+        blocks.where(type == "ssl_profile").all(
+          blocks.where(type == "ssl_policy").all(
+            arguments['cipher_suites'] != empty && arguments['cipher_suites'].none(_ == /RC4|3DES|NULL|EXPORT/) ||
+            arguments['cipher_suites'] == empty && arguments['min_protocol_version'] == "TLSv1_3" ||
+            arguments['cipher_suites'] == empty && arguments['policy_type'] != "Custom" && arguments['policy_type'] != "CustomV2" &&
+              arguments['policy_name'] == /^AppGwSslPolicy(20170401S?|20220101S?)$/
+          )
+        )
       )
   - uid: mondoo-azure-security-appgw-no-weak-ciphers-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_application_gateway")
     mql: |
       terraform.plan.resourceChanges.where(type == "azurerm_application_gateway").all(
-        change.after['ssl_policy'] != empty
+        change.after['ssl_policy'] != empty ||
+        change.after['sku'].any(_['name'] == "Standard_v2" || _['name'] == "WAF_v2")
+      )
+      terraform.plan.resourceChanges.where(type == "azurerm_application_gateway").all(
+        change.after['ssl_policy'].all(
+          _['cipher_suites'] != empty && _['cipher_suites'].none(_ == /RC4|3DES|NULL|EXPORT/) ||
+          _['cipher_suites'] == empty && _['min_protocol_version'] == "TLSv1_3" ||
+          _['cipher_suites'] == empty && _['policy_type'] != "Custom" && _['policy_type'] != "CustomV2" &&
+            _['policy_name'] == /^AppGwSslPolicy(20170401S?|20220101S?)$/
+        ) &&
+        change.after['ssl_profile'].all(
+          _['ssl_policy'].all(
+            _['cipher_suites'] != empty && _['cipher_suites'].none(_ == /RC4|3DES|NULL|EXPORT/) ||
+            _['cipher_suites'] == empty && _['min_protocol_version'] == "TLSv1_3" ||
+            _['cipher_suites'] == empty && _['policy_type'] != "Custom" && _['policy_type'] != "CustomV2" &&
+              _['policy_name'] == /^AppGwSslPolicy(20170401S?|20220101S?)$/
+          )
+        )
       )
   - uid: mondoo-azure-security-appgw-no-weak-ciphers-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_application_gateway")
     mql: |
       terraform.state.resources.where(type == "azurerm_application_gateway").all(
-        values['ssl_policy'] != empty
+        values['ssl_policy'] != empty ||
+        values['sku'].any(_['name'] == "Standard_v2" || _['name'] == "WAF_v2")
+      )
+      terraform.state.resources.where(type == "azurerm_application_gateway").all(
+        values['ssl_policy'].all(
+          _['cipher_suites'] != empty && _['cipher_suites'].none(_ == /RC4|3DES|NULL|EXPORT/) ||
+          _['cipher_suites'] == empty && _['min_protocol_version'] == "TLSv1_3" ||
+          _['cipher_suites'] == empty && _['policy_type'] != "Custom" && _['policy_type'] != "CustomV2" &&
+            _['policy_name'] == /^AppGwSslPolicy(20170401S?|20220101S?)$/
+        ) &&
+        values['ssl_profile'].all(
+          _['ssl_policy'].all(
+            _['cipher_suites'] != empty && _['cipher_suites'].none(_ == /RC4|3DES|NULL|EXPORT/) ||
+            _['cipher_suites'] == empty && _['min_protocol_version'] == "TLSv1_3" ||
+            _['cipher_suites'] == empty && _['policy_type'] != "Custom" && _['policy_type'] != "CustomV2" &&
+              _['policy_name'] == /^AppGwSslPolicy(20170401S?|20220101S?)$/
+          )
+        )
       )
   - uid: mondoo-azure-security-appgw-no-weak-ciphers-bicep
     filters: asset.platform == "bicep" && bicep.resources.any(type == "Microsoft.Network/applicationGateways")
     mql: |
       bicep.resources.where(type == "Microsoft.Network/applicationGateways").all(
-        properties["sslPolicy"] != empty
+        properties["sslPolicy"] != empty ||
+        properties["sku"]["name"] == "Standard_v2" && apiVersion >= "2023-02-01" ||
+        properties["sku"]["name"] == "WAF_v2" && apiVersion >= "2023-02-01"
+      )
+      bicep.resources.where(type == "Microsoft.Network/applicationGateways").all(
+        properties["sslPolicy"] == empty ||
+        properties["sslPolicy"]["cipherSuites"] != empty && properties["sslPolicy"]["cipherSuites"].none(_ == /RC4|3DES|NULL|EXPORT/) ||
+        properties["sslPolicy"]["cipherSuites"] == empty && properties["sslPolicy"]["minProtocolVersion"] == "TLSv1_3" ||
+        properties["sslPolicy"]["cipherSuites"] == empty && properties["sslPolicy"]["policyType"] != "Custom" && properties["sslPolicy"]["policyType"] != "CustomV2" &&
+          properties["sslPolicy"]["policyName"] == /^AppGwSslPolicy(20170401S?|20220101S?)$/
+      )
+      bicep.resources.where(type == "Microsoft.Network/applicationGateways").all(
+        properties["sslProfiles"] == empty ||
+        properties["sslProfiles"].all(
+          _["properties"]["sslPolicy"] == empty ||
+          _["properties"]["sslPolicy"]["cipherSuites"] != empty && _["properties"]["sslPolicy"]["cipherSuites"].none(_ == /RC4|3DES|NULL|EXPORT/) ||
+          _["properties"]["sslPolicy"]["cipherSuites"] == empty && _["properties"]["sslPolicy"]["minProtocolVersion"] == "TLSv1_3" ||
+          _["properties"]["sslPolicy"]["cipherSuites"] == empty && _["properties"]["sslPolicy"]["policyType"] != "Custom" && _["properties"]["sslPolicy"]["policyType"] != "CustomV2" &&
+            _["properties"]["sslPolicy"]["policyName"] == /^AppGwSslPolicy(20170401S?|20220101S?)$/
+        )
       )
   - uid: mondoo-azure-security-appgw-no-weak-ciphers-azure
     filters: asset.platform == "azure-application-gateway"
     mql: |
-      azure.subscription.networkService.applicationGateway.sslCipherSuites.none(
-        _ == /RC4|3DES|NULL|EXPORT/
+      appGateway = azure.subscription.networkService.applicationGateway
+      appGateway.sslCipherSuites.none(_ == /RC4|3DES|NULL|EXPORT/)
+      appGateway.sslCipherSuites != empty ||
+      appGateway.sslMinProtocolVersion == "TLSv1_3" ||
+      appGateway.properties["sslPolicy"]["policyName"] == /^AppGwSslPolicy(20170401S?|20220101S?)$/ ||
+      appGateway.properties["sslPolicy"] == empty && appGateway.defaultPredefinedSslPolicy == /^AppGwSslPolicy(20170401S?|20220101S?)$/
+      appGateway.sslProfiles.all(
+        sslCipherSuites.none(_ == /RC4|3DES|NULL|EXPORT/)
+      )
+      appGateway.sslProfiles.all(
+        sslCipherSuites != empty ||
+        sslMinProtocolVersion == "TLSv1_3" ||
+        sslPolicyName == /^AppGwSslPolicy(20170401S?|20220101S?)$/ ||
+        sslPolicyType == empty && sslPolicyName == empty
       )
   - uid: mondoo-azure-security-public-ip-ddos-protection
     title: Ensure public IP addresses have DDoS protection
@@ -26498,7 +26317,7 @@ queries:
       desc: |
         This check verifies that every internet-facing address in the subscription is covered by adaptive denial-of-service mitigation, either directly or through the virtual network it belongs to.
 
-        Azure provides only basic infrastructure-level DDoS protection by default; the Standard tier with its adaptive tuning, telemetry, and active mitigation must be enabled. This check accepts a protection mode of `Enabled` or `VirtualNetworkInherited` on the public IP, and fails on `Disabled` or an unset value. In the portal the field is DDoS protection under the address's Properties. From the CLI, `az network public-ip update --ddos-protection-mode Enabled --ddos-protection-plan` attaches it directly, while `az network vnet update --ddos-protection-plan --ddos-protection true` covers addresses that inherit from the network. In Terraform the argument is `ddos_protection_mode`; in Bicep it is `ddosSettings.protectionMode`.
+        Azure provides only basic infrastructure-level DDoS protection by default; the Standard tier with its adaptive tuning, telemetry, and active mitigation must be enabled. An address passes when its protection mode is `Enabled`, or when it inherits protection from its virtual network and a DDoS protection plan lists it among the addresses it protects. `VirtualNetworkInherited` is the default mode for every Standard public IP, so on its own it means nothing: an address that inherits from a virtual network without a plan has only the basic infrastructure protection and fails. In the portal the field is DDoS protection under the address's Properties. From the CLI, `az network public-ip update --ddos-protection-mode Enabled --ddos-protection-plan` attaches it directly, while `az network vnet update --ddos-protection-plan --ddos-protection true` covers addresses that inherit from the network. In Terraform the argument is `ddos_protection_mode`; in Bicep it is `ddosSettings.protectionMode`. A template does not record which virtual network an address will be attached to, so the Terraform and Bicep versions of this check accept an inherited address only when the template declares exactly one virtual network and that network has an enabled DDoS protection plan. A template with several virtual networks must set the mode to `Enabled` on each address to pass; the live check reads the addresses each plan actually protects.
 
         **Why this matters**
 
@@ -26517,7 +26336,7 @@ queries:
         3. Under **Settings**, select **Properties**.
         4. Review the **DDoS protection** field.
 
-        A passing resource shows DDoS protection set to **Enabled** or **VirtualNetworkInherited**. A failing resource shows **Disabled** or no DDoS protection configured.
+        A resource set to **Enabled** passes. A resource set to **VirtualNetworkInherited** passes only when its virtual network has a DDoS protection plan; open the virtual network and confirm **DDoS protection** under **Settings** names a plan. **Disabled** fails.
 
         ### Audit via CLI
 
@@ -26530,7 +26349,13 @@ queries:
           --query "ddosSettings.protectionMode" -o tsv
         ```
 
-        A passing resource returns `Enabled` or `VirtualNetworkInherited`. A failing resource returns `Disabled` or an empty value.
+        `Enabled` passes. For `VirtualNetworkInherited` or an empty value, list the addresses your DDoS protection plans cover:
+
+        ```bash
+        az network ddos-protection list --query "[].publicIPAddresses[].id" -o tsv
+        ```
+
+        An inherited address passes only when its resource ID appears in that list.
       remediation:
         - id: portal
           desc: |
@@ -26601,35 +26426,44 @@ queries:
     mql: |
       terraform.resources("azurerm_public_ip").all(
         arguments['ddos_protection_mode'] == "Enabled" ||
-        arguments['ddos_protection_mode'] == "VirtualNetworkInherited"
+        arguments['ddos_protection_mode'] != "Disabled" &&
+        terraform.resources("azurerm_virtual_network").length == 1 &&
+        terraform.resources("azurerm_virtual_network").all(blocks.any(type == "ddos_protection_plan" && arguments['enable'] != false))
       )
   - uid: mondoo-azure-security-public-ip-ddos-protection-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_public_ip")
     mql: |
       terraform.plan.resourceChanges.where(type == "azurerm_public_ip").all(
         change.after['ddos_protection_mode'] == "Enabled" ||
-        change.after['ddos_protection_mode'] == "VirtualNetworkInherited"
+        change.after['ddos_protection_mode'] == "VirtualNetworkInherited" &&
+        terraform.plan.resourceChanges.where(type == "azurerm_virtual_network").length == 1 &&
+        terraform.plan.resourceChanges.where(type == "azurerm_virtual_network").all(change.after['ddos_protection_plan'] != empty && change.after['ddos_protection_plan'].any(_['enable'] == true))
       )
   - uid: mondoo-azure-security-public-ip-ddos-protection-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_public_ip")
     mql: |
       terraform.state.resources.where(type == "azurerm_public_ip").all(
         values['ddos_protection_mode'] == "Enabled" ||
-        values['ddos_protection_mode'] == "VirtualNetworkInherited"
+        values['ddos_protection_mode'] == "VirtualNetworkInherited" &&
+        terraform.state.resources.where(type == "azurerm_virtual_network").length == 1 &&
+        terraform.state.resources.where(type == "azurerm_virtual_network").all(values['ddos_protection_plan'] != empty && values['ddos_protection_plan'].any(_['enable'] == true))
       )
   - uid: mondoo-azure-security-public-ip-ddos-protection-bicep
     filters: asset.platform == "bicep" && bicep.resources.any(type == "Microsoft.Network/publicIPAddresses")
     mql: |
       bicep.resources.where(type == "Microsoft.Network/publicIPAddresses").all(
         properties["ddosSettings"]["protectionMode"] == "Enabled" ||
-        properties["ddosSettings"]["protectionMode"] == "VirtualNetworkInherited"
+        properties["ddosSettings"]["protectionMode"] != "Disabled" &&
+        bicep.resources.where(type == "Microsoft.Network/virtualNetworks").length == 1 &&
+        bicep.resources.where(type == "Microsoft.Network/virtualNetworks").all(properties["enableDdosProtection"] == true)
       )
   - uid: mondoo-azure-security-public-ip-ddos-protection-azure
     filters: |
       asset.platform == "azure"
     mql: |
+      protectedIps = azure.subscription.network.ddosProtectionPlans.map(publicIpAddresses.map(id.downcase)).flat
       azure.subscription.network.publicIpAddresses.all(
-        ddosProtectionMode == "Enabled" || ddosProtectionMode == "VirtualNetworkInherited"
+        ddosProtectionMode == "Enabled" || id.downcase.in(protectedIps)
       )
   - uid: mondoo-azure-security-nsg-no-unrestricted-egress
     title: Ensure NSG rules do not allow unrestricted egress
@@ -37152,7 +36986,7 @@ queries:
     mql: |
       // The AFD origin API constrains httpPort to 1-65535, so a port of 0 is not
       // configurable; encrypted traffic to origins is enforced on the route.
-      azure.subscription.frontDoor.profiles.all(
+      azure.subscription.frontDoor.profiles.where(kind == "frontdoor").all(
         endpoints.all(routes.all(forwardingProtocol == "HttpsOnly"))
       )
   - uid: mondoo-azure-security-frontdoor-origin-https-terraform-hcl
@@ -43599,7 +43433,7 @@ queries:
       desc: |
         This check verifies that the web application firewall in front of an Application Gateway blocks matching requests rather than logging them, and that its managed rules are still enforcing.
 
-        A WAF policy is attached from **Web Application Firewall** under **Settings** on the gateway, which must use the `WAF_v2` SKU, and its mode is set in **Policy settings** on the policy itself, as `mode` in the `policy_settings` block or `policySettings.mode` in ARM and Bicep. The check requires `Prevention`. Without a policy the gateway forwards everything to its backends uninspected, and an attached policy commonly defaults to `Detection`.
+        A WAF policy is attached from **Web Application Firewall** under **Settings** on the gateway, which must use the `WAF_v2` SKU, and its mode is set in **Policy settings** on the policy itself, as `mode` in the `policy_settings` block or `policySettings.mode` in ARM and Bicep. The check requires `Prevention` on a policy whose state is enabled, since a disabled policy in Prevention mode inspects nothing. Without a policy the gateway forwards everything to its backends uninspected, and an attached policy commonly defaults to `Detection`.
 
         Prevention mode alone is not proof of protection. A managed rule set can report a current version while individual rules inside it are neutralized by a rule group override: an override that lists no rules disables the entire group, and a per-rule override can downgrade a rule's action from Block to `Log`, so the rule still matches and records but no longer blocks, or to `Allow`, so a matching request is let through without the remaining rules inspecting it. Any of these changes leaves the policy reporting Prevention mode while a whole attack class passes through, so the check also requires that no managed rule group is wholesale-disabled and no rule action has been overridden to `Log` or `Allow`.
 
@@ -43795,7 +43629,8 @@ queries:
       asset.platform == "azure-application-gateway"
     mql: |
       azure.subscription.networkService.applicationGateway.policy != empty &&
-      azure.subscription.networkService.applicationGateway.policy.mode == "Prevention"
+      azure.subscription.networkService.applicationGateway.policy.mode == "Prevention" &&
+      azure.subscription.networkService.applicationGateway.policy.enabled == true
       azure.subscription.networkService.applicationGateway.policy == empty ||
       azure.subscription.networkService.applicationGateway.policy.managedRules.all(
         ruleGroupOverrides.none(disablesEntireGroup)
@@ -43808,19 +43643,21 @@ queries:
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_web_application_firewall_policy")
     mql: |
       terraform.resources("azurerm_web_application_firewall_policy").all(
-        blocks.where(type == "policy_settings").where(arguments['mode'] == "Prevention") != empty
+        blocks.where(type == "policy_settings").where(arguments['mode'] == "Prevention" && arguments['enabled'] != false) != empty
       )
   - uid: mondoo-azure-security-appgw-waf-prevention-mode-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_web_application_firewall_policy")
     mql: |
       terraform.plan.resourceChanges.where(type == "azurerm_web_application_firewall_policy").all(
-        change.after['policy_settings'][0]['mode'] == "Prevention"
+        change.after['policy_settings'][0]['mode'] == "Prevention" &&
+        change.after['policy_settings'][0]['enabled'] != false
       )
   - uid: mondoo-azure-security-appgw-waf-prevention-mode-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_web_application_firewall_policy")
     mql: |
       terraform.state.resources.where(type == "azurerm_web_application_firewall_policy").all(
-        values['policy_settings'][0]['mode'] == "Prevention"
+        values['policy_settings'][0]['mode'] == "Prevention" &&
+        values['policy_settings'][0]['enabled'] != false
       )
   - uid: mondoo-azure-security-appgw-waf-prevention-mode-bicep
     filters: asset.platform == "bicep" && bicep.resources.any(type == "Microsoft.Network/ApplicationGatewayWebApplicationFirewallPolicies")
@@ -43828,7 +43665,8 @@ queries:
       bicep.resources
         .where(type == "Microsoft.Network/ApplicationGatewayWebApplicationFirewallPolicies")
         .all(
-          properties["policySettings"]["mode"] == "Prevention"
+          properties["policySettings"]["mode"] == "Prevention" &&
+          properties["policySettings"]["state"] != "Disabled"
         )
   # Terraform variant limitation: the Terraform checks assert that at least one azurerm_cdn_frontdoor_security_policy is defined, but static IaC cannot bind a security policy to a specific profile. A configuration with multiple profiles where only some have a WAF attached can still pass; the runtime check evaluates each profile individually.
   - uid: mondoo-azure-security-frontdoor-waf-policy-attached
@@ -43852,7 +43690,7 @@ queries:
     variants:
       - uid: mondoo-azure-security-frontdoor-waf-policy-attached-azure
         tags:
-          mondoo.com/filter-title: Azure Front Door
+          mondoo.com/filter-title: Azure Subscription
           mondoo.com/filter-icon: azure
       - uid: mondoo-azure-security-frontdoor-waf-policy-attached-terraform-hcl
         tags:
@@ -44031,7 +43869,7 @@ queries:
     filters: |
       asset.platform == "azure"
     mql: |
-      azure.subscription.frontDoor.profiles.all(
+      azure.subscription.frontDoor.profiles.where(kind == "frontdoor").all(
         securityPolicies.where(policyType == "WebApplicationFirewall" && wafPolicy != empty).length > 0
       )
   - uid: mondoo-azure-security-frontdoor-waf-policy-attached-terraform-hcl
@@ -47359,7 +47197,7 @@ queries:
     variants:
       - uid: mondoo-azure-security-network-security-perimeter-enforced-azure
         tags:
-          mondoo.com/filter-title: Azure Network
+          mondoo.com/filter-title: Azure Subscription
           mondoo.com/filter-icon: azure
       - uid: mondoo-azure-security-network-security-perimeter-enforced-terraform-hcl
         tags:
@@ -47410,7 +47248,7 @@ queries:
         az network perimeter association list \
           --perimeter-name <perimeter-name> \
           --resource-group <resource-group> \
-          --query '[].{Name:name,AccessMode:properties.accessMode}' \
+          --query '[].{Name:name,AccessMode:accessMode}' \
           --output table
         ```
 
@@ -51601,10 +51439,10 @@ queries:
         ### Audit via Azure CLI
 
         ```bash
-        az network application-gateway http-settings list --gateway-name <GatewayName> --resource-group <ResourceGroupName> --query "[].{Name:name, Protocol:protocol, TrustedRootCerts:trustedRootCertificates}" -o table
+        az network application-gateway http-settings list --gateway-name <GatewayName> --resource-group <ResourceGroupName> --query "[].{Name:name, Protocol:protocol, ValidateCertChainAndExpiry:validateCertChainAndExpiry}" -o table
         ```
 
-        A passing gateway does not disable certificate chain and expiry validation on any backend setting.
+        A passing gateway reports `True`, or no value, for `ValidateCertChainAndExpiry` on every `Https` backend setting. `False` fails.
       remediation:
         - id: portal
           desc: |
@@ -52393,7 +52231,7 @@ queries:
       desc: |
         This check verifies that no allow rule on an Azure Firewall permits every source to reach every destination.
 
-        Network rules live in rule collections inside a firewall policy, reachable from **Network rules** on the policy, and each rule names source and destination addresses. The check fails a rule whose action is `Allow` and whose source and destination both contain `*`, the wildcard that matches every address.
+        Network rules live in rule collections inside a firewall policy, reachable from **Network rules** on the policy, and each rule names source and destination addresses. The check fails an `Allow` rule whose source and destination both match every address. An address list matches every address when any entry is `*`, `0.0.0.0/0`, `::/0`, or `Any`, and an IP group does when its addresses include one of those. An application rule fails when it admits any source to the bare wildcard FQDN `*`. The check covers rule collections in the attached firewall policy and classic rules defined on the firewall itself. The Terraform and Bicep versions read address lists only, because an IP group is referenced by an ID the template does not resolve.
 
         **Why this matters**
 
@@ -52505,10 +52343,36 @@ queries:
     filters: |
       asset.platform == "azure-firewall"
     mql: |
+      anyIpGroups = azure.subscription.networkService.ipGroups.where(ipAddresses.any(_ == /^(\*|0\.0\.0\.0\/0|::\/0|any)$/i)).map(id.downcase)
       azure.subscription.networkService.firewall.networkRules.where(action == "Allow").all(
-        rules.none(
-          _['sourceAddresses'] != empty && _['sourceAddresses'].contains("*") &&
-          _['destinationAddresses'] != empty && _['destinationAddresses'].contains("*")
+        rules.where(
+          _['sourceAddresses'] != empty && _['sourceAddresses'].any(_ == /^(\*|0\.0\.0\.0\/0|::\/0|any)$/i) ||
+          _['sourceIpGroups'] != empty && _['sourceIpGroups'].any(downcase.in(anyIpGroups))
+        ).none(
+          _['destinationAddresses'] != empty && _['destinationAddresses'].any(_ == /^(\*|0\.0\.0\.0\/0|::\/0|any)$/i) ||
+          _['destinationIpGroups'] != empty && _['destinationIpGroups'].any(downcase.in(anyIpGroups))
+        )
+      )
+      azure.subscription.networkService.firewall.applicationRules.where(action == "Allow").all(
+        rules.where(
+          _['sourceAddresses'] != empty && _['sourceAddresses'].any(_ == /^(\*|0\.0\.0\.0\/0|::\/0|any)$/i) ||
+          _['sourceIpGroups'] != empty && _['sourceIpGroups'].any(downcase.in(anyIpGroups))
+        ).none(
+          _['targetFqdns'] != empty && _['targetFqdns'].any(_ == /^\*$/)
+        )
+      )
+      azure.subscription.networkService.firewall.policy == empty ||
+      azure.subscription.networkService.firewall.policy.ruleCollectionGroups.all(
+        ruleCollections.where(_["ruleCollectionType"] == "FirewallPolicyFilterRuleCollection" && _["action"]["type"] == "Allow").all(
+          _["rules"] == empty ||
+          _["rules"].where(
+            _["sourceAddresses"] != empty && _["sourceAddresses"].any(_ == /^(\*|0\.0\.0\.0\/0|::\/0|any)$/i) ||
+            _["sourceIpGroups"] != empty && _["sourceIpGroups"].any(downcase.in(anyIpGroups))
+          ).none(
+            _["destinationAddresses"] != empty && _["destinationAddresses"].any(_ == /^(\*|0\.0\.0\.0\/0|::\/0|any)$/i) ||
+            _["destinationIpGroups"] != empty && _["destinationIpGroups"].any(downcase.in(anyIpGroups)) ||
+            _["ruleType"] == "ApplicationRule" && _["targetFqdns"] != empty && _["targetFqdns"].any(_ == /^\*$/)
+          )
         )
       )
   - uid: mondoo-azure-security-firewall-no-any-any-allow-rule-terraform-hcl
@@ -52516,12 +52380,17 @@ queries:
       asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_firewall_policy_rule_collection_group")
     mql: |
       terraform.resources("azurerm_firewall_policy_rule_collection_group").all(
-        blocks.where(type == "network_rule_collection").where(arguments['action'] == "Allow").all(
-          blocks.where(type == "rule").all(
-            arguments['source_addresses'] == empty ||
-            arguments['source_addresses'].none(_ == "*") ||
-            arguments['destination_addresses'] == empty ||
-            arguments['destination_addresses'].none(_ == "*")
+        blocks.where(type == "network_rule_collection" && arguments['action'] == "Allow").all(
+          blocks.where(type == "rule" && arguments['source_addresses'] != empty && arguments['source_addresses'].any(_ == /^(\*|0\.0\.0\.0\/0|::\/0|any)$/i)).none(
+            arguments['destination_addresses'] != empty && arguments['destination_addresses'].any(_ == /^(\*|0\.0\.0\.0\/0|::\/0|any)$/i)
+          )
+        )
+      )
+      terraform.resources("azurerm_firewall_policy_rule_collection_group").all(
+        blocks.where(type == "application_rule_collection" && arguments['action'] == "Allow").all(
+          blocks.where(type == "rule" && arguments['source_addresses'] != empty && arguments['source_addresses'].any(_ == /^(\*|0\.0\.0\.0\/0|::\/0|any)$/i)).none(
+            arguments['destination_fqdns'] != empty && arguments['destination_fqdns'].any(_ == /^\*$/) ||
+            arguments['destination_addresses'] != empty && arguments['destination_addresses'].any(_ == /^(\*|0\.0\.0\.0\/0|::\/0|any)$/i)
           )
         )
       )
@@ -52530,14 +52399,21 @@ queries:
       asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_firewall_policy_rule_collection_group")
     mql: |
       terraform.plan.resourceChanges.where(type == "azurerm_firewall_policy_rule_collection_group").all(
-        change.after['network_rule_collection'] == null ||
         change.after['network_rule_collection'] == empty ||
         change.after['network_rule_collection'].where(_['action'] == "Allow").all(
-          _['rule'] == null ||
           _['rule'] == empty ||
-          _['rule'].none(
-            _['source_addresses'] != empty && _['source_addresses'].contains("*") &&
-            _['destination_addresses'] != empty && _['destination_addresses'].contains("*")
+          _['rule'].where(_['source_addresses'] != empty && _['source_addresses'].any(_ == /^(\*|0\.0\.0\.0\/0|::\/0|any)$/i)).none(
+            _['destination_addresses'] != empty && _['destination_addresses'].any(_ == /^(\*|0\.0\.0\.0\/0|::\/0|any)$/i)
+          )
+        )
+      )
+      terraform.plan.resourceChanges.where(type == "azurerm_firewall_policy_rule_collection_group").all(
+        change.after['application_rule_collection'] == empty ||
+        change.after['application_rule_collection'].where(_['action'] == "Allow").all(
+          _['rule'] == empty ||
+          _['rule'].where(_['source_addresses'] != empty && _['source_addresses'].any(_ == /^(\*|0\.0\.0\.0\/0|::\/0|any)$/i)).none(
+            _['destination_fqdns'] != empty && _['destination_fqdns'].any(_ == /^\*$/) ||
+            _['destination_addresses'] != empty && _['destination_addresses'].any(_ == /^(\*|0\.0\.0\.0\/0|::\/0|any)$/i)
           )
         )
       )
@@ -52546,14 +52422,21 @@ queries:
       asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_firewall_policy_rule_collection_group")
     mql: |
       terraform.state.resources.where(type == "azurerm_firewall_policy_rule_collection_group").all(
-        values['network_rule_collection'] == null ||
         values['network_rule_collection'] == empty ||
         values['network_rule_collection'].where(_['action'] == "Allow").all(
-          _['rule'] == null ||
           _['rule'] == empty ||
-          _['rule'].none(
-            _['source_addresses'] != empty && _['source_addresses'].contains("*") &&
-            _['destination_addresses'] != empty && _['destination_addresses'].contains("*")
+          _['rule'].where(_['source_addresses'] != empty && _['source_addresses'].any(_ == /^(\*|0\.0\.0\.0\/0|::\/0|any)$/i)).none(
+            _['destination_addresses'] != empty && _['destination_addresses'].any(_ == /^(\*|0\.0\.0\.0\/0|::\/0|any)$/i)
+          )
+        )
+      )
+      terraform.state.resources.where(type == "azurerm_firewall_policy_rule_collection_group").all(
+        values['application_rule_collection'] == empty ||
+        values['application_rule_collection'].where(_['action'] == "Allow").all(
+          _['rule'] == empty ||
+          _['rule'].where(_['source_addresses'] != empty && _['source_addresses'].any(_ == /^(\*|0\.0\.0\.0\/0|::\/0|any)$/i)).none(
+            _['destination_fqdns'] != empty && _['destination_fqdns'].any(_ == /^\*$/) ||
+            _['destination_addresses'] != empty && _['destination_addresses'].any(_ == /^(\*|0\.0\.0\.0\/0|::\/0|any)$/i)
           )
         )
       )
@@ -52565,9 +52448,9 @@ queries:
         properties["ruleCollections"] == empty ||
         properties["ruleCollections"].where(_["action"]["type"] == "Allow").all(
           _["rules"] == empty ||
-          _["rules"].none(
-            _["sourceAddresses"] != empty && _["sourceAddresses"].contains("*") &&
-            _["destinationAddresses"] != empty && _["destinationAddresses"].contains("*")
+          _["rules"].where(_["sourceAddresses"] != empty && _["sourceAddresses"].any(_ == /^(\*|0\.0\.0\.0\/0|::\/0|any)$/i)).none(
+            _["destinationAddresses"] != empty && _["destinationAddresses"].any(_ == /^(\*|0\.0\.0\.0\/0|::\/0|any)$/i) ||
+            _["targetFqdns"] != empty && _["targetFqdns"].any(_ == /^\*$/)
           )
         )
       )
@@ -52727,6 +52610,13 @@ queries:
     mql: |
       azure.subscription.networkService.firewall.natRules.all(
         rules.none(_['translatedPort'] == "22" || _['translatedPort'] == "3389")
+      )
+      azure.subscription.networkService.firewall.policy == empty ||
+      azure.subscription.networkService.firewall.policy.ruleCollectionGroups.all(
+        ruleCollections.where(_["ruleCollectionType"] == "FirewallPolicyNatRuleCollection").all(
+          _["rules"] == empty ||
+          _["rules"].none(_["translatedPort"] == "22" || _["translatedPort"] == "3389")
+        )
       )
   - uid: mondoo-azure-security-firewall-no-dnat-management-ports-terraform-hcl
     filters: |
@@ -55206,7 +55096,7 @@ queries:
       desc: |
         This check verifies that traffic crossing a virtual network peering is encrypted on the wire, so internal flows are not carried in plaintext across shared infrastructure.
 
-        Virtual network encryption applies AES to packets moving between peered networks over the Azure backbone. It has to be enabled on both networks, which is why the check reads the encryption state of the peering rather than only the local setting. In the portal it is enabled under the virtual network's Encryption settings, with enforcement set to drop unencrypted traffic, and the same must be repeated on the peered network. From the CLI it is `az network vnet update --enable-encryption true --encryption-enforcement-policy dropUnencrypted`. In Terraform the virtual network carries an `encryption` block with `enforcement` set to `DropUnencrypted`; in Bicep the properties are `encryption.enabled` and `encryption.enforcement`.
+        Virtual network encryption applies AES to packets moving between peered networks over the Azure backbone. It has to be enabled on both networks, which is why the check requires encryption on the local network and reads the remote network's encryption state from each peering. In the portal it is enabled under the virtual network's Encryption settings, with enforcement set to drop unencrypted traffic, and the same must be repeated on the peered network. From the CLI it is `az network vnet update --enable-encryption true --encryption-enforcement-policy dropUnencrypted`. In Terraform the virtual network carries an `encryption` block with `enforcement` set to `DropUnencrypted`; in Bicep the properties are `encryption.enabled` and `encryption.enforcement`.
 
         **Why this matters**
 
@@ -55228,7 +55118,7 @@ queries:
         ### Audit via Azure CLI
 
         ```bash
-        az network vnet peering list --vnet-name <VNetName> --resource-group <ResourceGroupName> --query "[].{Name:name, Encryption:remoteVirtualNetworkEncryption}" -o table
+        az network vnet peering list --vnet-name <VNetName> --resource-group <ResourceGroupName> --query "[].{Name:name, Encryption:remoteVirtualNetworkEncryption.enabled}" -o table
         ```
 
         A passing network reports encryption as enabled for every peering.
@@ -55298,9 +55188,9 @@ queries:
     filters: |
       asset.platform == "azure-virtual-network"
     mql: |
-      azure.subscription.network.virtualNetwork.peerings.all(
-        remoteVirtualNetworkEncryptionEnabled == true
-      )
+      vnetPeerings = azure.subscription.network.virtualNetwork.peerings
+      vnetPeerings == empty || azure.subscription.network.virtualNetwork.encryptionEnabled == true
+      vnetPeerings.all(remoteVirtualNetworkEncryptionEnabled == true)
   - uid: mondoo-azure-security-network-peering-encryption-enabled-terraform-hcl
     filters: |
       asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_virtual_network")
