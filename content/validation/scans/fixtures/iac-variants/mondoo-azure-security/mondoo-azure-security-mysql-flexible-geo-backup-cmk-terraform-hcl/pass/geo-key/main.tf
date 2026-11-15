@@ -6,6 +6,8 @@ resource "azurerm_mysql_flexible_server" "srv" {
   administrator_password = "H@Sh1CoR3!"
   sku_name               = "GP_Standard_D2ds_v4"
 
+  geo_redundant_backup_enabled = true
+
   identity {
     type         = "UserAssigned"
     identity_ids = ["/subscriptions/000/resourceGroups/rg/providers/Microsoft.ManagedIdentity/userAssignedIdentities/uai"]
