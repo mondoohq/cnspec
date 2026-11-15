@@ -14,7 +14,7 @@ policies:
     authors:
       - name: Mondoo, Inc.
         email: hello@mondoo.com
-    summary: Secure DigitalOcean Droplets, Databases, Load Balancers, DOKS, Spaces, Functions, GenAI, and App Platform
+    summary: Secure DigitalOcean Droplets, Databases, Load Balancers, DOKS, Spaces, Functions, and GenAI
     docs:
       desc: |
         The Mondoo DigitalOcean Security policy identifies critical misconfigurations that could leave your DigitalOcean cloud infrastructure vulnerable to attackers. This policy focuses on security-relevant controls and helps organizations harden against unauthorized access, data exposure, weak cryptography, credential misuse, and exposure to known CVEs through end-of-life software.
@@ -24,7 +24,6 @@ policies:
         - Account identity
         - SSH keys
         - Droplets (virtual machines)
-        - Custom images and snapshots
         - Cloud Firewalls
         - Managed Databases
         - Load Balancers
@@ -32,7 +31,6 @@ policies:
         - TLS Certificates
         - Content Delivery Network (CDN)
         - Spaces (object storage) buckets and access keys
-        - App Platform
         - Functions (serverless)
         - Security scanning
         - GenAI (GradientAI) agents, knowledge bases, and dedicated inference endpoints
@@ -53,9 +51,6 @@ policies:
           - uid: mondoo-digitalocean-security-droplet-in-vpc
           - uid: mondoo-digitalocean-security-droplet-firewall-coverage
           - uid: mondoo-digitalocean-security-droplet-not-internet-reachable
-      - title: Images
-        checks:
-          - uid: mondoo-digitalocean-security-image-not-public
       - title: Cloud Firewalls
         checks:
           - uid: mondoo-digitalocean-security-firewall-no-unrestricted-ssh
@@ -69,7 +64,6 @@ policies:
           - uid: mondoo-digitalocean-security-db-not-internet-reachable
           - uid: mondoo-digitalocean-security-db-engine-supported-version
           - uid: mondoo-digitalocean-security-db-ca-certificate-not-expired
-          - uid: mondoo-digitalocean-security-db-connection-ssl-enabled
       - title: Load Balancers
         checks:
           - uid: mondoo-digitalocean-security-lb-http-redirected-to-https
@@ -101,9 +95,6 @@ policies:
           - uid: mondoo-digitalocean-security-spaces-bucket-policy-not-public
           - uid: mondoo-digitalocean-security-spaces-bucket-versioning-enabled
           - uid: mondoo-digitalocean-security-spaces-bucket-cors-no-wildcard-origin
-      - title: App Platform
-        checks:
-          - uid: mondoo-digitalocean-security-app-platform-https
       - title: Functions
         checks:
           - uid: mondoo-digitalocean-security-function-requires-api-key
@@ -198,8 +189,12 @@ queries:
     refs:
       - url: https://docs.digitalocean.com/platform/accounts/settings/
         title: DigitalOcean account settings
+  # No Terraform state variant: after apply, digitalocean_droplet.vpc_uuid always holds a VPC
+  # ID, the default VPC's when the configuration sets none, and state does not record whether
+  # that VPC is the default. The HCL and plan variants fail when the argument is left out at
+  # creation, which is when the default VPC is assigned.
   - uid: mondoo-digitalocean-security-droplet-in-vpc
-    title: Ensure Droplets are deployed inside a VPC
+    title: Ensure Droplets are not deployed in the default VPC
     impact: 70
     tags:
       compliance/bsi-sys-1-5: false
@@ -229,59 +224,57 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform Plan
           mondoo.com/filter-icon: terraform
-      - uid: mondoo-digitalocean-security-droplet-in-vpc-terraform-state
-        tags:
-          mondoo.com/filter-title: Terraform State
-          mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check verifies that every Droplet is placed inside a VPC private network.
+        This check verifies that every Droplet is attached to a VPC network the account created, not to the default VPC of its region.
 
-        A DigitalOcean VPC is a private network boundary that contains traffic between the resources attached to it. Unless a VPC is selected at creation time, a Droplet is left outside any named VPC with only public-facing network interfaces. The network is chosen in the VPC Network step of the create flow and recorded as the Droplet's VPC UUID.
+        Every Droplet is placed in a VPC. When none is selected at creation, DigitalOcean places it in the region's default VPC, which it creates automatically and which also receives every other Droplet, managed database, load balancer, and Kubernetes cluster created in that region without an explicit network choice. The network is chosen in the VPC Network step of the create flow and recorded as the Droplet's VPC UUID.
 
         **Why this matters**
 
-        Without VPC membership, every connection a Droplet makes to another resource in the account leaves through a public interface. Traffic that should never be routable from outside is instead carried on addresses anyone can reach, which lengthens the path and widens the set of hosts that can observe or reach it.
+        The default VPC is a flat network shared by unrelated workloads. Resources in the same VPC reach each other on private addresses, and Cloud Firewalls do not apply to managed databases or load balancers, so a Droplet in the default VPC can reach every private endpoint in the region that did not opt out, regardless of which application it belongs to.
 
-        VPC membership is also what contains a compromise. A Droplet outside a VPC has broader network reach across the account, so an attacker who lands on it can survey and attack far more than an attacker on a segmented host. Membership additionally enables private-IP communication between Droplets, managed databases, and load balancers, removing the need to expose those services on public addresses at all.
+        A dedicated VPC per application or environment is what contains a compromise. An attacker who lands on a Droplet in a segmented VPC can reach only the resources deliberately placed beside it, while one on the default VPC can survey and attack everything else that ended up there by default.
 
-        This is defense in depth alongside the Cloud Firewall and any host firewall rules, so a misconfiguration in one layer does not immediately expose the resource. Because a Droplet's network cannot be changed after creation, a Droplet outside a VPC must be rebuilt or replaced inside one.
+        This is defense in depth alongside Cloud Firewalls and host firewall rules. Because a Droplet's VPC cannot be changed after creation, a Droplet in the default VPC must be replaced by one created in the dedicated VPC.
       audit: |
         ### Audit via Console
 
         1. Sign in to the DigitalOcean [Cloud Control Panel](https://cloud.digitalocean.com/).
-        2. Navigate to **Droplets** and open each Droplet.
-        3. Select the **Networking** tab and check the **VPC** field.
+        2. Navigate to **Networking** > **VPC** and note which VPC in each region is marked as the default.
+        3. Navigate to **Droplets**, open each Droplet, and check the **VPC** field on its **Networking** tab.
 
-        A passing Droplet shows a named VPC under the Networking tab. A failing Droplet shows no VPC or lists only the legacy default network.
+        A passing Droplet is in a VPC that is not marked as the default. A failing Droplet is in its region's default VPC.
 
         ### Audit via CLI
 
-        1. List all Droplets and note any that lack a VPC UUID:
+        1. List the VPCs with their `Default` flag, then the VPC UUID of each Droplet:
 
         ```bash
+        doctl vpcs list --format ID,Name,Region,Default
         doctl compute droplet list --format ID,Name,VPCUUID,Region
         ```
 
-        A passing Droplet returns a non-empty `VPCUUID`. A failing Droplet returns an empty `VPCUUID` field.
+        A passing Droplet's `VPCUUID` is the `ID` of a VPC whose `Default` is `false`. A failing Droplet's `VPCUUID` is the `ID` of a VPC whose `Default` is `true`.
       remediation:
         - id: console
           desc: |
-            **This fix replaces the Droplet.** DigitalOcean does not support moving an existing Droplet into a VPC, so plan for downtime and treat the change as a migration rather than an in-place edit.
+            **This fix replaces the Droplet.** DigitalOcean does not support moving an existing Droplet to another VPC, so plan for downtime and treat the change as a migration rather than an in-place edit.
 
-            To fix this in the DigitalOcean Cloud Control Panel, create a snapshot of the Droplet, create a replacement Droplet from the snapshot inside the target VPC, and retire the original:
+            To fix this in the DigitalOcean Cloud Control Panel, create a snapshot of the Droplet, create a replacement Droplet from the snapshot inside a dedicated VPC, and retire the original:
 
-            1. Power down the Droplet before snapshotting so the disk is in a consistent state. A snapshot of a running Droplet can capture an incomplete filesystem.
-            2. Navigate to **Images** > **Snapshots** and take a snapshot of the affected Droplet.
-            3. Create a new Droplet from the snapshot and select a VPC, not the default, in the **VPC Network** section.
-            4. Update DNS, firewall rules, and monitoring to point at the new Droplet. The replacement Droplet receives a new public IP address, so anything that references the old IP must be updated.
-            5. Verify the replacement is serving traffic before retiring the original.
-            6. Destroy the original Droplet only after the replacement is confirmed healthy.
+            1. If the region has no VPC other than the default, navigate to **Networking** > **VPC**, click **Create VPC Network**, and create one in the Droplet's region.
+            2. Power down the Droplet before snapshotting so the disk is in a consistent state. A snapshot of a running Droplet can capture an incomplete filesystem.
+            3. Navigate to **Images** > **Snapshots** and take a snapshot of the affected Droplet.
+            4. Create a new Droplet from the snapshot and select the dedicated VPC, not the default, in the **VPC Network** section.
+            5. Update DNS, firewall rules, and monitoring to point at the new Droplet. The replacement Droplet receives a new public IP address, so anything that references the old IP must be updated.
+            6. Verify the replacement is serving traffic before retiring the original.
+            7. Destroy the original Droplet only after the replacement is confirmed healthy.
         - id: cli
           desc: |
-            **This fix replaces the Droplet.** DigitalOcean cannot move an existing Droplet into a VPC, so plan for downtime, keep the original until the replacement is verified, and expect the new Droplet to receive a new public IP address.
+            **This fix replaces the Droplet.** DigitalOcean cannot move an existing Droplet to another VPC, so plan for downtime, keep the original until the replacement is verified, and expect the new Droplet to receive a new public IP address.
 
-            To fix this on the command line using the `doctl` CLI, snapshot the Droplet and create a replacement from the snapshot with a VPC set:
+            To fix this on the command line using the `doctl` CLI, snapshot the Droplet and create a replacement from the snapshot in a dedicated VPC:
 
             1. Power off the Droplet so the snapshot captures a consistent filesystem, then take the snapshot:
 
@@ -290,11 +283,12 @@ queries:
                 doctl compute droplet-action snapshot <droplet-id> --snapshot-name <snapshot-name> --wait
                 ```
 
-            2. Look up the snapshot ID and the VPCs available to the replacement:
+            2. Look up the snapshot ID and the VPCs available to the replacement. If the region has no VPC whose `Default` is `false`, create one with an IP range that does not overlap your other networks:
 
                 ```bash
                 doctl compute snapshot list --resource droplet --format ID,Name,Regions,MinDiskSize
-                doctl vpcs list --format ID,Name,Region,IPRange
+                doctl vpcs list --format ID,Name,Region,IPRange,Default
+                doctl vpcs create --name <vpc-name> --region <region> --ip-range <ip-range>
                 ```
 
             3. Create the replacement Droplet inside the VPC:
@@ -308,20 +302,26 @@ queries:
                 ```
 
                 - `<snapshot-id>` is the `ID` of the snapshot taken in step 1.
-                - `<region>` must be a region the snapshot is available in, and `<vpc-uuid>` must be the `ID` of a VPC in that same region. Setting `--vpc-uuid` gives the new Droplet the VPC membership the check requires.
+                - `<region>` must be a region the snapshot is available in, and `<vpc-uuid>` must be the `ID` of a VPC in that same region whose `Default` is `false`. Without `--vpc-uuid` the Droplet lands in the default VPC and keeps failing.
                 - `<size>` must provide a disk at least as large as the snapshot's `MinDiskSize`. Reusing the original Droplet's size slug keeps the same capacity.
 
             4. Update DNS, firewall rules, and monitoring to reference the new Droplet, and verify that it serves traffic.
-            5. Delete the original Droplet. It keeps failing the check for as long as it exists outside a VPC:
+            5. Delete the original Droplet. It keeps failing the check for as long as it exists in the default VPC:
 
                 ```bash
                 doctl compute droplet delete <droplet-id>
                 ```
         - id: terraform
           desc: |
-            To deploy Droplets inside a VPC in Terraform, set `vpc_uuid` on the `digitalocean_droplet` resource:
+            To deploy Droplets in a dedicated VPC in Terraform, declare a `digitalocean_vpc` and set `vpc_uuid` on the `digitalocean_droplet` resource to its ID. A Droplet without `vpc_uuid` is placed in the region's default VPC:
 
             ```hcl
+            resource "digitalocean_vpc" "example" {
+              name     = "example"
+              region   = "nyc3"
+              ip_range = "10.10.10.0/24"
+            }
+
             resource "digitalocean_droplet" "example" {
               name     = "example"
               image    = "ubuntu-22-04-x64"
@@ -337,7 +337,7 @@ queries:
   - uid: mondoo-digitalocean-security-droplet-in-vpc-digitalocean
     filters: asset.platform == "digitalocean"
     mql: |
-      digitalocean.droplets.all(vpc != null)
+      digitalocean.droplets.all(vpc.default == false)
   - uid: mondoo-digitalocean-security-droplet-in-vpc-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "digitalocean_droplet")
     mql: |
@@ -348,10 +348,6 @@ queries:
       terraform.plan.resourceChanges
         .where(type == "digitalocean_droplet")
         .all(change.after.vpc_uuid != empty)
-  - uid: mondoo-digitalocean-security-droplet-in-vpc-terraform-state
-    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "digitalocean_droplet")
-    mql: |
-      terraform.state.resources.where(type == "digitalocean_droplet").all(values.vpc_uuid != empty)
 
   # No Terraform variants: this check requires cross-resource correlation between
   # digitalocean_droplet and digitalocean_firewall (matched by id or by overlapping
@@ -1420,8 +1416,12 @@ queries:
       - url: https://docs.digitalocean.com/products/databases/postgresql/how-to/secure/
         title: How to Secure PostgreSQL Managed Database Clusters
 
+  # No Terraform state variant: after apply, digitalocean_database_cluster.private_network_uuid
+  # always holds a VPC ID, the default VPC's when the configuration sets none, and state does
+  # not record whether that VPC is the default. The HCL and plan variants fail when the argument
+  # is left out at creation, which is when the default VPC is assigned.
   - uid: mondoo-digitalocean-security-db-in-private-network
-    title: Ensure managed databases are attached to a private network
+    title: Ensure managed databases are not attached to the default VPC
     impact: 80
     tags:
       compliance/bsi-sys-1-5: false
@@ -1451,47 +1451,42 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform Plan
           mondoo.com/filter-icon: terraform
-      - uid: mondoo-digitalocean-security-db-in-private-network-terraform-state
-        tags:
-          mondoo.com/filter-title: Terraform State
-          mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check verifies that every managed database cluster is attached to a VPC private network.
+        This check verifies that every managed database cluster is attached to a VPC network the account created, not to the default VPC of its region.
 
-        A managed database receives a public connection string by default and must be reached over the internet unless a private network is configured at creation time. Attaching the cluster to a VPC gives it a private hostname that resources in the same VPC use instead. The network is selected in the create flow and recorded as the cluster's private network UUID.
+        Every managed database cluster is placed in a VPC and serves a private hostname there in addition to its public one. When no network is chosen at creation, DigitalOcean places the cluster in the region's default VPC, which also receives every other Droplet, load balancer, and Kubernetes cluster created in that region without an explicit network choice. The network is recorded as the cluster's private network UUID.
 
         **Why this matters**
 
-        Without a private network, traffic between applications and the cluster traverses public-facing endpoints. That lengthens the path and increases the number of hops where the traffic can be observed, for no benefit when the client is a Droplet in the same region. A private network keeps that traffic inside DigitalOcean's infrastructure instead.
+        The default VPC is a flat network shared by unrelated workloads, so a database in it is reachable on its private hostname from everything else that landed there by default. Trusted Sources still govern who may connect, but a broad rule, such as trusting a tag or a whole Kubernetes cluster, then admits far more than the application that owns the data.
 
-        A cluster reachable only on private IPs is also not directly accessible from the internet even when Trusted Sources are misconfigured, which is the second layer that matters most in practice. A firewall rule opened by accident has no effect if there is no public path for it to open.
+        Placing the cluster in the same dedicated VPC as the Droplets and clusters that consume it keeps the private path limited to those consumers, and it lets them connect over the private hostname rather than the public one.
 
-        Applications gain the private hostname and use it without per-connection TLS certificate pinning against a public endpoint or reliance on public DNS, so the simpler configuration is also the more private one.
-
-        Attach the cluster to the same VPC as the Droplets and clusters that consume it, and keep the Trusted Sources list in place as well; the two controls fail differently and are worth having together.
+        Keep the Trusted Sources list in place as well. The two controls fail differently and are worth having together.
       audit: |
         ### Audit via Console
 
         1. Sign in to the DigitalOcean [Cloud Control Panel](https://cloud.digitalocean.com/).
-        2. Navigate to **Databases** and open each cluster.
-        3. Go to **Overview** and check the **Network** section for a private network (VPC) assignment.
+        2. Navigate to **Networking** > **VPC** and note which VPC in each region is marked as the default.
+        3. Navigate to **Databases**, open each cluster, and check its VPC network on the **Overview** tab.
 
-        A passing database cluster shows a VPC name under the Network section. A failing database cluster shows no private network or only a public endpoint.
+        A passing database cluster is in a VPC that is not marked as the default. A failing database cluster is in its region's default VPC.
 
         ### Audit via CLI
 
-        1. List all database clusters and inspect each cluster's private network UUID:
+        1. List the VPCs with their `Default` flag, then each cluster's private network UUID:
 
         ```bash
+        doctl vpcs list --format ID,Name,Region,Default
         doctl databases list --output json | jq -r '.[] | [.id, .name, .engine, .private_network_uuid] | @tsv'
         ```
 
-        A passing database cluster returns a non-empty `private_network_uuid`. A failing database cluster returns an empty value.
+        A passing database cluster's `private_network_uuid` is the `ID` of a VPC whose `Default` is `false`. A failing database cluster's `private_network_uuid` is the `ID` of a VPC whose `Default` is `true`.
       remediation:
         - id: console
           desc: |
-            A managed database cluster can be migrated into a VPC network directly, so the same cluster and its data stay in service without a replacement. The cluster passes once it reports a private network UUID.
+            A managed database cluster can be migrated to another VPC network directly, so the same cluster and its data stay in service without a replacement. The cluster passes once its private network is a VPC that is not the region's default.
 
             **Schedule the migration in a maintenance window.** The cluster shows a `migrating` status until the move completes, and it is assigned a new IP address in the VPC network. Check the private connection details afterward and update any client that uses them.
 
@@ -1499,24 +1494,25 @@ queries:
 
             1. Navigate to **Databases**, open the affected cluster, and select the **Settings** tab.
             2. Under **Cluster datacenter**, click **Edit**.
-            3. Keep the cluster's current datacenter, select the target network from the **VPC Network** menu, and click **Save**.
+            3. Keep the cluster's current datacenter, select a VPC that is not the default from the **VPC Network** menu, and click **Save**. Create one under **Networking** > **VPC** first if the region has none.
             4. When the migration finishes, copy the private connection details from the **Overview** tab into the applications that use them.
         - id: cli
           desc: |
-            A managed database cluster can be migrated into a VPC network directly with `doctl databases migrate`, so the same cluster and its data stay in service without a replacement. The cluster passes once it reports a private network UUID.
+            A managed database cluster can be migrated to another VPC network directly with `doctl databases migrate`, so the same cluster and its data stay in service without a replacement. The cluster passes once its private network is a VPC that is not the region's default.
 
             **Schedule the migration in a maintenance window.** The cluster shows a `migrating` status until the move completes, and it is assigned a new IP address in the VPC network. Check the private connection details afterward and update any client that uses them.
 
             To fix this on the command line using the `doctl` CLI:
 
-            1. Look up the cluster's current region and the VPC networks in that region:
+            1. Look up the cluster's current region and the VPC networks in that region. If none has `Default` set to `false`, create one with an IP range that does not overlap your other networks:
 
                 ```bash
                 doctl databases list --format ID,Name,Region
-                doctl vpcs list --format ID,Name,Region,IPRange
+                doctl vpcs list --format ID,Name,Region,IPRange,Default
+                doctl vpcs create --name <vpc-name> --region <region> --ip-range <ip-range>
                 ```
 
-            2. Migrate the cluster into the VPC network. `<region>` is the cluster's current region, which keeps it in the same datacenter, and `<vpc-uuid>` is the `ID` of a VPC network in that region:
+            2. Migrate the cluster into that VPC network. `<region>` is the cluster's current region, which keeps it in the same datacenter, and `<vpc-uuid>` is the `ID` of the VPC network whose `Default` is `false`:
 
                 ```bash
                 doctl databases migrate <database-id> \
@@ -1532,7 +1528,7 @@ queries:
                 ```
         - id: terraform
           desc: |
-            To attach a managed database to a VPC in Terraform, set `private_network_uuid` on the `digitalocean_database_cluster` resource:
+            To attach a managed database to a dedicated VPC in Terraform, set `private_network_uuid` on the `digitalocean_database_cluster` resource to the ID of a `digitalocean_vpc` the configuration declares. A cluster without `private_network_uuid` is placed in the region's default VPC:
 
             ```hcl
             resource "digitalocean_database_cluster" "example" {
@@ -1552,7 +1548,7 @@ queries:
   - uid: mondoo-digitalocean-security-db-in-private-network-digitalocean
     filters: asset.platform == "digitalocean-database"
     mql: |
-      digitalocean.database.privateNetworkUuid != ""
+      digitalocean.database.vpc.default == false
   - uid: mondoo-digitalocean-security-db-in-private-network-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "digitalocean_database_cluster")
     mql: |
@@ -1563,12 +1559,6 @@ queries:
       terraform.plan.resourceChanges
         .where(type == "digitalocean_database_cluster")
         .all(change.after.private_network_uuid != empty)
-  - uid: mondoo-digitalocean-security-db-in-private-network-terraform-state
-    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "digitalocean_database_cluster")
-    mql: |
-      terraform.state.resources
-        .where(type == "digitalocean_database_cluster")
-        .all(values.private_network_uuid != empty)
 
   # No Terraform variants: internetReachable resolves the cluster's live public connection
   # endpoint against its effective trusted-source firewall rules. The digitalocean_database_cluster
@@ -1628,11 +1618,11 @@ queries:
         doctl databases firewalls list <database-id>
         ```
 
-        A passing database cluster returns trusted-source rules that name specific droplets, tags, Kubernetes clusters, or narrow CIDRs. A failing database cluster returns an `ip_addr` rule of `0.0.0.0/0` or `::/0`, or no trusted-source rules at all while a public endpoint is in use.
+        A passing database cluster returns trusted-source rules that name specific droplets, tags, Kubernetes clusters, or narrow CIDRs. A failing database cluster returns no trusted-source rules at all while a public endpoint is in use, or `ip_addr` rules that together cover every address. The API rejects a `/0` range, so a world-open list takes the form of ranges such as `0.0.0.0/1` and `128.0.0.0/1`.
       remediation:
         - id: console
           desc: |
-            A cluster with a public connection endpoint passes once its Trusted Sources list is not empty and contains no `0.0.0.0/0` or `::/0` entry. Connecting clients over the private VPC hostname does not remove the public endpoint, so the Trusted Sources list is what closes the finding.
+            A cluster with a public connection endpoint passes once its Trusted Sources list is not empty and its IP address entries do not together cover every address, such as `0.0.0.0/1` and `128.0.0.0/1`. Connecting clients over the private VPC hostname does not remove the public endpoint, so the Trusted Sources list is what closes the finding.
 
             **Clients missing from the list lose access.** Once the list is restrictive, the cluster refuses every source not on it, so add all application hosts and administrator addresses before removing the world-open entry.
 
@@ -1640,10 +1630,10 @@ queries:
 
             1. Navigate to **Databases** and open the affected cluster.
             2. On the **Settings** tab, edit **Trusted Sources** and add the specific Droplets, tags, apps, Kubernetes clusters, or narrow CIDRs that need access.
-            3. Remove any trusted-source entry of `0.0.0.0/0` or `::/0`, and confirm at least one restrictive trusted source remains.
+            3. Remove the broad IP address entries that together cover every address, and confirm at least one restrictive trusted source remains.
         - id: cli
           desc: |
-            A cluster with a public connection endpoint passes once its Trusted Sources list is not empty and contains no `ip_addr` rule of `0.0.0.0/0` or `::/0`.
+            A cluster with a public connection endpoint passes once its Trusted Sources list is not empty and its `ip_addr` rules do not together cover every address. The API rejects a `/0` range, so a world-open list is made of broad ranges such as `0.0.0.0/1` and `128.0.0.0/1`.
 
             **Clients missing from the list lose access.** Once the list is restrictive, the cluster refuses every source not on it, so append rules for all clients before removing the world-open rule.
 
@@ -1656,13 +1646,13 @@ queries:
                 doctl databases firewalls append <database-id> --rule ip_addr:<address>
                 ```
 
-            2. List the rules and note the UUID of any `ip_addr` rule whose value is `0.0.0.0/0` or `::/0`:
+            2. List the rules and note the UUID of each broad `ip_addr` rule, such as `0.0.0.0/1` or `128.0.0.0/1`:
 
                 ```bash
                 doctl databases firewalls list <database-id>
                 ```
 
-            3. Remove each world-open rule by its UUID:
+            3. Remove each broad rule by its UUID:
 
                 ```bash
                 doctl databases firewalls remove <database-id> --uuid <rule-uuid>
@@ -1714,7 +1704,7 @@ queries:
       desc: |
         This check verifies that no managed database cluster runs an engine version that has reached end of life.
 
-        Each cluster's engine and version are compared against the versions DigitalOcean offers for PostgreSQL, MySQL, Valkey, Redis, MongoDB, Kafka, and OpenSearch, and against the date each of those versions stops receiving security fixes. Where DigitalOcean and the upstream project both publish an end-of-life date, the earlier one applies, so a cluster fails from that date onward without waiting for anyone to mark the version as retired. A version that is not in the comparison also fails. The version in use is shown on the cluster overview in the DigitalOcean Cloud Control Panel and returned by `doctl databases get`.
+        Each cluster's engine and version are compared against the versions DigitalOcean offers for PostgreSQL, MySQL, Valkey, Redis, MongoDB, Kafka, and OpenSearch, including the Advanced editions of PostgreSQL and MySQL, and against the date each of those versions stops receiving security fixes. Where DigitalOcean and the upstream project both publish an end-of-life date, the earlier one applies, so a cluster fails from that date onward without waiting for anyone to mark the version as retired. A version that is not in the comparison also fails, and so does an engine that is not. The version in use is shown on the cluster overview in the DigitalOcean Cloud Control Panel and returned by `doctl databases get`.
 
         DigitalOcean has replaced its managed Redis offering with Valkey, which reports the engine `valkey`. No Valkey release has an announced end of life, so a Valkey cluster passes while it runs a version DigitalOcean offers. Clusters still reporting the engine `redis` pass only on Redis 7.
 
@@ -1760,10 +1750,10 @@ queries:
 
             - PostgreSQL `18`
             - MySQL `8.4`
-            - Valkey `8`, as the replacement for a Redis cluster
+            - Valkey `9`, also the replacement for a Redis cluster
             - MongoDB `8.0`
-            - Kafka `4.1`
-            - OpenSearch `3.x`
+            - Kafka `4.3`
+            - OpenSearch `3.6`
 
             Confirm which versions DigitalOcean currently offers with `doctl databases options versions --engine <engine>` before choosing a target.
 
@@ -1851,70 +1841,100 @@ queries:
         title: MongoDB Software Lifecycle Schedules
 
   # Supported engine versions and the date each stops receiving security fixes, last checked on
-  # 26 September 2026. Each date is the earlier of DigitalOcean's end of life and the upstream one:
-  # PostgreSQL from both https://docs.digitalocean.com/products/databases/postgresql/details/limits/
-  # and https://www.postgresql.org/support/versioning/, MongoDB from
+  # 15 November 2026 against https://docs.digitalocean.com/products/databases/version-support-policy/.
+  # Each date is the earlier of DigitalOcean's end of life and the upstream one: PostgreSQL also
+  # from https://www.postgresql.org/support/versioning/, MongoDB 8.0 from
   # https://www.mongodb.com/legal/support-policy/lifecycles. A version without a date has no
-  # announced end of life: DigitalOcean lists none for MySQL 8.4, Valkey, Kafka 3.9 and 4.1, or
-  # OpenSearch, and Redis 7 is kept for clusters that still report the retired redis engine.
-  # Versions absent from the table fail, including MySQL 8.0, whose upstream support ended in
-  # April 2026. Every variant carries the same table, so edit them together.
+  # announced end of life: DigitalOcean lists none for PostgreSQL and MySQL Advanced Edition,
+  # MySQL 8.4, Valkey 8 and 9, or OpenSearch 2.19 and 3.6, and Redis 7 is kept for clusters that
+  # still report the retired redis engine. Versions absent from the table fail, including MySQL
+  # 8.0, and so do engines absent from the first line. Every variant carries the same table, so
+  # edit them together.
   - uid: mondoo-digitalocean-security-db-engine-supported-version-digitalocean
     filters: asset.platform == "digitalocean-database"
     mql: |
+      digitalocean.database.engine == /^(pg|advanced_pg|mysql|advanced_mysql|redis|valkey|mongodb|kafka|opensearch)$/
       digitalocean.database.engine != "pg" ||
       digitalocean.database.version == "14" && time.now < parse.date("2026-11-12") ||
       digitalocean.database.version == "15" && time.now < parse.date("2027-11-11") ||
       digitalocean.database.version == "16" && time.now < parse.date("2028-11-09") ||
       digitalocean.database.version == "17" && time.now < parse.date("2029-11-08") ||
-      digitalocean.database.version == "18" && time.now < parse.date("2030-11-08")
+      digitalocean.database.version == "18" && time.now < parse.date("2030-11-07")
+      digitalocean.database.engine != "advanced_pg" ||
+      digitalocean.database.version == "16" ||
+      digitalocean.database.version == "17" ||
+      digitalocean.database.version == "18"
       digitalocean.database.engine != "mysql" ||
       digitalocean.database.version == "8.4"
+      digitalocean.database.engine != "advanced_mysql" ||
+      digitalocean.database.version == /^8\.4(\.\d+)?$/
       digitalocean.database.engine != "redis" ||
       digitalocean.database.version == "7"
       digitalocean.database.engine != "valkey" ||
-      digitalocean.database.version == "8"
+      digitalocean.database.version == /^8(\.0)?$/ ||
+      digitalocean.database.version == /^9(\.0)?$/
       digitalocean.database.engine != "mongodb" ||
       digitalocean.database.version == /^7(\.0)?$/ && time.now < parse.date("2027-08-31") ||
       digitalocean.database.version == /^8(\.0)?$/ && time.now < parse.date("2029-10-31")
       digitalocean.database.engine != "kafka" ||
-      digitalocean.database.version == "3.9" ||
-      digitalocean.database.version == "4.1"
+      digitalocean.database.version == "3.9" && time.now < parse.date("2027-09-30") ||
+      digitalocean.database.version == "4.1" && time.now < parse.date("2027-01-31") ||
+      digitalocean.database.version == "4.2" && time.now < parse.date("2027-06-15") ||
+      digitalocean.database.version == "4.3" && time.now < parse.date("2027-09-25")
       digitalocean.database.engine != "opensearch" ||
-      digitalocean.database.version == /^[23](\.|$)/
+      digitalocean.database.version == /^2\.19(\.\d+)?$/ ||
+      digitalocean.database.version == /^3\.3(\.\d+)?$/ && time.now < parse.date("2027-02-01") ||
+      digitalocean.database.version == /^3\.6(\.\d+)?$/
   - uid: mondoo-digitalocean-security-db-engine-supported-version-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "digitalocean_database_cluster")
     mql: |
+      terraform.resources("digitalocean_database_cluster").all(arguments["engine"] == /^(pg|advanced_pg|mysql|advanced_mysql|redis|valkey|mongodb|kafka|opensearch)$/)
       terraform.resources("digitalocean_database_cluster").where(arguments["engine"] == "pg").all(
         arguments["version"] == "14" && time.now < parse.date("2026-11-12") ||
         arguments["version"] == "15" && time.now < parse.date("2027-11-11") ||
         arguments["version"] == "16" && time.now < parse.date("2028-11-09") ||
         arguments["version"] == "17" && time.now < parse.date("2029-11-08") ||
-        arguments["version"] == "18" && time.now < parse.date("2030-11-08")
+        arguments["version"] == "18" && time.now < parse.date("2030-11-07")
+      )
+      terraform.resources("digitalocean_database_cluster").where(arguments["engine"] == "advanced_pg").all(
+        arguments["version"] == "16" ||
+        arguments["version"] == "17" ||
+        arguments["version"] == "18"
       )
       terraform.resources("digitalocean_database_cluster").where(arguments["engine"] == "mysql").all(
         arguments["version"] == "8.4"
+      )
+      terraform.resources("digitalocean_database_cluster").where(arguments["engine"] == "advanced_mysql").all(
+        arguments["version"] == /^8\.4(\.\d+)?$/
       )
       terraform.resources("digitalocean_database_cluster").where(arguments["engine"] == "redis").all(
         arguments["version"] == "7"
       )
       terraform.resources("digitalocean_database_cluster").where(arguments["engine"] == "valkey").all(
-        arguments["version"] == "8"
+        arguments["version"] == /^8(\.0)?$/ ||
+        arguments["version"] == /^9(\.0)?$/
       )
       terraform.resources("digitalocean_database_cluster").where(arguments["engine"] == "mongodb").all(
         arguments["version"] == /^7(\.0)?$/ && time.now < parse.date("2027-08-31") ||
         arguments["version"] == /^8(\.0)?$/ && time.now < parse.date("2029-10-31")
       )
       terraform.resources("digitalocean_database_cluster").where(arguments["engine"] == "kafka").all(
-        arguments["version"] == "3.9" ||
-        arguments["version"] == "4.1"
+        arguments["version"] == "3.9" && time.now < parse.date("2027-09-30") ||
+        arguments["version"] == "4.1" && time.now < parse.date("2027-01-31") ||
+        arguments["version"] == "4.2" && time.now < parse.date("2027-06-15") ||
+        arguments["version"] == "4.3" && time.now < parse.date("2027-09-25")
       )
       terraform.resources("digitalocean_database_cluster").where(arguments["engine"] == "opensearch").all(
-        arguments["version"] == /^[23](\.|$)/
+        arguments["version"] == /^2\.19(\.\d+)?$/ ||
+        arguments["version"] == /^3\.3(\.\d+)?$/ && time.now < parse.date("2027-02-01") ||
+        arguments["version"] == /^3\.6(\.\d+)?$/
       )
   - uid: mondoo-digitalocean-security-db-engine-supported-version-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "digitalocean_database_cluster")
     mql: |
+      terraform.plan.resourceChanges
+        .where(type == "digitalocean_database_cluster")
+        .all(change.after.engine == /^(pg|advanced_pg|mysql|advanced_mysql|redis|valkey|mongodb|kafka|opensearch)$/)
       terraform.plan.resourceChanges
         .where(type == "digitalocean_database_cluster" && change.after.engine == "pg")
         .all(
@@ -1922,12 +1942,24 @@ queries:
           change.after.version == "15" && time.now < parse.date("2027-11-11") ||
           change.after.version == "16" && time.now < parse.date("2028-11-09") ||
           change.after.version == "17" && time.now < parse.date("2029-11-08") ||
-          change.after.version == "18" && time.now < parse.date("2030-11-08")
+          change.after.version == "18" && time.now < parse.date("2030-11-07")
+        )
+      terraform.plan.resourceChanges
+        .where(type == "digitalocean_database_cluster" && change.after.engine == "advanced_pg")
+        .all(
+          change.after.version == "16" ||
+          change.after.version == "17" ||
+          change.after.version == "18"
         )
       terraform.plan.resourceChanges
         .where(type == "digitalocean_database_cluster" && change.after.engine == "mysql")
         .all(
           change.after.version == "8.4"
+        )
+      terraform.plan.resourceChanges
+        .where(type == "digitalocean_database_cluster" && change.after.engine == "advanced_mysql")
+        .all(
+          change.after.version == /^8\.4(\.\d+)?$/
         )
       terraform.plan.resourceChanges
         .where(type == "digitalocean_database_cluster" && change.after.engine == "redis")
@@ -1937,7 +1969,8 @@ queries:
       terraform.plan.resourceChanges
         .where(type == "digitalocean_database_cluster" && change.after.engine == "valkey")
         .all(
-          change.after.version == "8"
+          change.after.version == /^8(\.0)?$/ ||
+          change.after.version == /^9(\.0)?$/
         )
       terraform.plan.resourceChanges
         .where(type == "digitalocean_database_cluster" && change.after.engine == "mongodb")
@@ -1948,17 +1981,24 @@ queries:
       terraform.plan.resourceChanges
         .where(type == "digitalocean_database_cluster" && change.after.engine == "kafka")
         .all(
-          change.after.version == "3.9" ||
-          change.after.version == "4.1"
+          change.after.version == "3.9" && time.now < parse.date("2027-09-30") ||
+          change.after.version == "4.1" && time.now < parse.date("2027-01-31") ||
+          change.after.version == "4.2" && time.now < parse.date("2027-06-15") ||
+          change.after.version == "4.3" && time.now < parse.date("2027-09-25")
         )
       terraform.plan.resourceChanges
         .where(type == "digitalocean_database_cluster" && change.after.engine == "opensearch")
         .all(
-          change.after.version == /^[23](\.|$)/
+          change.after.version == /^2\.19(\.\d+)?$/ ||
+          change.after.version == /^3\.3(\.\d+)?$/ && time.now < parse.date("2027-02-01") ||
+          change.after.version == /^3\.6(\.\d+)?$/
         )
   - uid: mondoo-digitalocean-security-db-engine-supported-version-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "digitalocean_database_cluster")
     mql: |
+      terraform.state.resources
+        .where(type == "digitalocean_database_cluster")
+        .all(values.engine == /^(pg|advanced_pg|mysql|advanced_mysql|redis|valkey|mongodb|kafka|opensearch)$/)
       terraform.state.resources
         .where(type == "digitalocean_database_cluster" && values.engine == "pg")
         .all(
@@ -1966,12 +2006,24 @@ queries:
           values.version == "15" && time.now < parse.date("2027-11-11") ||
           values.version == "16" && time.now < parse.date("2028-11-09") ||
           values.version == "17" && time.now < parse.date("2029-11-08") ||
-          values.version == "18" && time.now < parse.date("2030-11-08")
+          values.version == "18" && time.now < parse.date("2030-11-07")
+        )
+      terraform.state.resources
+        .where(type == "digitalocean_database_cluster" && values.engine == "advanced_pg")
+        .all(
+          values.version == "16" ||
+          values.version == "17" ||
+          values.version == "18"
         )
       terraform.state.resources
         .where(type == "digitalocean_database_cluster" && values.engine == "mysql")
         .all(
           values.version == "8.4"
+        )
+      terraform.state.resources
+        .where(type == "digitalocean_database_cluster" && values.engine == "advanced_mysql")
+        .all(
+          values.version == /^8\.4(\.\d+)?$/
         )
       terraform.state.resources
         .where(type == "digitalocean_database_cluster" && values.engine == "redis")
@@ -1981,7 +2033,8 @@ queries:
       terraform.state.resources
         .where(type == "digitalocean_database_cluster" && values.engine == "valkey")
         .all(
-          values.version == "8"
+          values.version == /^8(\.0)?$/ ||
+          values.version == /^9(\.0)?$/
         )
       terraform.state.resources
         .where(type == "digitalocean_database_cluster" && values.engine == "mongodb")
@@ -1992,15 +2045,18 @@ queries:
       terraform.state.resources
         .where(type == "digitalocean_database_cluster" && values.engine == "kafka")
         .all(
-          values.version == "3.9" ||
-          values.version == "4.1"
+          values.version == "3.9" && time.now < parse.date("2027-09-30") ||
+          values.version == "4.1" && time.now < parse.date("2027-01-31") ||
+          values.version == "4.2" && time.now < parse.date("2027-06-15") ||
+          values.version == "4.3" && time.now < parse.date("2027-09-25")
         )
       terraform.state.resources
         .where(type == "digitalocean_database_cluster" && values.engine == "opensearch")
         .all(
-          values.version == /^[23](\.|$)/
+          values.version == /^2\.19(\.\d+)?$/ ||
+          values.version == /^3\.3(\.\d+)?$/ && time.now < parse.date("2027-02-01") ||
+          values.version == /^3\.6(\.\d+)?$/
         )
-
   # No Terraform variants: the check inspects the validity window of the CA certificate the cluster currently advertises — runtime telemetry that has no analog in digitalocean_database_cluster HCL. Terraform expresses desired cluster configuration; the CA is managed and rotated by DigitalOcean and only exposed by the live API.
   - uid: mondoo-digitalocean-security-db-ca-certificate-not-expired
     filters: asset.platform == "digitalocean-database"
@@ -2101,89 +2157,6 @@ queries:
       - url: https://docs.digitalocean.com/products/databases/postgresql/how-to/secure/
         title: How to Secure PostgreSQL Managed Database Clusters
 
-  # No Terraform variants: connectionSslEnabled reflects the SSL flag on the live
-  # connection object returned by the DigitalOcean API, which the platform sets on
-  # every managed cluster. digitalocean_database_cluster exposes no argument to enable
-  # or disable TLS, so there is nothing to assert in HCL, plan, or state.
-  - uid: mondoo-digitalocean-security-db-connection-ssl-enabled
-    filters: asset.platform == "digitalocean-database"
-    title: Ensure managed database connections enforce TLS/SSL
-    impact: 85
-    tags:
-      compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
-      compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-e-2-ii-transmission-security-encryption
-      compliance/iso-27001-2022: iso-27001-2022-a-8-24
-      compliance/nis-2: nis-2-21-2-h
-      compliance/nist-csf-1: nist-csf-1-pr-ds-2
-      compliance/nist-csf-2: nist-csf-2-pr-ds-02
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
-      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
-      compliance/owasp-top-10-2025: owasp-top-10-2025-a04
-      compliance/pci-dss-4: pcidss-requirement-4-2-1
-      compliance/soc2-2017: soc2-control-cc6-7-2
-      compliance/vda-isa-5: vda-isa-5-5-1-1
-    mql: |
-      digitalocean.database.connectionSslEnabled
-    docs:
-      desc: |
-        This check verifies that every managed database cluster advertises a connection endpoint with TLS enabled.
-
-        The cluster's connection object reports whether its endpoint requires SSL. When it reports SSL disabled, the cluster accepts plaintext connections, and both the authentication exchange and the query payload cross the network unprotected. Connection details are shown on the cluster page in the DigitalOcean Cloud Control Panel and returned by `doctl databases connection`.
-
-        **Why this matters**
-
-        Database connections carry authentication material on every session. Without TLS, usernames and passwords traverse the network in cleartext and can be captured by any host on the path, which turns a single passive observer into a permanent credential holder.
-
-        The payload is at least as valuable. Query results and writes often contain the most sensitive data an organization holds, so an unencrypted connection exposes that data to the same passive interception, continuously and without leaving a trace.
-
-        TLS also binds the connection to the cluster's certificate, so an attacker cannot transparently proxy the connection or tamper with queries and responses in flight. An encrypted session yields only ciphertext to a network observer and detects modification if one is attempted.
-
-        Frameworks that govern regulated data require encryption of sensitive information whenever it crosses a network boundary, and database traffic is a primary carrier of that data.
-      audit: |
-        ### Audit via Console
-
-        1. Sign in to the DigitalOcean [Cloud Control Panel](https://cloud.digitalocean.com/).
-        2. Navigate to **Databases** and open each cluster.
-        3. On the **Overview** tab, inspect the **Connection Details** panel and confirm the connection string uses `sslmode=require` (PostgreSQL), `ssl-mode=REQUIRED` (MySQL), or the engine's equivalent TLS parameter.
-
-        A passing cluster presents a TLS-enabled connection string. A failing cluster presents a connection string with SSL disabled.
-
-        ### Audit via CLI
-
-        1. List clusters, then inspect each cluster's connection details:
-
-        ```bash
-        doctl databases list --format ID,Name,Engine
-        doctl databases connection <database-id> --format Host,Port,SSL
-        ```
-
-        A passing cluster reports `SSL` as `true`. A failing cluster reports `SSL` as `false`.
-      remediation:
-        - id: console
-          desc: |
-            The check reads the read-only SSL flag on the connection details DigitalOcean publishes for the cluster. No setting in the Cloud Control Panel changes that flag, and neither do client connection strings, so a cluster that reports SSL as disabled needs DigitalOcean to correct it:
-
-            1. Open the cluster's **Overview** tab and confirm that the **Connection Details** show SSL disabled.
-            2. Open a DigitalOcean support ticket from the cluster page and ask for TLS to be enabled on the cluster's connection endpoint. The check passes once the connection details report SSL as enabled.
-            3. Until then, and afterward as defense in depth, make every client require TLS, for example `sslmode=require` for PostgreSQL or `ssl-mode=REQUIRED` for MySQL, and verify the server against the cluster's CA certificate.
-        - id: cli
-          desc: |
-            The check reads the read-only SSL flag on the connection details DigitalOcean publishes for the cluster. No `doctl` command changes that flag, and neither do client connection strings, so a cluster that reports SSL as disabled needs DigitalOcean to correct it.
-
-            1. Confirm the flag the cluster reports:
-
-                ```bash
-                doctl databases connection <database-id> --format Host,Port,User,SSL
-                ```
-
-            2. If `SSL` is `false`, open a DigitalOcean support ticket for the cluster and ask for TLS to be enabled on its connection endpoint. The check passes once the command above reports `true`.
-            3. Until then, and afterward as defense in depth, make every client require TLS, such as `sslmode=require` in a PostgreSQL connection string, then restart the connecting services and confirm sessions negotiate TLS.
-        # No Terraform remediation: TLS on managed database connections is enforced by the DigitalOcean platform and is not a declarable argument on digitalocean_database_cluster. Requiring TLS is a client-side connection-string concern that lives outside the cluster's Terraform definition.
-    refs:
-      - url: https://docs.digitalocean.com/products/databases/postgresql/how-to/secure/
-        title: How to Secure PostgreSQL Managed Database Clusters
 
   - uid: mondoo-digitalocean-security-lb-http-redirected-to-https
     title: Ensure load balancers redirect HTTP traffic to HTTPS
@@ -2527,8 +2500,12 @@ queries:
         values.tls_cipher_policy == "STRONG"
       )
 
+  # No Terraform state variant: after apply, digitalocean_loadbalancer.vpc_uuid always holds a
+  # VPC ID, the default VPC's when the configuration sets none, and state does not record
+  # whether that VPC is the default. The HCL and plan variants fail when the argument is left
+  # out at creation, which is when the default VPC is assigned.
   - uid: mondoo-digitalocean-security-lb-in-vpc
-    title: Ensure load balancers are deployed inside a VPC
+    title: Ensure load balancers are not deployed in the default VPC
     impact: 70
     tags:
       compliance/bsi-sys-1-5: false
@@ -2558,58 +2535,53 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform Plan
           mondoo.com/filter-icon: terraform
-      - uid: mondoo-digitalocean-security-lb-in-vpc-terraform-state
-        tags:
-          mondoo.com/filter-title: Terraform State
-          mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check verifies that every load balancer is attached to a VPC.
+        This check verifies that every load balancer is attached to a VPC network the account created, not to the default VPC of its region.
 
-        A DigitalOcean load balancer can be created without a VPC association, in which case it must reach its backend Droplets over public-facing addresses. Attaching it to a VPC lets it forward to those backends on private IPs instead. The network is selected when the load balancer is created and recorded as its VPC UUID.
+        Every load balancer is placed in a VPC and forwards to its backends on their private addresses in that VPC. When none is selected at creation, DigitalOcean places it in the region's default VPC, which also receives every other resource created in that region without an explicit network choice. The network is selected when the load balancer is created and recorded as its VPC UUID.
 
         **Why this matters**
 
-        A VPC-attached load balancer keeps intra-application traffic entirely within DigitalOcean's internal network. The forwarding hop from the balancer to the backend never leaves the private network, so hosts outside the VPC cannot intercept or interpose on it.
+        The default VPC is a flat network shared by unrelated workloads. A load balancer and its backends in the default VPC sit on the same private network as every other Droplet, database, and cluster in the region that was created without a network choice, so the private hop from balancer to backend is reachable from all of them.
 
-        Without VPC attachment, that hop needs public endpoints on the backends, which adds internet-reachable addresses to the infrastructure for no reason other than to let two components in the same account talk to each other.
+        A dedicated VPC keeps the application tier on a network that contains only its own components. Firewall rules can then trust the VPC range as the source of balancer traffic without also trusting unrelated workloads, which is what allows backend ports to accept load-balancer traffic and nothing else.
 
-        Shared VPC membership also makes other network controls work as intended. Firewall rules can name the VPC as a trusted source, which is what allows backend ports to accept load-balancer-originated traffic and nothing else, and internal DNS resolution behaves consistently across the tier.
-
-        Because a load balancer's network is fixed at creation, an existing balancer outside the VPC must be replaced by one created inside it.
+        Because a load balancer's network is fixed at creation, an existing balancer in the default VPC must be replaced by one created in the dedicated VPC.
       audit: |
         ### Audit via Console
 
         1. Sign in to the DigitalOcean [Cloud Control Panel](https://cloud.digitalocean.com/).
-        2. Navigate to **Networking** > **Load Balancers** and open each load balancer.
-        3. Check the **Network** section for a VPC assignment.
+        2. Navigate to **Networking** > **VPC** and note which VPC in each region is marked as the default.
+        3. Navigate to **Networking** > **Load Balancers**, open each load balancer, and check its VPC network.
 
-        A passing load balancer shows a named VPC in the Network section. A failing load balancer shows no VPC or only a public network assignment.
+        A passing load balancer is in a VPC that is not marked as the default. A failing load balancer is in its region's default VPC.
 
         ### Audit via CLI
 
-        1. List all load balancers and inspect the `VPCUUID` field:
+        1. List the VPCs with their `Default` flag, then the VPC UUID of each load balancer:
 
         ```bash
+        doctl vpcs list --format ID,Name,Region,Default
         doctl compute load-balancer list --format ID,Name,VPCUUID,Region
         ```
 
-        A passing load balancer returns a non-empty `VPCUUID`. A failing load balancer returns an empty `VPCUUID`.
+        A passing load balancer's `VPCUUID` is the `ID` of a VPC whose `Default` is `false`. A failing load balancer's `VPCUUID` is the `ID` of a VPC whose `Default` is `true`.
       remediation:
         - id: console
           desc: |
-            **This fix replaces the load balancer.** DigitalOcean cannot move a load balancer into a VPC network, and the replacement receives a new IP address, so plan the DNS cutover.
+            **This fix replaces the load balancer.** DigitalOcean cannot move a load balancer to another VPC network, and the replacement receives a new IP address, so plan the DNS cutover.
 
-            To fix this in the Cloud Control Panel, create a replacement load balancer in the target VPC and cut traffic over:
+            To fix this in the Cloud Control Panel, create a replacement load balancer in a dedicated VPC and cut traffic over. The backends must be in the same VPC, so replace them first if they are in the default VPC:
 
             1. Navigate to **Networking** > **Load Balancers** and create a new load balancer.
-            2. In the creation flow, select the target VPC under **Network**.
+            2. In the creation flow, select a VPC that is not the default under **Network**.
             3. Configure the same forwarding rules, health check, redirect, TLS cipher policy, and firewall rules as the original, and attach the same Droplets or the same tag.
             4. Update DNS to point at the new load balancer's IP address and verify that it serves traffic.
             5. Delete the original load balancer, which keeps failing the check for as long as it exists.
         - id: cli
           desc: |
-            **This fix replaces the load balancer.** DigitalOcean cannot move a load balancer into a VPC network, and the replacement receives a new IP address, so plan the DNS cutover.
+            **This fix replaces the load balancer.** DigitalOcean cannot move a load balancer to another VPC network, and the replacement receives a new IP address, so plan the DNS cutover. The backends must be in the same VPC, so replace them first if they are in the default VPC.
 
             To fix this on the command line using the `doctl` CLI:
 
@@ -2618,7 +2590,7 @@ queries:
                 ```bash
                 doctl compute load-balancer get <lb-id> \
                   --format Name,Region,SizeUnit,Tag,DropletIDs,RedirectHttpToHttps,StickySessions,HealthCheck,ForwardingRules,Firewall
-                doctl vpcs list --format ID,Name,Region,IPRange
+                doctl vpcs list --format ID,Name,Region,IPRange,Default
                 ```
 
             2. Create the replacement inside the VPC network:
@@ -2634,7 +2606,7 @@ queries:
                   --tls-cipher-policy STRONG
                 ```
 
-                - `<vpc-uuid>` is the `ID` of a VPC network in `<region>`, the original load balancer's region. Setting it gives the replacement the VPC membership the check requires.
+                - `<vpc-uuid>` is the `ID` of a VPC network in `<region>`, the original load balancer's region, whose `Default` is `false`. Without `--vpc-uuid` the load balancer lands in the default VPC and keeps failing.
                 - Replace the example `--forwarding-rules` with the original's `ForwardingRules` value, and pass its `HealthCheck`, `StickySessions`, and firewall entries with `--health-check`, `--sticky-sessions`, and `--allow-list`.
                 - `<droplet-ids>` is the original's `DropletIDs` value. If it targets a tag instead, replace `--droplet-ids` with `--tag-name <tag>`.
                 - `<cert-id>` is the ID of a certificate from `doctl compute certificate list` that covers the served domain.
@@ -2647,7 +2619,7 @@ queries:
                 ```
         - id: terraform
           desc: |
-            To deploy load balancers inside a VPC in Terraform, set `vpc_uuid` on the `digitalocean_loadbalancer` resource:
+            To deploy load balancers in a dedicated VPC in Terraform, set `vpc_uuid` on the `digitalocean_loadbalancer` resource to the ID of a `digitalocean_vpc` the configuration declares. A load balancer without `vpc_uuid` is placed in the region's default VPC:
 
             ```hcl
             resource "digitalocean_loadbalancer" "example" {
@@ -2673,7 +2645,7 @@ queries:
   - uid: mondoo-digitalocean-security-lb-in-vpc-digitalocean
     filters: asset.platform == "digitalocean-loadbalancer"
     mql: |
-      digitalocean.loadBalancer.vpc != null
+      digitalocean.loadBalancer.vpc.default == false
   - uid: mondoo-digitalocean-security-lb-in-vpc-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "digitalocean_loadbalancer")
     mql: |
@@ -2684,10 +2656,6 @@ queries:
       terraform.plan.resourceChanges
         .where(type == "digitalocean_loadbalancer")
         .all(change.after.vpc_uuid != empty)
-  - uid: mondoo-digitalocean-security-lb-in-vpc-terraform-state
-    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "digitalocean_loadbalancer")
-    mql: |
-      terraform.state.resources.where(type == "digitalocean_loadbalancer").all(values.vpc_uuid != empty)
 
   - uid: mondoo-digitalocean-security-doks-auto-upgrade-enabled
     title: Ensure DOKS clusters have auto-upgrade enabled
@@ -3235,8 +3203,12 @@ queries:
       - url: https://docs.digitalocean.com/products/kubernetes/how-to/connect-to-cluster/
         title: How to Connect to a DigitalOcean Kubernetes Cluster
 
+  # No Terraform state variant: after apply, digitalocean_kubernetes_cluster.vpc_uuid always
+  # holds a VPC ID, the default VPC's when the configuration sets none, and state does not
+  # record whether that VPC is the default. The HCL and plan variants fail when the argument is
+  # left out at creation, which is when the default VPC is assigned.
   - uid: mondoo-digitalocean-security-doks-in-vpc
-    title: Ensure DOKS clusters are deployed inside a VPC
+    title: Ensure DOKS clusters are not deployed in the default VPC
     impact: 70
     tags:
       compliance/bsi-sys-1-5: false
@@ -3266,62 +3238,57 @@ queries:
         tags:
           mondoo.com/filter-title: Terraform Plan
           mondoo.com/filter-icon: terraform
-      - uid: mondoo-digitalocean-security-doks-in-vpc-terraform-state
-        tags:
-          mondoo.com/filter-title: Terraform State
-          mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check verifies that every DOKS cluster is deployed inside a VPC.
+        This check verifies that every DOKS cluster is attached to a VPC network the account created, not to the default VPC of its region.
 
-        A DigitalOcean Kubernetes cluster is assigned a VPC at creation time. When none is chosen, the worker nodes communicate over the default network rather than an isolated private network boundary. The network is selected in the create flow and recorded as the cluster's VPC UUID.
+        Every DigitalOcean Kubernetes cluster is placed in a VPC at creation time. When none is chosen, DigitalOcean places it in the region's default VPC, which also receives every other Droplet, managed database, and load balancer created in that region without an explicit network choice. The network is selected in the create flow and recorded as the cluster's VPC UUID.
 
         **Why this matters**
 
-        A VPC gives the cluster's worker nodes a private network boundary that contains intra-cluster and node-to-resource traffic instead of routing it across the shared default network. Traffic that only ever needs to travel between nodes stays where it belongs.
+        The default VPC is a flat network shared by unrelated workloads. Worker nodes in it sit on the same private network as everything else that landed there by default, and they can reach those resources on private addresses that public-facing controls never see.
 
-        VPC membership also lets the cluster reach managed databases, Droplets, and load balancers in the same VPC over private IPs, which keeps that traffic off public addresses and removes any need to publish those services publicly just so the cluster can consume them.
+        Containment matters most when a node is compromised. A node in a dedicated VPC can reach only the resources deliberately placed beside it, which limits how far an attacker who wins a container escape can pivot, while a node in the default VPC can probe every other workload in the region.
 
-        Containment matters most when a node is compromised. A node in a VPC-isolated cluster has a narrower reachable network than one on the default network, which limits how far an attacker who wins a container escape can pivot.
-
-        This supplements Kubernetes network policies and cloud firewalls rather than replacing them, so a misconfiguration in one layer does not immediately expose the cluster's internal traffic. Because the network cannot be changed after creation, a cluster outside a VPC must be rebuilt inside one.
+        This supplements Kubernetes network policies and cloud firewalls rather than replacing them. Because the network cannot be changed after creation, a cluster in the default VPC must be rebuilt in a dedicated one.
       audit: |
         ### Audit via Console
 
         1. Sign in to the DigitalOcean [Cloud Control Panel](https://cloud.digitalocean.com/).
-        2. Navigate to **Kubernetes** and open each cluster.
-        3. On the **Overview** tab, check the **VPC Network** assignment.
+        2. Navigate to **Networking** > **VPC** and note which VPC in each region is marked as the default.
+        3. Navigate to **Kubernetes**, open each cluster, and check the **VPC Network** assignment on the **Overview** tab.
 
-        A passing cluster shows a named VPC. A failing cluster shows no VPC or only the default network.
+        A passing cluster is in a VPC that is not marked as the default. A failing cluster is in its region's default VPC.
 
         ### Audit via CLI
 
-        1. List all clusters and inspect each cluster's VPC UUID:
+        1. List the VPCs with their `Default` flag, then the VPC UUID of each cluster:
 
         ```bash
+        doctl vpcs list --format ID,Name,Region,Default
         doctl kubernetes cluster list --output json | jq -r '.[] | [.id, .name, .vpc_uuid] | @tsv'
         ```
 
-        A passing cluster returns a non-empty `vpc_uuid`. A failing cluster returns an empty value.
+        A passing cluster's `vpc_uuid` is the `ID` of a VPC whose `Default` is `false`. A failing cluster's `vpc_uuid` is the `ID` of a VPC whose `Default` is `true`.
       remediation:
         - id: console
           desc: |
-            **This fix replaces the cluster.** DigitalOcean cannot move an existing DOKS cluster into a VPC network, so plan a cutover. Persistent volumes, load balancers, and in-cluster state do not move with the workloads and must be recreated or migrated.
+            **This fix replaces the cluster.** DigitalOcean cannot move an existing DOKS cluster to another VPC network, so plan a cutover. Persistent volumes, load balancers, and in-cluster state do not move with the workloads and must be recreated or migrated.
 
             To fix this in the DigitalOcean Cloud Control Panel:
 
             1. Navigate to **Kubernetes** and create a new cluster.
-            2. In the creation flow, select the target VPC under **VPC Network**.
+            2. In the creation flow, select a VPC that is not the default under **VPC Network**. Create one under **Networking** > **VPC** first if the region has none.
             3. Redeploy workloads to the new cluster with `kubectl` or a GitOps pipeline and verify connectivity.
             4. Repoint ingress and DNS to the new cluster.
             5. Delete the original cluster, which keeps failing the check for as long as it exists.
         - id: cli
           desc: |
-            **This fix replaces the cluster.** DigitalOcean cannot move an existing DOKS cluster into a VPC network, so plan a cutover. Persistent volumes, load balancers, and in-cluster state do not move with the workloads and must be recreated or migrated.
+            **This fix replaces the cluster.** DigitalOcean cannot move an existing DOKS cluster to another VPC network, so plan a cutover. Persistent volumes, load balancers, and in-cluster state do not move with the workloads and must be recreated or migrated.
 
             To fix this on the command line using the `doctl` CLI:
 
-            1. Create a replacement cluster inside the VPC network:
+            1. Create a replacement cluster in a dedicated VPC network:
 
                 ```bash
                 doctl kubernetes cluster create <new-name> \
@@ -3330,7 +3297,7 @@ queries:
                   --node-pool "name=default;size=s-1vcpu-2gb;count=3"
                 ```
 
-                - `<vpc-uuid>` is the `ID` of a VPC network in `<region>` from `doctl vpcs list --format ID,Name,Region`. Setting it gives the new cluster the VPC membership the check requires.
+                - `<vpc-uuid>` is the `ID` of a VPC network in `<region>` whose `Default` is `false`, from `doctl vpcs list --format ID,Name,Region,Default`. Create one with `doctl vpcs create --name <vpc-name> --region <region>` if none exists. Without `--vpc-uuid` the cluster lands in the default VPC and keeps failing.
                 - Adjust the `--node-pool` size and count to match the original cluster's node pools.
 
             2. Redeploy workloads to the new cluster, verify them, and repoint ingress and DNS.
@@ -3341,7 +3308,7 @@ queries:
                 ```
         - id: terraform
           desc: |
-            To deploy a DOKS cluster inside a VPC in Terraform, set `vpc_uuid` on the `digitalocean_kubernetes_cluster` resource:
+            To deploy a DOKS cluster in a dedicated VPC in Terraform, set `vpc_uuid` on the `digitalocean_kubernetes_cluster` resource to the ID of a `digitalocean_vpc` the configuration declares. A cluster without `vpc_uuid` is placed in the region's default VPC:
 
             ```hcl
             data "digitalocean_kubernetes_versions" "example" {
@@ -3368,7 +3335,7 @@ queries:
   - uid: mondoo-digitalocean-security-doks-in-vpc-digitalocean
     filters: asset.platform == "digitalocean-kubernetes-cluster"
     mql: |
-      digitalocean.kubernetes.cluster.vpc != null
+      digitalocean.kubernetes.cluster.vpc.default == false
   - uid: mondoo-digitalocean-security-doks-in-vpc-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "digitalocean_kubernetes_cluster")
     mql: |
@@ -3379,12 +3346,6 @@ queries:
       terraform.plan.resourceChanges
         .where(type == "digitalocean_kubernetes_cluster")
         .all(change.after.vpc_uuid != empty)
-  - uid: mondoo-digitalocean-security-doks-in-vpc-terraform-state
-    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "digitalocean_kubernetes_cluster")
-    mql: |
-      terraform.state.resources
-        .where(type == "digitalocean_kubernetes_cluster")
-        .all(values.vpc_uuid != empty)
 
   # No Terraform variants: the control-plane firewall is enforced by the managed DOKS control
   # plane and surfaced as live posture. controlPlaneFirewallEnabled is null until the feature is
@@ -4653,113 +4614,6 @@ queries:
         values["cors_rule"].none(_["allowed_origins"].contains("*"))
       )
 
-  # No Terraform variants: this check inspects the scheme of each app's live_url,
-  # which is a read-only computed attribute. App Platform always provisions managed
-  # TLS, so an HTTP live_url reflects a misconfigured custom domain at runtime — a
-  # condition the digitalocean_app resource has no argument to express, and that is
-  # absent from HCL and from a terraform plan before apply.
-  - uid: mondoo-digitalocean-security-app-platform-https
-    filters: asset.platform == "digitalocean"
-    title: Ensure App Platform apps are served over HTTPS
-    impact: 60
-    tags:
-      compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
-      compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-e-2-ii-transmission-security-encryption
-      compliance/iso-27001-2022: iso-27001-2022-a-8-24
-      compliance/nis-2: nis-2-21-2-h
-      compliance/nist-csf-1: nist-csf-1-pr-ds-2
-      compliance/nist-csf-2: nist-csf-2-pr-ds-02
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
-      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
-      compliance/owasp-top-10-2025: owasp-top-10-2025-a04
-      compliance/pci-dss-4: pcidss-requirement-4-2-1
-      compliance/soc2-2017: soc2-control-cc6-7-2
-      compliance/vda-isa-5: vda-isa-5-5-1-2
-    mql: |
-      digitalocean.apps.where(liveUrl != "").all(liveUrl == /^https:\/\//)
-    docs:
-      desc: |
-        This check verifies that every App Platform application with a public live URL serves requests over HTTPS.
-
-        App Platform automatically provisions managed TLS certificates for application URLs, so an app's live URL should always begin with `https://`. An HTTP live URL indicates a misconfigured custom domain or an incorrectly deployed application. The live URL is shown on the app's overview in the DigitalOcean Cloud Control Panel and returned by `doctl apps get`.
-
-        **Why this matters**
-
-        An app served over HTTP exposes every request and response to interception and modification, including authentication flows, session tokens, and API payloads. Session cookies captured this way can be replayed to impersonate an authenticated user, and the application has no way to detect it.
-
-        There is no technical barrier to fixing this. App Platform provides managed TLS certificates for all `ondigitalocean.app` URLs at no additional cost, so an HTTP live URL is never a cost or complexity trade-off.
-
-        It is also a reliable indicator of a custom domain configuration error. The same misconfiguration that leaves the live URL on HTTP will usually prevent certificate issuance for that domain, so the finding points at a problem that will not resolve itself.
-
-        Correct the custom domain's DNS records so the certificate can be issued, and confirm the application does not construct absolute HTTP URLs of its own once the certificate is in place.
-      audit: |
-        ### Audit via Console
-
-        1. Sign in to the DigitalOcean [Cloud Control Panel](https://cloud.digitalocean.com/).
-        2. Navigate to **App Platform** and review the **Live URL** column for each app.
-        3. Confirm that every live URL begins with `https://`.
-
-        A passing app shows a live URL that starts with `https://`. A failing app shows a live URL that starts with `http://`.
-
-        ### Audit via CLI
-
-        1. List all apps and inspect their live URLs:
-
-        ```bash
-        doctl apps list --output json | jq -r '.[] | [.id, .live_url] | @tsv'
-        ```
-
-        A passing app returns a `live_url` that begins with `https://`. A failing app returns a `live_url` that begins with `http://`.
-      remediation:
-        - id: console
-          desc: |
-            To fix this in the DigitalOcean Cloud Control Panel:
-
-            1. Navigate to **App Platform** and open the affected app.
-            2. Go to **Settings** > **Domains**.
-            3. Remove or correct any custom domain without a managed certificate, and verify that the generated app URL on `ondigitalocean.app` is reachable over HTTPS.
-            4. Trigger a new deployment if needed.
-        - id: cli
-          desc: |
-            App Platform serves managed TLS certificates automatically, so an HTTP `liveUrl` almost always means a custom domain is misconfigured. Pull the spec, fix the broken domain, and reapply.
-
-            1. Locate the affected app and pull its spec:
-
-                ```bash
-                doctl apps list --output json | jq -r '.[] | [.id, .live_url, .spec.name] | @tsv'
-                doctl apps spec get "<app-id>" > app.yaml
-                ```
-
-            2. Edit `app.yaml` to remove or correct the misconfigured custom domain. Each entry under `domains:` must point at a domain whose CNAME or A record resolves to the app's `ondigitalocean.app` ingress so App Platform can issue a managed cert. If the custom domain is no longer needed, drop the entry; the default `*.ondigitalocean.app` URL is always served over HTTPS.
-
-                ```yaml
-                domains:
-                  - domain: app.example.com
-                    type: PRIMARY
-                ```
-
-            3. Validate the spec, push it, and trigger a fresh deployment so the cert is reissued:
-
-                ```bash
-                doctl apps spec validate app.yaml
-                doctl apps update <app-id> --spec app.yaml
-                doctl apps create-deployment <app-id>
-                ```
-
-            4. Confirm the live URL is now HTTPS:
-
-                ```bash
-                doctl apps get "<app-id>" --output json | jq -r '.[0].live_url'
-                ```
-        # No Terraform remediation: an HTTP live_url is caused by a custom domain
-        # whose DNS does not resolve to the app's ingress, which Terraform cannot
-        # fix — the domain block in digitalocean_app does not control certificate
-        # issuance or the resulting URL scheme.
-    refs:
-      - url: https://docs.digitalocean.com/products/app-platform/how-to/manage-domains/
-        title: Manage App Platform domains and certificates
   # No Terraform variants: this check inspects the findings of the most recent
   # DigitalOcean-managed security scan — runtime telemetry produced by the platform
   # scanner. The digitalocean Terraform provider has no resource representing a scan
@@ -4784,13 +4638,12 @@ queries:
       compliance/soc2-2017: soc2-control-cc7-1-5
       compliance/vda-isa-5: vda-isa-5-5-2-5
     mql: |
-      digitalocean.latestSecurityScan != null &&
-      digitalocean.latestSecurityScan.findings.none(severity == "critical")
+      digitalocean.latestSecurityScan != null && digitalocean.latestSecurityScan.id != empty && digitalocean.latestSecurityScan.findings.none(severity == "critical")
     docs:
       desc: |
         This check verifies that the account's most recent DigitalOcean security scan reports no critical findings.
 
-        The DigitalOcean managed security scanner inspects account resources for misconfigurations and weaknesses and assigns each finding a severity. This check requires that a scan has run at all and that its latest results contain no finding at `critical` severity. Scan results are reviewed in the security section of the DigitalOcean Cloud Control Panel.
+        DigitalOcean Cloud Security Posture Management (CSPM) scans account resources for misconfigurations and weaknesses and assigns each finding a severity. This check requires that a scan has run at all and that its latest results contain no finding at `critical` severity. An account that has never enabled CSPM fails. Scan results are reviewed under **Security** in the DigitalOcean Cloud Control Panel and with `doctl security scans`.
 
         **Why this matters**
 
@@ -4805,29 +4658,59 @@ queries:
         ### Audit via Console
 
         1. Sign in to the DigitalOcean [Cloud Control Panel](https://cloud.digitalocean.com/).
-        2. Open the security scanning area and review the most recent scan.
+        2. Navigate to **Security** and open the most recent scan.
         3. Confirm the scan has completed and that it lists no findings with a **critical** severity.
 
         A passing account shows a completed scan with no critical findings. A failing account has no scan, or its latest scan lists one or more critical findings.
 
-        The `doctl` CLI has no command for managed security scans, so this check has no CLI audit step; review the latest scan in the control panel.
+        ### Audit via CLI
+
+        1. List the account's scans, then print the critical findings of the latest one:
+
+        ```bash
+        doctl security scans list
+        doctl security scans latest --severity critical
+        ```
+
+        A passing account lists at least one scan, and the second command prints no findings. A failing account lists no scan, or the second command prints one or more findings.
       remediation:
         - id: console
           desc: |
             To resolve critical security-scan findings using the DigitalOcean Cloud Control Panel:
 
             1. Sign in to the DigitalOcean [Cloud Control Panel](https://cloud.digitalocean.com/).
-            2. Open the security scanning area and select the most recent scan.
-            3. For each critical finding, follow the listed mitigation steps to remediate the affected resource.
-            4. Re-run the scan and confirm the critical findings are cleared.
-        # No CLI remediation: remediation is per-finding and resource-specific — the
-        # `doctl` CLI exposes no command to act on security-scan findings; follow the
-        # mitigation steps surfaced for each finding in the control panel.
+            2. Navigate to **Security**. If no scan has run, start one.
+            3. Open the most recent scan and, for each critical finding, follow the listed mitigation steps to remediate the affected resource.
+            4. Run a new scan and confirm the critical findings are cleared.
+        - id: cli
+          desc: |
+            The check reads the latest scan, so it passes only after a scan that runs once the findings are fixed. Each finding is fixed on the resource it names, with the command for that resource type.
+
+            To fix this on the command line using the `doctl` CLI:
+
+            1. Print the critical findings of the latest scan, then the resources each one affects:
+
+                ```bash
+                doctl security scans latest --severity critical
+                doctl security scans affected-resources <scan-uuid> --finding-uuid <finding-uuid>
+                ```
+
+                `<scan-uuid>` is the newest `ID` from `doctl security scans list`, and `<finding-uuid>` comes from the finding in the first command's JSON output, `doctl security scans latest --severity critical --output json`.
+
+            2. Remediate each affected resource as the finding describes.
+            3. Run a new scan and confirm that it reports no critical findings. The same command enables CSPM on an account that has never been scanned:
+
+                ```bash
+                doctl security scans create
+                doctl security scans latest --severity critical
+                ```
         # No Terraform remediation: security-scan findings are runtime telemetry with
         # no Terraform resource; remediate the underlying resource each finding identifies.
     refs:
-      - url: https://docs.digitalocean.com/products/
-        title: DigitalOcean product documentation
+      - url: https://docs.digitalocean.com/products/cspm/how-to/review-findings/
+        title: How to Review CSPM Findings
+      - url: https://docs.digitalocean.com/products/cspm/how-to/run-scans/
+        title: How to Run CSPM Scans
   - uid: mondoo-digitalocean-security-gradientai-agent-not-publicly-deployed
     title: Ensure GradientAI agents are not deployed with public visibility
     impact: 80
@@ -5865,84 +5748,6 @@ queries:
       - url: https://docs.digitalocean.com/products/functions/how-to/create-namespaces/
         title: How to Create Namespaces to Organize DigitalOcean Functions
 
-  # No Terraform variants: image visibility is not an argument on
-  # digitalocean_custom_image; publishing or unpublishing an image is a separate
-  # imperative action, so the public flag cannot be evaluated from Terraform.
-  - uid: mondoo-digitalocean-security-image-not-public
-    title: Ensure custom images are not publicly shared
-    impact: 80
-    filters: asset.platform == "digitalocean"
-    tags:
-      compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
-      compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
-      compliance/iso-27001-2022: iso-27001-2022-a-8-3
-      compliance/nis-2: nis-2-21-2-i
-      compliance/nist-csf-1: nist-csf-1-pr-ac-4
-      compliance/nist-csf-2: nist-csf-2-pr-aa-05
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
-      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
-      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
-      compliance/pci-dss-4: pcidss-requirement-7-2-1
-      compliance/soc2-2017: soc2-control-cc6-1-3
-      compliance/vda-isa-5: vda-isa-5-4-2-1
-    mql: |
-      digitalocean.images.all(public == false)
-    docs:
-      desc: |
-        This check verifies that no custom image, snapshot, or backup owned by the account is shared publicly.
-
-        A DigitalOcean image marked public can be listed and launched by any DigitalOcean user. Disk images capture whatever was present on the source system at build time, which routinely includes secrets, credentials, application source, and configuration. Visibility is managed under Images in the DigitalOcean Cloud Control Panel and reported by the `public` field on each image.
-
-        **Why this matters**
-
-        Golden images and snapshots routinely contain SSH keys, API tokens, database credentials, and application code that were on the source system when the image was captured. Anyone who launches a public image gets a running copy of all of it, with no need to break anything.
-
-        A public custom image also hands over proprietary software, configuration, and architecture to anyone who wants to inspect it. Once the image is public it can be copied by others, so the exposure persists after the image is later made private again, and the account owner has no way to recall the copies.
-
-        Keep custom images private and share them explicitly with named accounts only when that is required. Any image that was public should be rebuilt and every secret it may have exposed rotated, because reverting the visibility flag does not undo the distribution.
-      audit: |
-        ### Audit via Console
-
-        1. Sign in to the DigitalOcean [Cloud Control Panel](https://cloud.digitalocean.com/).
-        2. Navigate to **Images** and review the **Custom Images** and **Snapshots** tabs.
-        3. Check the visibility of each image.
-
-        A passing image is private to the account. A failing image is marked public.
-
-        ### Audit via CLI
-
-        1. List the images owned by the account and review the **Public** column:
-
-        ```bash
-        doctl compute image list-user --format ID,Name,Public
-        ```
-
-        A passing image shows `Public` as `false`. A failing image shows `Public` as `true`.
-      remediation:
-        - id: console
-          desc: |
-            To stop sharing a custom image publicly in the DigitalOcean Cloud Control Panel:
-
-            1. Navigate to **Images** and locate the public custom image or snapshot.
-            2. Remove its public sharing so it is private to the account.
-            3. If the image was public, rebuild it and rotate any secrets it may have contained, then delete the exposed image.
-        - id: cli
-          desc: |
-            Custom image visibility cannot be toggled from the CLI. Review the account's images and delete an exposed image once a private replacement exists:
-
-            ```bash
-            doctl compute image list-user --format ID,Name,Public
-            doctl compute image delete <image-id>
-            ```
-
-            Rebuild the image as private and rotate any secrets it may have exposed before deleting the public copy.
-        # No Terraform remediation: image visibility is not a digitalocean_custom_image
-        # argument; publishing and unpublishing are imperative actions outside Terraform.
-    refs:
-      - url: https://docs.digitalocean.com/products/custom-images/
-        title: DigitalOcean custom images
 
   # No Terraform variants: the load balancer firewall is a nested block whose
   # allow entries are encoded with cidr:/ip: prefixes; the runtime check inspects
@@ -5969,12 +5774,13 @@ queries:
       compliance/vda-isa-5: vda-isa-5-5-2-7
     mql: |
       digitalocean.loadBalancer.firewallAllow == empty ||
-      digitalocean.loadBalancer.firewallAllow.all(_.contains("/0") == false)
+      digitalocean.loadBalancer.firewallAllow.all(_.contains("/0") == false) &&
+      digitalocean.loadBalancer.exposure.firewallAllowsIngress == false
     docs:
       desc: |
         This check verifies that a load balancer's source-IP allowlist does not contain an any-address entry.
 
-        The DigitalOcean load balancer firewall restricts which source addresses can reach the balancer. This check applies when an allowlist is defined and requires that none of its entries carry a `/0` mask such as `0.0.0.0/0` or `::/0`. The allowlist is edited on the load balancer's settings page in the DigitalOcean Cloud Control Panel and expressed as the firewall allow rules in the API.
+        The DigitalOcean load balancer firewall restricts which source addresses can reach the balancer. This check applies when an allowlist is defined and requires that none of its entries carry a `/0` mask such as `0.0.0.0/0` or `::/0`, and that its entries do not together cover every IPv4 or IPv6 address, as `cidr:0.0.0.0/1` plus `cidr:128.0.0.0/1` do. The allowlist is edited on the load balancer's settings page in the DigitalOcean Cloud Control Panel and expressed as the firewall allow rules in the API.
 
         **Why this matters**
 
@@ -5992,7 +5798,7 @@ queries:
         2. Navigate to **Networking** > **Load Balancers** and open each load balancer.
         3. On the **Settings** tab, review the firewall (allow/deny) rules.
 
-        A passing load balancer either has no allow rules or lists only specific source ranges. A failing load balancer has an allow rule of `0.0.0.0/0` or `::/0`.
+        A passing load balancer either has no allow rules or lists only specific source ranges. A failing load balancer has an allow rule of `0.0.0.0/0` or `::/0`, or allow rules that together cover every address.
 
         ### Audit via CLI
 
@@ -6003,7 +5809,7 @@ queries:
         doctl compute load-balancer get <load-balancer-id>
         ```
 
-        A passing load balancer's allow list is empty or contains only specific ranges. A failing load balancer's allow list contains `cidr:0.0.0.0/0` or `cidr:::/0`.
+        A passing load balancer's allow list is empty or contains only specific ranges. A failing load balancer's allow list contains `cidr:0.0.0.0/0` or `cidr:::/0`, or ranges that add up to every address, such as `cidr:0.0.0.0/1` and `cidr:128.0.0.0/1`.
       remediation:
         - id: console
           desc: |
@@ -6014,7 +5820,7 @@ queries:
             3. Add the specific source ranges that need access, or remove the allowlist entirely if the load balancer is meant to be public.
         - id: cli
           desc: |
-            The load balancer passes once its firewall allow list is empty or contains no entry with a `/0` prefix, such as `cidr:0.0.0.0/0` or `cidr:::/0`.
+            The load balancer passes once its firewall allow list is empty, or contains no entry with a `/0` prefix, such as `cidr:0.0.0.0/0` or `cidr:::/0`, and no set of entries that together cover every address.
 
             **Sources left out of a non-empty allow list can no longer reach the load balancer.** Include every client, CDN, and monitoring range that must connect, or leave the allow list empty if the load balancer is meant to be public.
 
