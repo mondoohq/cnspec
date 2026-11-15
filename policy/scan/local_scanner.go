@@ -549,6 +549,15 @@ func (s *LocalScanner) distributeJob(job *Job, ctx context.Context, upstream *up
 		return reporter.Reports(), nil
 	}
 
+	// Connecting replaces the inventory asset with the one the provider built,
+	// and providers name that asset after what they found (hostname, computer
+	// name, cloud instance), so --asset-name is gone by now. Put it back on the
+	// root, the target the user named. Discovered children keep the names their
+	// provider gave them.
+	if roots := explorer.Connected(); job.AssetName != "" && len(roots) == 1 {
+		roots[0].Asset.Name = job.AssetName
+	}
+
 	multiprogress, err := createProgressBar(s.disableProgressBar)
 	if err != nil {
 		return nil, err

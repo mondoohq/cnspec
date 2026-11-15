@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -636,6 +637,59 @@ func (s *LocalScannerSuite) TestRunIncognito_ContextCancellation() {
 	_, err = scanner.RunIncognito(ctx, s.job)
 	// The scan should return a context error, not hang
 	s.Error(err)
+}
+
+// --asset-name puts the name on the inventory asset, and the provider then
+// names the asset it connects to. The scanned asset must carry the name the
+// user asked for, not the provider's.
+func (s *LocalScannerSuite) TestRunIncognito_AssetNameOverride() {
+	loader := policy.DefaultBundleLoader()
+	bundle, err := loader.BundleFromPaths("./testdata/shared-query.mql.yaml")
+	s.Require().NoError(err)
+	_, err = bundle.CompileExt(context.Background(), policy.BundleCompileConf{
+		CompilerConfig: s.conf,
+		RemoveFailing:  true,
+	})
+	s.Require().NoError(err)
+
+	scanNames := func(job *Job) []string {
+		job.Bundle = bundle
+		res, err := NewLocalScanner(DisableProgressBar()).RunIncognito(context.Background(), job)
+		s.Require().NoError(err)
+		// a failed connection reports the inventory asset, name and all
+		s.Require().Empty(res.GetFull().GetErrors())
+		names := []string{}
+		for _, a := range res.GetFull().GetAssets() {
+			names = append(names, a.Name)
+		}
+		return names
+	}
+
+	// The tar connection names the asset after what it finds, whatever name
+	// the inventory asset arrived with.
+	s.Run("root asset takes the requested name", func() {
+		// absolute: the provider runs in its own process and working directory
+		tarFile, err := filepath.Abs("./testdata/asset-name.tar")
+		s.Require().NoError(err)
+		s.job.Inventory.Spec.Assets[0] = &inventory.Asset{
+			Name: "my-asset",
+			Connections: []*inventory.Config{{
+				Type:    "tar",
+				Options: map[string]string{"path": tarFile},
+			}},
+		}
+		s.job.AssetName = "my-asset"
+		s.Equal([]string{"my-asset"}, scanNames(s.job))
+	})
+
+	s.Run("discovered children keep their own names", func() {
+		s.BeforeTest("", "")
+		s.job.Inventory.Spec.Assets[0].Name = "my-asset"
+		s.job.AssetName = "my-asset"
+		names := scanNames(s.job)
+		s.Require().Len(names, 1)
+		s.NotEqual("my-asset", names[0])
+	})
 }
 
 func TestGetAssetDetectBundle(t *testing.T) {
