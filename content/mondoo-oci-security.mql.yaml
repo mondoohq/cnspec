@@ -175,10 +175,7 @@ policies:
       - title: Certificates
         checks:
           - uid: mondoo-oci-security-certificates-not-expired
-          - uid: mondoo-oci-security-certificates-strong-key-algorithms
-          - uid: mondoo-oci-security-certificates-strong-signature-algorithms
           - uid: mondoo-oci-security-certificates-auto-renewal-enabled
-          - uid: mondoo-oci-security-certificate-authorities-customer-managed-keys
       - title: Generative AI
         checks:
           - uid: mondoo-oci-security-genai-endpoint-prompt-injection-detection
@@ -204,7 +201,10 @@ queries:
   - uid: mondoo-oci-security-iam-mfa-enabled-for-active-users
     title: Ensure MFA is enabled for all active IAM users
     impact: 90
-    filters: asset.platform == "oci-identity-user" && oci.identity.user.state == "ACTIVE"
+    filters: |
+      asset.platform == "oci-identity-user" &&
+      oci.identity.user.state == "ACTIVE" &&
+      oci.identity.domains.none(users.any(ocid == oci.identity.user.id && active == false))
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-14
@@ -292,7 +292,11 @@ queries:
   - uid: mondoo-oci-security-iam-user-emails-verified
     title: Ensure IAM user email addresses are verified
     impact: 60
-    filters: asset.platform == "oci-identity-user" && oci.identity.user.state == "ACTIVE" && oci.identity.user.email != ""
+    filters: |
+      asset.platform == "oci-identity-user" &&
+      oci.identity.user.state == "ACTIVE" &&
+      oci.identity.domains.none(users.any(ocid == oci.identity.user.id && active == false)) &&
+      oci.identity.user.email != empty
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-13
@@ -543,7 +547,9 @@ queries:
   - uid: mondoo-oci-security-iam-inactive-users-no-active-api-keys
     title: Ensure inactive users have no active API keys
     impact: 80
-    filters: asset.platform == "oci-identity-user" && oci.identity.user.state != "ACTIVE"
+    filters: |
+      asset.platform == "oci-identity-user" && oci.identity.user.state != "ACTIVE" ||
+      asset.platform == "oci-identity-user" && oci.identity.domains.any(users.any(ocid == oci.identity.user.id && active == false))
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-07
@@ -565,7 +571,7 @@ queries:
       desc: |
         This check verifies that programmatic credentials are revoked when a user account is deactivated, by requiring that users outside the active lifecycle state hold no API signing key in the active state.
 
-        An OCI API signing key is an RSA key pair. The public half is uploaded against the user and identified by fingerprint, and the private half signs every REST API and SDK request that user makes. Deactivating the user changes the account lifecycle state and blocks Console sign-in, but it does nothing to the keys. They stay listed against the account and stay usable. Removing them is a separate action, taken under Identity & Security > Domains > Users on the user's API keys, or with `oci iam user api-key delete` against the key fingerprint.
+        An OCI API signing key is an RSA key pair. The public half is uploaded against the user and identified by fingerprint, and the private half signs every REST API and SDK request that user makes. Deactivating the user changes the account lifecycle state and blocks Console sign-in, but it does nothing to the keys. They stay listed against the account and stay usable. Removing them is a separate action, taken under Identity & Security > Domains > Users on the user's API keys, or with `oci iam user api-key delete` against the key fingerprint. A user deactivated in an identity domain keeps the `ACTIVE` lifecycle state in the IAM API, so the check also reads the domain's own record and treats a user the domain marks inactive as deactivated.
 
         **Why this matters**
 
@@ -581,7 +587,7 @@ queries:
 
         1. Sign in to the OCI Console.
         2. Navigate to **Identity & Security > Users**.
-        3. Filter or identify users whose **State** is not **Active**.
+        3. Filter or identify users whose **Status** is not **Active**. In an identity domain, this is the status shown under **Identity & Security > Domains > Users**.
         4. For each inactive user, select the user name.
         5. Under **Resources**, select **API Keys**.
         6. Review whether any listed API keys have a state of **Active**.
@@ -627,7 +633,9 @@ queries:
   - uid: mondoo-oci-security-iam-inactive-users-no-active-auth-tokens
     title: Ensure inactive users have no active auth tokens
     impact: 80
-    filters: asset.platform == "oci-identity-user" && oci.identity.user.state != "ACTIVE"
+    filters: |
+      asset.platform == "oci-identity-user" && oci.identity.user.state != "ACTIVE" ||
+      asset.platform == "oci-identity-user" && oci.identity.domains.any(users.any(ocid == oci.identity.user.id && active == false))
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-07
@@ -649,7 +657,7 @@ queries:
       desc: |
         This check verifies that token credentials are revoked at deprovisioning, by requiring that users outside the active lifecycle state hold no auth token in the active state.
 
-        An OCI auth token is an Oracle-generated password string used where request signing is not an option, notably for `docker login` against Container Registry, for the Swift API in front of Object Storage, and for service integrations such as Autonomous Database. The token value is displayed once at creation and never again, and each user may hold at most two. Deactivating the account leaves those tokens in place and usable. Deleting them is a separate step, taken on the user under Identity & Security > Domains > Users or with `oci iam auth-token delete`.
+        An OCI auth token is an Oracle-generated password string used where request signing is not an option, notably for `docker login` against Container Registry, for the Swift API in front of Object Storage, and for service integrations such as Autonomous Database. The token value is displayed once at creation and never again, and each user may hold at most two. Deactivating the account leaves those tokens in place and usable. Deleting them is a separate step, taken on the user under Identity & Security > Domains > Users or with `oci iam auth-token delete`. A user deactivated in an identity domain keeps the `ACTIVE` lifecycle state in the IAM API, so the check also reads the domain's own record and treats a user the domain marks inactive as deactivated.
 
         **Why this matters**
 
@@ -665,7 +673,7 @@ queries:
 
         1. Sign in to the OCI Console.
         2. Navigate to **Identity & Security > Users**.
-        3. Filter or identify users whose **State** is not **Active**.
+        3. Filter or identify users whose **Status** is not **Active**. In an identity domain, this is the status shown under **Identity & Security > Domains > Users**.
         4. For each inactive user, select the user name.
         5. Under **Resources**, select **Auth Tokens**.
         6. Review whether any listed auth tokens have a state of **Active**.
@@ -1240,7 +1248,7 @@ queries:
         values.kms_key_id != empty
       )
   - uid: mondoo-oci-security-vcn-no-unrestricted-ingress-all-protocols
-    title: Ensure VCN security lists block unrestricted ingress from 0.0.0.0/0
+    title: Ensure VCN security lists block all-protocol ingress from the internet
     impact: 90
     tags:
       compliance/bsi-sys-1-5: false
@@ -1278,7 +1286,7 @@ queries:
       desc: |
         This check verifies that no VCN security list admits every network protocol from the public internet.
 
-        A security list is the subnet-level firewall of an OCI Virtual Cloud Network, and every VNIC placed in the subnet inherits its rules. An ingress rule that pairs `protocol: all` with `source: 0.0.0.0/0` and a `sourceType` of `CIDR_BLOCK` matches TCP, UDP, ICMP and every other IP protocol in a single line, so the subnet boundary stops filtering anything inbound. The check requires that no rule combines those two values. Rules live under Networking > Virtual Cloud Networks > Security Lists in the Console and are edited with `oci network security-list update`.
+        A security list is the subnet-level firewall of an OCI Virtual Cloud Network, and every VNIC placed in the subnet inherits its rules. An ingress rule that pairs `protocol: all` with `source: 0.0.0.0/0` and a `sourceType` of `CIDR_BLOCK` matches TCP, UDP, ICMP and every other IP protocol in a single line, so the subnet boundary stops filtering anything inbound. The check requires that no rule combines those two values. Rules live under Networking > Virtual Cloud Networks > Security Lists in the Console and are edited with `oci network security-list update`. `::/0` is the IPv6 internet and counts the same as `0.0.0.0/0`.
 
         **Why this matters**
 
@@ -1367,28 +1375,28 @@ queries:
   - uid: mondoo-oci-security-vcn-no-unrestricted-ingress-all-protocols-oci
     filters: asset.platform == "oci-network-securitylist"
     mql: |
-      oci.network.securityList.ingressRules.none(
-        source == "0.0.0.0/0" && protocol == "all"
-      )
+      oci.network.securityList.ingressRules.where(
+        source == /^(0\.0\.0\.0|::)\/0$/
+      ).none(protocol == "all")
   - uid: mondoo-oci-security-vcn-no-unrestricted-ingress-all-protocols-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "oci_core_security_list")
     mql: |
       terraform.resources("oci_core_security_list").all(
         blocks.where(type == "ingress_security_rules").none(
-          arguments.source == "0.0.0.0/0" && arguments.protocol == "all"
+          arguments.source == /^(0\.0\.0\.0|::)\/0$/ && arguments.protocol == "all"
         )
       )
   - uid: mondoo-oci-security-vcn-no-unrestricted-ingress-all-protocols-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "oci_core_security_list")
     mql: |
       terraform.plan.resourceChanges.where(type == "oci_core_security_list").all(
-        change.after.ingress_security_rules.none(_['source'] == "0.0.0.0/0" && _['protocol'] == "all")
+        change.after.ingress_security_rules.none(_['source'] == /^(0\.0\.0\.0|::)\/0$/ && _['protocol'] == "all")
       )
   - uid: mondoo-oci-security-vcn-no-unrestricted-ingress-all-protocols-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "oci_core_security_list")
     mql: |
       terraform.state.resources.where(type == "oci_core_security_list").all(
-        values.ingress_security_rules.none(_['source'] == "0.0.0.0/0" && _['protocol'] == "all")
+        values.ingress_security_rules.none(_['source'] == /^(0\.0\.0\.0|::)\/0$/ && _['protocol'] == "all")
       )
   - uid: mondoo-oci-security-vcn-no-unrestricted-ingress-all-tcp-ports
     title: Ensure VCN security lists block unrestricted TCP ingress
@@ -1429,7 +1437,7 @@ queries:
       desc: |
         This check verifies that every TCP ingress rule accepting traffic from the public internet is scoped to a destination port range.
 
-        An OCI security list rule names its protocol by IANA number, so TCP is `6`, and the destination port range lives in an optional `tcpOptions` block, written `tcp_options` in Terraform. Omitting that block is not a neutral default. A rule with protocol `6`, source `0.0.0.0/0` and no `tcpOptions` opens all 65535 TCP ports on every instance in the subnet. The port range is set in the rule editor on the security list details page in the Console, or in the ingress rules payload passed to `oci network security-list update`.
+        An OCI security list rule names its protocol by IANA number, so TCP is `6`, and the destination port range lives in an optional `tcpOptions` block, written `tcp_options` in Terraform. Omitting that block is not a neutral default. A rule with protocol `6`, source `0.0.0.0/0` and no `tcpOptions` opens all 65535 TCP ports on every instance in the subnet. The port range is set in the rule editor on the security list details page in the Console, or in the ingress rules payload passed to `oci network security-list update`. `::/0` is the IPv6 internet and counts the same as `0.0.0.0/0`. A rule for all protocols covers TCP as well and names no port range, so it is flagged too.
 
         **Why this matters**
 
@@ -1529,15 +1537,17 @@ queries:
   - uid: mondoo-oci-security-vcn-no-unrestricted-ingress-all-tcp-ports-oci
     filters: asset.platform == "oci-network-securitylist"
     mql: |
+      # Both address families count as the internet, and a rule for all protocols
+      # covers TCP and UDP as well, so neither can slip past the port test.
       oci.network.securityList.ingressRules.where(
-        source == "0.0.0.0/0" && protocol == "6"
-      ).none(destinationPortMin == null)
+        source == /^(0\.0\.0\.0|::)\/0$/ && protocol == /^(6|all)$/
+      ).none(destinationPortMin == empty)
   - uid: mondoo-oci-security-vcn-no-unrestricted-ingress-all-tcp-ports-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "oci_core_security_list")
     mql: |
       terraform.resources("oci_core_security_list").all(
         blocks.where(
-          type == "ingress_security_rules" && arguments.source == "0.0.0.0/0" && arguments.protocol == "6"
+          type == "ingress_security_rules" && arguments.source == /^(0\.0\.0\.0|::)\/0$/ && arguments.protocol == /^(6|all)$/
         ).all(
           blocks.where(type == "tcp_options") != empty
         )
@@ -1547,7 +1557,7 @@ queries:
     mql: |
       terraform.plan.resourceChanges.where(type == "oci_core_security_list").all(
         change.after.ingress_security_rules
-          .where(_['source'] == "0.0.0.0/0" && _['protocol'] == "6")
+          .where(_['source'] == /^(0\.0\.0\.0|::)\/0$/ && _['protocol'] == /^(6|all)$/)
           .none(_['tcp_options'] == empty)
       )
   - uid: mondoo-oci-security-vcn-no-unrestricted-ingress-all-tcp-ports-terraform-state
@@ -1555,11 +1565,11 @@ queries:
     mql: |
       terraform.state.resources.where(type == "oci_core_security_list").all(
         values.ingress_security_rules
-          .where(_['source'] == "0.0.0.0/0" && _['protocol'] == "6")
+          .where(_['source'] == /^(0\.0\.0\.0|::)\/0$/ && _['protocol'] == /^(6|all)$/)
           .none(_['tcp_options'] == empty)
       )
   - uid: mondoo-oci-security-vcn-no-unrestricted-egress-all-protocols
-    title: Ensure VCN security lists block unrestricted egress to 0.0.0.0/0
+    title: Ensure VCN security lists block all-protocol egress to the internet
     impact: 70
     tags:
       compliance/bsi-sys-1-5: false
@@ -1597,7 +1607,7 @@ queries:
       desc: |
         This check verifies that no VCN security list permits outbound traffic on every protocol to every destination on the internet.
 
-        Egress rules govern traffic leaving the subnet and carry a `destination` plus a `destinationType`, which is either `CIDR_BLOCK` for an arbitrary range or `SERVICE_CIDR_BLOCK` for an Oracle services label reached through a service gateway. A rule combining `protocol: all` with `destination: 0.0.0.0/0` places no constraint at all on what an instance may talk to. The check requires that no egress rule holds both values. Egress rules are managed on the security list details page in the Console or through `oci network security-list update`.
+        Egress rules govern traffic leaving the subnet and carry a `destination` plus a `destinationType`, which is either `CIDR_BLOCK` for an arbitrary range or `SERVICE_CIDR_BLOCK` for an Oracle services label reached through a service gateway. A rule combining `protocol: all` with `destination: 0.0.0.0/0` places no constraint at all on what an instance may talk to. The check requires that no egress rule holds both values. Egress rules are managed on the security list details page in the Console or through `oci network security-list update`. A destination of `::/0` is the IPv6 internet and counts the same as `0.0.0.0/0`.
 
         **Why this matters**
 
@@ -1686,34 +1696,38 @@ queries:
   - uid: mondoo-oci-security-vcn-no-unrestricted-egress-all-protocols-oci
     filters: asset.platform == "oci-network-securitylist"
     mql: |
-      oci.network.securityList.egressRules.none(
-        destination == "0.0.0.0/0" && protocol == "all"
-      )
+      oci.network.securityList.egressRules.where(
+        destination == /^(0\.0\.0\.0|::)\/0$/
+      ).none(protocol == "all")
   - uid: mondoo-oci-security-vcn-no-unrestricted-egress-all-protocols-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "oci_core_security_list")
     mql: |
       terraform.resources("oci_core_security_list").all(
         blocks.where(type == "egress_security_rules").none(
-          arguments.destination == "0.0.0.0/0" && arguments.protocol == "all"
+          arguments.destination == /^(0\.0\.0\.0|::)\/0$/ && arguments.protocol == "all"
         )
       )
   - uid: mondoo-oci-security-vcn-no-unrestricted-egress-all-protocols-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "oci_core_security_list")
     mql: |
       terraform.plan.resourceChanges.where(type == "oci_core_security_list").all(
-        change.after.egress_security_rules.none(_['destination'] == "0.0.0.0/0" && _['protocol'] == "all")
+        change.after.egress_security_rules.none(_['destination'] == /^(0\.0\.0\.0|::)\/0$/ && _['protocol'] == "all")
       )
   - uid: mondoo-oci-security-vcn-no-unrestricted-egress-all-protocols-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "oci_core_security_list")
     mql: |
       terraform.state.resources.where(type == "oci_core_security_list").all(
-        values.egress_security_rules.none(_['destination'] == "0.0.0.0/0" && _['protocol'] == "all")
+        values.egress_security_rules.none(_['destination'] == /^(0\.0\.0\.0|::)\/0$/ && _['protocol'] == "all")
       )
   # No Terraform variants: last-login recency is runtime telemetry; the `oci_identity_user` Terraform resource has no `last-successful-login-time` field.
   - uid: mondoo-oci-security-iam-stale-active-users
     title: Ensure active IAM users have logged in within the last 90 days
     impact: 70
-    filters: asset.platform == "oci-identity-user" && oci.identity.user.state == "ACTIVE" && oci.identity.user.lastLogin != empty
+    filters: |
+      asset.platform == "oci-identity-user" &&
+      oci.identity.user.state == "ACTIVE" &&
+      oci.identity.domains.none(users.any(ocid == oci.identity.user.id && active == false)) &&
+      oci.identity.user.lastLogin != empty
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-07
@@ -2181,13 +2195,19 @@ queries:
 
         ### Audit via CLI
 
-        1. List all buckets in the compartment and retrieve their storage tier and versioning status:
+        1. List the buckets in the compartment:
 
         ```bash
-        oci os bucket list --compartment-id <compartment-ocid> --fields versioning,storageTier --all --query 'data[?"storage-tier"==`Archive`].{name: name, versioning: versioning}'
+        oci os bucket list --compartment-id <compartment-ocid> --all --query 'data[].name'
         ```
 
-        A passing bucket returns `"versioning": "Enabled"` for every archive-tier entry. A failing bucket returns `"versioning": "Disabled"` or `"versioning": "Suspended"` for one or more archive-tier entries.
+        2. Retrieve each bucket's storage tier and versioning status, since the bucket list returns neither:
+
+        ```bash
+        oci os bucket get --bucket-name <bucket-name> --query 'data.{name:name, tier:"storage-tier", versioning:versioning}'
+        ```
+
+        A passing archive-tier bucket returns `"versioning": "Enabled"`. A failing one returns `"versioning": "Disabled"` or `"versioning": "Suspended"`.
       remediation:
         - id: console
           desc: |
@@ -2248,7 +2268,7 @@ queries:
           values.versioning == "Enabled"
         )
   - uid: mondoo-oci-security-vcn-no-unrestricted-ssh-ingress
-    title: Ensure VCN security lists block SSH ingress from 0.0.0.0/0
+    title: Ensure VCN security lists block SSH ingress from the internet
     impact: 90
     tags:
       compliance/bsi-sys-1-5: false
@@ -2286,7 +2306,7 @@ queries:
       desc: |
         This check verifies that SSH administrative access is never reachable from the entire internet.
 
-        The rule shape the check rejects is TCP, protocol number `6`, with source `0.0.0.0/0` and a destination port range that covers 22, including a rule that names no port range at all and therefore covers 22 by omission. A security list applies to every VNIC in its subnet, so one such rule exposes port 22 on every instance there, including instances whose owners never intended to accept remote logins. Tighten the source on the security list details page in the Console or with `oci network security-list update`.
+        The rule shape the check rejects is TCP, protocol number `6`, with source `0.0.0.0/0` and a destination port range that covers 22, including a rule that names no port range at all and therefore covers 22 by omission. A security list applies to every VNIC in its subnet, so one such rule exposes port 22 on every instance there, including instances whose owners never intended to accept remote logins. Tighten the source on the security list details page in the Console or with `oci network security-list update`. `::/0` is the IPv6 internet and counts the same as `0.0.0.0/0`. A rule for all protocols covers TCP as well and names no port range, so it is flagged too.
 
         **Why this matters**
 
@@ -2380,8 +2400,10 @@ queries:
   - uid: mondoo-oci-security-vcn-no-unrestricted-ssh-ingress-oci
     filters: asset.platform == "oci-network-securitylist"
     mql: |
+      # Both address families count as the internet, and a rule for all protocols
+      # covers TCP and UDP as well, so neither can slip past the port test.
       oci.network.securityList.ingressRules.where(
-        source == "0.0.0.0/0" && protocol == "6"
+        source == /^(0\.0\.0\.0|::)\/0$/ && protocol == /^(6|all)$/
       ).none(
         destinationPortMin == empty || destinationPortMin <= 22 && destinationPortMax >= 22
       )
@@ -2390,7 +2412,7 @@ queries:
     mql: |
       terraform.resources("oci_core_security_list").all(
         blocks.where(
-          type == "ingress_security_rules" && arguments.source == "0.0.0.0/0" && arguments.protocol == "6"
+          type == "ingress_security_rules" && arguments.source == /^(0\.0\.0\.0|::)\/0$/ && arguments.protocol == /^(6|all)$/
         ).none(
           blocks.where(type == "tcp_options") == empty ||
           blocks.where(type == "tcp_options").any(
@@ -2404,10 +2426,10 @@ queries:
     mql: |
       terraform.plan.resourceChanges.where(type == "oci_core_security_list").all(
         change.after.ingress_security_rules
-          .where(_['source'] == "0.0.0.0/0" && _['protocol'] == "6")
+          .where(_['source'] == /^(0\.0\.0\.0|::)\/0$/ && _['protocol'] == /^(6|all)$/)
           .none(
             _['tcp_options'] == empty || _['tcp_options'].any(
-              _['destination_port_range'].any(_['min'] <= 22 && _['max'] >= 22)
+              _['min'] <= 22 && _['max'] >= 22
             )
           )
       )
@@ -2415,14 +2437,14 @@ queries:
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "oci_core_security_list")
     mql: |
       terraform.state.resources.where(type == "oci_core_security_list").all(
-        values.ingress_security_rules.where(_['source'] == "0.0.0.0/0" && _['protocol'] == "6").none(
+        values.ingress_security_rules.where(_['source'] == /^(0\.0\.0\.0|::)\/0$/ && _['protocol'] == /^(6|all)$/).none(
           _['tcp_options'] == empty || _['tcp_options'].any(
-            _['destination_port_range'].any(_['min'] <= 22 && _['max'] >= 22)
+            _['min'] <= 22 && _['max'] >= 22
           )
         )
       )
   - uid: mondoo-oci-security-vcn-no-unrestricted-rdp-ingress
-    title: Ensure VCN security lists block RDP ingress from 0.0.0.0/0
+    title: Ensure VCN security lists block RDP ingress from the internet
     impact: 90
     tags:
       compliance/bsi-sys-1-5: false
@@ -2460,7 +2482,7 @@ queries:
       desc: |
         This check verifies that Windows remote desktop access is not exposed to the whole internet.
 
-        The check rejects TCP ingress, protocol number `6`, from source `0.0.0.0/0` whose destination port range covers 3389, and equally a rule that specifies no port range, since that covers 3389 as well. Because a security list governs the entire subnet, the rule reaches every Windows instance placed in it. Rules are edited on the security list details page under Networking > Virtual Cloud Networks, or with `oci network security-list update`.
+        The check rejects TCP ingress, protocol number `6`, from source `0.0.0.0/0` whose destination port range covers 3389, and equally a rule that specifies no port range, since that covers 3389 as well. Because a security list governs the entire subnet, the rule reaches every Windows instance placed in it. Rules are edited on the security list details page under Networking > Virtual Cloud Networks, or with `oci network security-list update`. `::/0` is the IPv6 internet and counts the same as `0.0.0.0/0`. A rule for all protocols covers TCP as well and names no port range, so it is flagged too.
 
         **Why this matters**
 
@@ -2554,8 +2576,10 @@ queries:
   - uid: mondoo-oci-security-vcn-no-unrestricted-rdp-ingress-oci
     filters: asset.platform == "oci-network-securitylist"
     mql: |
+      # Both address families count as the internet, and a rule for all protocols
+      # covers TCP and UDP as well, so neither can slip past the port test.
       oci.network.securityList.ingressRules.where(
-        source == "0.0.0.0/0" && protocol == "6"
+        source == /^(0\.0\.0\.0|::)\/0$/ && protocol == /^(6|all)$/
       ).none(
         destinationPortMin == empty || destinationPortMin <= 3389 && destinationPortMax >= 3389
       )
@@ -2564,7 +2588,7 @@ queries:
     mql: |
       terraform.resources("oci_core_security_list").all(
         blocks.where(
-          type == "ingress_security_rules" && arguments.source == "0.0.0.0/0" && arguments.protocol == "6"
+          type == "ingress_security_rules" && arguments.source == /^(0\.0\.0\.0|::)\/0$/ && arguments.protocol == /^(6|all)$/
         ).none(
           blocks.where(type == "tcp_options") == empty ||
           blocks.where(type == "tcp_options").any(
@@ -2578,10 +2602,10 @@ queries:
     mql: |
       terraform.plan.resourceChanges.where(type == "oci_core_security_list").all(
         change.after.ingress_security_rules
-          .where(_['source'] == "0.0.0.0/0" && _['protocol'] == "6")
+          .where(_['source'] == /^(0\.0\.0\.0|::)\/0$/ && _['protocol'] == /^(6|all)$/)
           .none(
             _['tcp_options'] == empty || _['tcp_options'].any(
-              _['destination_port_range'].any(_['min'] <= 3389 && _['max'] >= 3389)
+              _['min'] <= 3389 && _['max'] >= 3389
             )
           )
       )
@@ -2589,9 +2613,9 @@ queries:
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "oci_core_security_list")
     mql: |
       terraform.state.resources.where(type == "oci_core_security_list").all(
-        values.ingress_security_rules.where(_['source'] == "0.0.0.0/0" && _['protocol'] == "6").none(
+        values.ingress_security_rules.where(_['source'] == /^(0\.0\.0\.0|::)\/0$/ && _['protocol'] == /^(6|all)$/).none(
           _['tcp_options'] == empty || _['tcp_options'].any(
-            _['destination_port_range'].any(_['min'] <= 3389 && _['max'] >= 3389)
+            _['min'] <= 3389 && _['max'] >= 3389
           )
         )
       )
@@ -2634,7 +2658,7 @@ queries:
       desc: |
         This check verifies that every UDP ingress rule accepting internet traffic names the destination ports it opens.
 
-        UDP is protocol `17` in an OCI security list rule, and its port range lives in an optional `udpOptions` block. A rule with source `0.0.0.0/0`, protocol `17` and no `udpOptions` exposes every UDP port on every instance in the subnet, so the check requires the port range to be present. Set it in the rule editor on the security list details page in the Console, or in the ingress rules payload of `oci network security-list update`.
+        UDP is protocol `17` in an OCI security list rule, and its port range lives in an optional `udpOptions` block. A rule with source `0.0.0.0/0`, protocol `17` and no `udpOptions` exposes every UDP port on every instance in the subnet, so the check requires the port range to be present. Set it in the rule editor on the security list details page in the Console, or in the ingress rules payload of `oci network security-list update`. `::/0` is the IPv6 internet and counts the same as `0.0.0.0/0`. A rule for all protocols covers UDP as well and names no port range, so it is flagged too.
 
         **Why this matters**
 
@@ -2722,8 +2746,10 @@ queries:
   - uid: mondoo-oci-security-vcn-no-unrestricted-udp-ingress-oci
     filters: asset.platform == "oci-network-securitylist"
     mql: |
+      # Both address families count as the internet, and a rule for all protocols
+      # covers TCP and UDP as well, so neither can slip past the port test.
       oci.network.securityList.ingressRules.where(
-        source == "0.0.0.0/0" && protocol == "17"
+        source == /^(0\.0\.0\.0|::)\/0$/ && protocol == /^(17|all)$/
       ).none(destinationPortMin == empty)
   - uid: mondoo-oci-security-vcn-no-unrestricted-udp-ingress-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "oci_core_security_list")
@@ -2731,8 +2757,8 @@ queries:
       terraform.resources("oci_core_security_list").all(
         blocks.where(
           type == "ingress_security_rules" &&
-          arguments.source == "0.0.0.0/0" &&
-          arguments.protocol == "17"
+          arguments.source == /^(0\.0\.0\.0|::)\/0$/ &&
+          arguments.protocol == /^(17|all)$/
         ).all(
           blocks.where(type == "udp_options") != empty
         )
@@ -2742,7 +2768,7 @@ queries:
     mql: |
       terraform.plan.resourceChanges.where(type == "oci_core_security_list").all(
         change.after.ingress_security_rules
-          .where(_['source'] == "0.0.0.0/0" && _['protocol'] == "17")
+          .where(_['source'] == /^(0\.0\.0\.0|::)\/0$/ && _['protocol'] == /^(17|all)$/)
           .none(_['udp_options'] == empty)
       )
   - uid: mondoo-oci-security-vcn-no-unrestricted-udp-ingress-terraform-state
@@ -2750,7 +2776,7 @@ queries:
     mql: |
       terraform.state.resources.where(type == "oci_core_security_list").all(
         values.ingress_security_rules
-          .where(_['source'] == "0.0.0.0/0" && _['protocol'] == "17")
+          .where(_['source'] == /^(0\.0\.0\.0|::)\/0$/ && _['protocol'] == /^(17|all)$/)
           .none(_['udp_options'] == empty)
       )
   - uid: mondoo-oci-security-vcn-no-stateless-ingress-from-internet
@@ -2792,7 +2818,7 @@ queries:
       desc: |
         This check verifies that internet-facing ingress relies on stateful connection tracking rather than stateless packet matching.
 
-        Security list rules in OCI are stateful by default: traffic allowed inbound has its return traffic permitted automatically, and the reverse holds for egress. Marking a rule stateless turns that off, and each packet is then matched on its own against the rule set with no memory of the connection it belongs to. The check requires that no ingress rule whose source is `0.0.0.0/0` carries `isStateless: true`. The flag is a checkbox in the Console rule editor and a field in the payload of `oci network security-list update`.
+        Security list rules in OCI are stateful by default: traffic allowed inbound has its return traffic permitted automatically, and the reverse holds for egress. Marking a rule stateless turns that off, and each packet is then matched on its own against the rule set with no memory of the connection it belongs to. The check requires that no ingress rule whose source is `0.0.0.0/0` carries `isStateless: true`. The flag is a checkbox in the Console rule editor and a field in the payload of `oci network security-list update`. `::/0` is the IPv6 internet and counts the same as `0.0.0.0/0`.
 
         **Why this matters**
 
@@ -2882,27 +2908,27 @@ queries:
     filters: asset.platform == "oci-network-securitylist"
     mql: |
       oci.network.securityList.ingressRules.where(
-        source == "0.0.0.0/0"
+        source == /^(0\.0\.0\.0|::)\/0$/
       ).none(stateless == true)
   - uid: mondoo-oci-security-vcn-no-stateless-ingress-from-internet-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "oci_core_security_list")
     mql: |
       terraform.resources("oci_core_security_list").all(
         blocks.where(
-          type == "ingress_security_rules" && arguments.source == "0.0.0.0/0"
+          type == "ingress_security_rules" && arguments.source == /^(0\.0\.0\.0|::)\/0$/
         ).none(arguments.stateless == true)
       )
   - uid: mondoo-oci-security-vcn-no-stateless-ingress-from-internet-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "oci_core_security_list")
     mql: |
       terraform.plan.resourceChanges.where(type == "oci_core_security_list").all(
-        change.after.ingress_security_rules.where(_['source'] == "0.0.0.0/0").none(_['stateless'] == true)
+        change.after.ingress_security_rules.where(_['source'] == /^(0\.0\.0\.0|::)\/0$/).none(_['stateless'] == true)
       )
   - uid: mondoo-oci-security-vcn-no-stateless-ingress-from-internet-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "oci_core_security_list")
     mql: |
       terraform.state.resources.where(type == "oci_core_security_list").all(
-        values.ingress_security_rules.where(_['source'] == "0.0.0.0/0").none(_['stateless'] == true)
+        values.ingress_security_rules.where(_['source'] == /^(0\.0\.0\.0|::)\/0$/).none(_['stateless'] == true)
       )
   - uid: mondoo-oci-security-vcn-no-unrestricted-egress-all-tcp-ports
     title: Ensure VCN security lists block unrestricted TCP egress
@@ -2943,7 +2969,7 @@ queries:
       desc: |
         This check verifies that outbound TCP to the internet is limited to the destination ports a workload actually needs.
 
-        An egress rule with protocol `6`, destination `0.0.0.0/0`, a `destinationType` of `CIDR_BLOCK` and no `tcpOptions` block lets an instance open a TCP connection to any port on any host on the internet. Most workloads need `443` and very little else, so the check requires a destination port range on any TCP egress rule aimed at the whole internet. Egress rules are edited on the security list details page in the Console or with `oci network security-list update`.
+        An egress rule with protocol `6`, destination `0.0.0.0/0`, a `destinationType` of `CIDR_BLOCK` and no `tcpOptions` block lets an instance open a TCP connection to any port on any host on the internet. Most workloads need `443` and very little else, so the check requires a destination port range on any TCP egress rule aimed at the whole internet. Egress rules are edited on the security list details page in the Console or with `oci network security-list update`. A destination of `::/0` is the IPv6 internet and counts the same as `0.0.0.0/0`, and an egress rule for all protocols covers TCP as well, so it is flagged too.
 
         **Why this matters**
 
@@ -3032,16 +3058,16 @@ queries:
     filters: asset.platform == "oci-network-securitylist"
     mql: |
       oci.network.securityList.egressRules.where(
-        destination == "0.0.0.0/0" && protocol == "6"
-      ).none(destinationPortMin == null)
+        destination == /^(0\.0\.0\.0|::)\/0$/ && protocol == /^(6|all)$/
+      ).none(destinationPortMin == empty)
   - uid: mondoo-oci-security-vcn-no-unrestricted-egress-all-tcp-ports-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "oci_core_security_list")
     mql: |
       terraform.resources("oci_core_security_list").all(
         blocks.where(
           type == "egress_security_rules" &&
-          arguments.destination == "0.0.0.0/0" &&
-          arguments.protocol == "6"
+          arguments.destination == /^(0\.0\.0\.0|::)\/0$/ &&
+          arguments.protocol == /^(6|all)$/
         ).all(
           blocks.where(type == "tcp_options") != empty
         )
@@ -3051,7 +3077,7 @@ queries:
     mql: |
       terraform.plan.resourceChanges.where(type == "oci_core_security_list").all(
         change.after.egress_security_rules
-          .where(_['destination'] == "0.0.0.0/0" && _['protocol'] == "6")
+          .where(_['destination'] == /^(0\.0\.0\.0|::)\/0$/ && _['protocol'] == /^(6|all)$/)
           .none(_['tcp_options'] == empty)
       )
   - uid: mondoo-oci-security-vcn-no-unrestricted-egress-all-tcp-ports-terraform-state
@@ -3059,7 +3085,7 @@ queries:
     mql: |
       terraform.state.resources.where(type == "oci_core_security_list").all(
         values.egress_security_rules
-          .where(_['destination'] == "0.0.0.0/0" && _['protocol'] == "6")
+          .where(_['destination'] == /^(0\.0\.0\.0|::)\/0$/ && _['protocol'] == /^(6|all)$/)
           .none(_['tcp_options'] == empty)
       )
   - uid: mondoo-oci-security-compute-instance-tagging
@@ -3407,7 +3433,7 @@ queries:
       - url: https://docs.oracle.com/en-us/iaas/Content/Identity/Tasks/managinggroups.htm
         title: OCI - Managing Groups
   - uid: mondoo-oci-security-nsg-no-unrestricted-admin-ports
-    title: Ensure NSGs do not permit SSH or RDP ingress from 0.0.0.0/0
+    title: Ensure NSGs do not permit SSH or RDP ingress from the internet
     impact: 90
     tags:
       compliance/bsi-sys-1-5: false
@@ -3445,7 +3471,7 @@ queries:
       desc: |
         This check verifies that no network security group admits SSH or RDP ingress from the entire internet.
 
-        A network security group is a set of stateful ingress and egress rules that Oracle Cloud Infrastructure applies at the VNIC level, the more granular successor to subnet security lists. Each ingress rule names a source CIDR, an IP protocol, and for TCP, which OCI records as protocol `6`, a destination port range. The check fails any rule whose source is `0.0.0.0/0` or `::/0` and whose TCP port range covers 22 for SSH or 3389 for RDP, and it counts a rule declaring no destination port range as covering both, because such a rule opens every TCP port. Rules live under Networking > Virtual cloud networks > Network security groups, and `oci network nsg rules update` edits them.
+        A network security group is a set of stateful ingress and egress rules that Oracle Cloud Infrastructure applies at the VNIC level, the more granular successor to subnet security lists. Each ingress rule names a source CIDR, an IP protocol, and for TCP, which OCI records as protocol `6`, a destination port range. The check fails any rule whose source is `0.0.0.0/0` or `::/0` and whose TCP port range covers 22 for SSH or 3389 for RDP, and it counts a rule declaring no destination port range as covering both, because such a rule opens every TCP port. Rules live under Networking > Virtual cloud networks > Network security groups, and `oci network nsg rules update` edits them. A rule for all protocols covers TCP as well and names no port range, so it is flagged too.
 
         **Why this matters**
 
@@ -3550,27 +3576,24 @@ queries:
   - uid: mondoo-oci-security-nsg-no-unrestricted-admin-ports-oci
     filters: asset.platform == 'oci'
     mql: |
+      # A rule for all protocols covers TCP as well, and names no port range.
       oci.network.networkSecurityGroups.all(
         ingressRules.where(
-          source == "0.0.0.0/0" || source == "::/0"
-        ).where(protocol == "6").none(
-          destinationPortMin == empty || destinationPortMin <= 22 && destinationPortMax >= 22
-        )
-        &&
-        ingressRules.where(
-          source == "0.0.0.0/0" || source == "::/0"
-        ).where(protocol == "6").none(
-          destinationPortMin == empty || destinationPortMin <= 3389 && destinationPortMax >= 3389
+          source == /^(0\.0\.0\.0|::)\/0$/ && protocol == /^(6|all)$/
+        ).none(
+          destinationPortMin == empty ||
+          destinationPortMin <= 22 && destinationPortMax >= 22 ||
+          destinationPortMin <= 3389 && destinationPortMax >= 3389
         )
       )
   - uid: mondoo-oci-security-nsg-no-unrestricted-admin-ports-terraform-hcl
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'oci_core_network_security_group_security_rule')
     mql: |
-      # An ingress rule from 0.0.0.0/0 or ::/0 over TCP must declare a tcp_options block with a destination_port_range that excludes both 22 and 3389 (range entirely below 22, between 22 and 3389 exclusive, or above 3389).
+      # An ingress rule from 0.0.0.0/0 or ::/0 over TCP or all protocols must declare a tcp_options block with a destination_port_range that excludes both 22 and 3389 (range entirely below 22, between 22 and 3389 exclusive, or above 3389).
       terraform.resources('oci_core_network_security_group_security_rule')
         .where(arguments['direction'] == 'INGRESS')
-        .where(arguments['protocol'] == '6')
+        .where(arguments['protocol'] == /^(6|all)$/)
         .where(arguments['source'] == '0.0.0.0/0' || arguments['source'] == '::/0')
         .all(
           blocks.where(type == 'tcp_options') != empty &&
@@ -3590,7 +3613,7 @@ queries:
       terraform.plan.resourceChanges
         .where(type == 'oci_core_network_security_group_security_rule')
         .where(change.after['direction'] == 'INGRESS')
-        .where(change.after['protocol'] == '6')
+        .where(change.after['protocol'] == /^(6|all)$/)
         .where(change.after['source'] == '0.0.0.0/0' || change.after['source'] == '::/0')
         .all(
           change.after['tcp_options'] != null && change.after['tcp_options'].length > 0 &&
@@ -3610,7 +3633,7 @@ queries:
       terraform.state.resources
         .where(type == 'oci_core_network_security_group_security_rule')
         .where(values['direction'] == 'INGRESS')
-        .where(values['protocol'] == '6')
+        .where(values['protocol'] == /^(6|all)$/)
         .where(values['source'] == '0.0.0.0/0' || values['source'] == '::/0')
         .all(
           values['tcp_options'] != null && values['tcp_options'].length > 0 &&
@@ -6751,7 +6774,7 @@ queries:
         oci os retention-rule list \
           --namespace-name <namespace> \
           --bucket-name <bucket-name> \
-          --query 'data[].{RuleID:id, TimeUnit:"duration"."time-unit", TimeAmount:"duration"."time-amount"}' \
+          --query 'data.items[].{RuleID:id, TimeUnit:"duration"."time-unit", TimeAmount:"duration"."time-amount"}' \
           --output table
         ```
 
@@ -7160,7 +7183,7 @@ queries:
         values.statements.any(_ == /^\s*(endorse|admit)\s+/i)
       )
   - uid: mondoo-oci-security-vcn-no-unrestricted-ingress-db-ports
-    title: Ensure VCN security lists block database port ingress from 0.0.0.0/0
+    title: Ensure VCN security lists block database port ingress from the internet
     impact: 90
     tags:
       compliance/bsi-sys-1-5: false
@@ -7198,7 +7221,7 @@ queries:
       desc: |
         This check verifies that database listener ports are unreachable from the public internet.
 
-        The check rejects TCP ingress from `0.0.0.0/0` whose destination port range covers any common listener: Oracle on 1521 and 1522, SQL Server on 1433, MySQL on 3306, PostgreSQL on 5432, Redis on 6379, Elasticsearch on 9200, or MongoDB on 27017. A rule that names no port range at all covers every one of them. Security list rules are allow-only and there is no deny rule to override them, so a single broad rule anywhere in the list is enough to expose the listener. Remove or narrow it with `oci network security-list update`.
+        The check rejects TCP ingress from `0.0.0.0/0` whose destination port range covers any common listener: Oracle on 1521 and 1522, SQL Server on 1433, MySQL on 3306, PostgreSQL on 5432, Redis on 6379, Elasticsearch on 9200, or MongoDB on 27017. A rule that names no port range at all covers every one of them. Security list rules are allow-only and there is no deny rule to override them, so a single broad rule anywhere in the list is enough to expose the listener. Remove or narrow it with `oci network security-list update`. `::/0` is the IPv6 internet and counts the same as `0.0.0.0/0`. A rule for all protocols covers TCP as well and names no port range, so it is flagged too.
 
         **Why this matters**
 
@@ -7296,9 +7319,13 @@ queries:
   - uid: mondoo-oci-security-vcn-no-unrestricted-ingress-db-ports-oci
     filters: asset.platform == "oci-network-securitylist"
     mql: |
+      # Both address families count as the internet, and a rule for all protocols
+      # covers TCP and UDP as well, so neither can slip past the port test.
+      # A rule with no destination port range covers every listener below.
       oci.network.securityList.ingressRules.where(
-        source == "0.0.0.0/0" && protocol == "6" && destinationPortMin != empty
+        source == /^(0\.0\.0\.0|::)\/0$/ && protocol == /^(6|all)$/
       ).none(
+        destinationPortMin == empty ||
         destinationPortMin <= 1521 && destinationPortMax >= 1521 ||
         destinationPortMin <= 1522 && destinationPortMax >= 1522 ||
         destinationPortMin <= 1433 && destinationPortMax >= 1433 ||
@@ -7314,7 +7341,7 @@ queries:
       # A 0.0.0.0/0 TCP ingress rule with no tcp_options block opens every TCP port (including the DB ports below); tcp_options exposes the port range through flat min/max arguments.
       terraform.resources("oci_core_security_list").all(
         blocks.where(
-          type == "ingress_security_rules" && arguments.source == "0.0.0.0/0" && arguments.protocol == "6"
+          type == "ingress_security_rules" && arguments.source == /^(0\.0\.0\.0|::)\/0$/ && arguments.protocol == /^(6|all)$/
         ).none(
           blocks.where(type == "tcp_options") == empty ||
           blocks.where(type == "tcp_options").any(
@@ -7332,57 +7359,49 @@ queries:
   - uid: mondoo-oci-security-vcn-no-unrestricted-ingress-db-ports-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "oci_core_security_list")
     mql: |
-      # An ingress rule with source 0.0.0.0/0 + protocol "6" (TCP) and no tcp_options opens every TCP port, so flag missing tcp_options as a failure in addition to overlapping DB port ranges.
+      # An internet rule over TCP or all protocols with no tcp_options opens every TCP port.
+      # A security list's tcp_options carries min and max directly; destination_port_range
+      # exists only on network security group rules.
       terraform.plan.resourceChanges.where(type == "oci_core_security_list").all(
         change.after.ingress_security_rules
-          .where(_['source'] == "0.0.0.0/0" && _['protocol'] == "6")
+          .where(_['source'] == /^(0\.0\.0\.0|::)\/0$/ && _['protocol'] == /^(6|all)$/)
           .none(
             _['tcp_options'] == empty ||
-            _['tcp_options']['destination_port_range']['min'] <= 1521 &&
-            _['tcp_options']['destination_port_range']['max'] >= 1521 ||
-            _['tcp_options']['destination_port_range']['min'] <= 1522 &&
-            _['tcp_options']['destination_port_range']['max'] >= 1522 ||
-            _['tcp_options']['destination_port_range']['min'] <= 1433 &&
-            _['tcp_options']['destination_port_range']['max'] >= 1433 ||
-            _['tcp_options']['destination_port_range']['min'] <= 3306 &&
-            _['tcp_options']['destination_port_range']['max'] >= 3306 ||
-            _['tcp_options']['destination_port_range']['min'] <= 5432 &&
-            _['tcp_options']['destination_port_range']['max'] >= 5432 ||
-            _['tcp_options']['destination_port_range']['min'] <= 6379 &&
-            _['tcp_options']['destination_port_range']['max'] >= 6379 ||
-            _['tcp_options']['destination_port_range']['min'] <= 9200 &&
-            _['tcp_options']['destination_port_range']['max'] >= 9200 ||
-            _['tcp_options']['destination_port_range']['min'] <= 27017 &&
-            _['tcp_options']['destination_port_range']['max'] >= 27017
+            _['tcp_options'].any(
+              _['min'] <= 1521 && _['max'] >= 1521 ||
+              _['min'] <= 1522 && _['max'] >= 1522 ||
+              _['min'] <= 1433 && _['max'] >= 1433 ||
+              _['min'] <= 3306 && _['max'] >= 3306 ||
+              _['min'] <= 5432 && _['max'] >= 5432 ||
+              _['min'] <= 6379 && _['max'] >= 6379 ||
+              _['min'] <= 9200 && _['max'] >= 9200 ||
+              _['min'] <= 27017 && _['max'] >= 27017
+            )
           )
       )
   - uid: mondoo-oci-security-vcn-no-unrestricted-ingress-db-ports-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "oci_core_security_list")
     mql: |
-      # An ingress rule with source 0.0.0.0/0 + protocol "6" (TCP) and no tcp_options opens every TCP port, so flag missing tcp_options as a failure in addition to overlapping DB port ranges.
+      # An internet rule over TCP or all protocols with no tcp_options opens every TCP port.
+      # A security list's tcp_options carries min and max directly; destination_port_range
+      # exists only on network security group rules.
       terraform.state.resources.where(type == "oci_core_security_list").all(
-        values.ingress_security_rules.where(_['source'] == "0.0.0.0/0" && _['protocol'] == "6").none(
+        values.ingress_security_rules.where(_['source'] == /^(0\.0\.0\.0|::)\/0$/ && _['protocol'] == /^(6|all)$/).none(
           _['tcp_options'] == empty ||
-          _['tcp_options']['destination_port_range']['min'] <= 1521 &&
-          _['tcp_options']['destination_port_range']['max'] >= 1521 ||
-          _['tcp_options']['destination_port_range']['min'] <= 1522 &&
-          _['tcp_options']['destination_port_range']['max'] >= 1522 ||
-          _['tcp_options']['destination_port_range']['min'] <= 1433 &&
-          _['tcp_options']['destination_port_range']['max'] >= 1433 ||
-          _['tcp_options']['destination_port_range']['min'] <= 3306 &&
-          _['tcp_options']['destination_port_range']['max'] >= 3306 ||
-          _['tcp_options']['destination_port_range']['min'] <= 5432 &&
-          _['tcp_options']['destination_port_range']['max'] >= 5432 ||
-          _['tcp_options']['destination_port_range']['min'] <= 6379 &&
-          _['tcp_options']['destination_port_range']['max'] >= 6379 ||
-          _['tcp_options']['destination_port_range']['min'] <= 9200 &&
-          _['tcp_options']['destination_port_range']['max'] >= 9200 ||
-          _['tcp_options']['destination_port_range']['min'] <= 27017 &&
-          _['tcp_options']['destination_port_range']['max'] >= 27017
+          _['tcp_options'].any(
+            _['min'] <= 1521 && _['max'] >= 1521 ||
+            _['min'] <= 1522 && _['max'] >= 1522 ||
+            _['min'] <= 1433 && _['max'] >= 1433 ||
+            _['min'] <= 3306 && _['max'] >= 3306 ||
+            _['min'] <= 5432 && _['max'] >= 5432 ||
+            _['min'] <= 6379 && _['max'] >= 6379 ||
+            _['min'] <= 9200 && _['max'] >= 9200 ||
+            _['min'] <= 27017 && _['max'] >= 27017
+          )
         )
       )
   - uid: mondoo-oci-security-vcn-no-unrestricted-ingress-legacy-admin-ports
-    title: Ensure VCN security lists block legacy admin port ingress from 0.0.0.0/0
+    title: Ensure VCN security lists block legacy admin port ingress from the internet
     impact: 80
     tags:
       compliance/bsi-sys-1-5: false
@@ -7420,7 +7439,7 @@ queries:
       desc: |
         This check verifies that obsolete administrative and file-sharing protocols are not exposed to the internet.
 
-        The rejected shape is TCP ingress from `0.0.0.0/0` covering FTP on 21, Telnet on 23, the NetBIOS ports 135, 137, 138 and 139, or SMB on 445, including a rule with no port range, which covers all of them. These protocols predate the assumption that a network path might be hostile, and each fails in its own way once it is. Rules are removed on the security list details page under Networking > Virtual Cloud Networks or with `oci network security-list update`.
+        The rejected shape is TCP ingress from `0.0.0.0/0` covering FTP on 21, Telnet on 23, the NetBIOS ports 135, 137, 138 and 139, or SMB on 445, including a rule with no port range, which covers all of them. These protocols predate the assumption that a network path might be hostile, and each fails in its own way once it is. Rules are removed on the security list details page under Networking > Virtual Cloud Networks or with `oci network security-list update`. `::/0` is the IPv6 internet and counts the same as `0.0.0.0/0`. A rule for all protocols covers TCP as well and names no port range, so it is flagged too.
 
         **Why this matters**
 
@@ -7509,9 +7528,13 @@ queries:
   - uid: mondoo-oci-security-vcn-no-unrestricted-ingress-legacy-admin-ports-oci
     filters: asset.platform == "oci-network-securitylist"
     mql: |
+      # Both address families count as the internet, and a rule for all protocols
+      # covers TCP and UDP as well, so neither can slip past the port test.
+      # A rule with no destination port range covers every port below.
       oci.network.securityList.ingressRules.where(
-        source == "0.0.0.0/0" && protocol == "6" && destinationPortMin != empty
+        source == /^(0\.0\.0\.0|::)\/0$/ && protocol == /^(6|all)$/
       ).none(
+        destinationPortMin == empty ||
         destinationPortMin <= 21 && destinationPortMax >= 21 ||
         destinationPortMin <= 23 && destinationPortMax >= 23 ||
         destinationPortMin <= 135 && destinationPortMax >= 135 ||
@@ -7526,7 +7549,7 @@ queries:
       # A 0.0.0.0/0 TCP ingress rule with no tcp_options block opens every TCP port (including the legacy admin ports below); tcp_options exposes the port range through flat min/max arguments.
       terraform.resources("oci_core_security_list").all(
         blocks.where(
-          type == "ingress_security_rules" && arguments.source == "0.0.0.0/0" && arguments.protocol == "6"
+          type == "ingress_security_rules" && arguments.source == /^(0\.0\.0\.0|::)\/0$/ && arguments.protocol == /^(6|all)$/
         ).none(
           blocks.where(type == "tcp_options") == empty ||
           blocks.where(type == "tcp_options").any(
@@ -7543,53 +7566,47 @@ queries:
   - uid: mondoo-oci-security-vcn-no-unrestricted-ingress-legacy-admin-ports-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "oci_core_security_list")
     mql: |
-      # An ingress rule with source 0.0.0.0/0 + protocol "6" (TCP) and no tcp_options opens every TCP port, so flag missing tcp_options as a failure in addition to overlapping legacy admin port ranges.
+      # An internet rule over TCP or all protocols with no tcp_options opens every TCP port.
+      # A security list's tcp_options carries min and max directly; destination_port_range
+      # exists only on network security group rules.
       terraform.plan.resourceChanges.where(type == "oci_core_security_list").all(
         change.after.ingress_security_rules
-          .where(_['source'] == "0.0.0.0/0" && _['protocol'] == "6")
+          .where(_['source'] == /^(0\.0\.0\.0|::)\/0$/ && _['protocol'] == /^(6|all)$/)
           .none(
             _['tcp_options'] == empty ||
-            _['tcp_options']['destination_port_range']['min'] <= 21 &&
-            _['tcp_options']['destination_port_range']['max'] >= 21 ||
-            _['tcp_options']['destination_port_range']['min'] <= 23 &&
-            _['tcp_options']['destination_port_range']['max'] >= 23 ||
-            _['tcp_options']['destination_port_range']['min'] <= 135 &&
-            _['tcp_options']['destination_port_range']['max'] >= 135 ||
-            _['tcp_options']['destination_port_range']['min'] <= 137 &&
-            _['tcp_options']['destination_port_range']['max'] >= 137 ||
-            _['tcp_options']['destination_port_range']['min'] <= 138 &&
-            _['tcp_options']['destination_port_range']['max'] >= 138 ||
-            _['tcp_options']['destination_port_range']['min'] <= 139 &&
-            _['tcp_options']['destination_port_range']['max'] >= 139 ||
-            _['tcp_options']['destination_port_range']['min'] <= 445 &&
-            _['tcp_options']['destination_port_range']['max'] >= 445
+            _['tcp_options'].any(
+              _['min'] <= 21 && _['max'] >= 21 ||
+              _['min'] <= 23 && _['max'] >= 23 ||
+              _['min'] <= 135 && _['max'] >= 135 ||
+              _['min'] <= 137 && _['max'] >= 137 ||
+              _['min'] <= 138 && _['max'] >= 138 ||
+              _['min'] <= 139 && _['max'] >= 139 ||
+              _['min'] <= 445 && _['max'] >= 445
+            )
           )
       )
   - uid: mondoo-oci-security-vcn-no-unrestricted-ingress-legacy-admin-ports-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "oci_core_security_list")
     mql: |
-      # An ingress rule with source 0.0.0.0/0 + protocol "6" (TCP) and no tcp_options opens every TCP port, so flag missing tcp_options as a failure in addition to overlapping legacy admin port ranges.
+      # An internet rule over TCP or all protocols with no tcp_options opens every TCP port.
+      # A security list's tcp_options carries min and max directly; destination_port_range
+      # exists only on network security group rules.
       terraform.state.resources.where(type == "oci_core_security_list").all(
-        values.ingress_security_rules.where(_['source'] == "0.0.0.0/0" && _['protocol'] == "6").none(
+        values.ingress_security_rules.where(_['source'] == /^(0\.0\.0\.0|::)\/0$/ && _['protocol'] == /^(6|all)$/).none(
           _['tcp_options'] == empty ||
-          _['tcp_options']['destination_port_range']['min'] <= 21 &&
-          _['tcp_options']['destination_port_range']['max'] >= 21 ||
-          _['tcp_options']['destination_port_range']['min'] <= 23 &&
-          _['tcp_options']['destination_port_range']['max'] >= 23 ||
-          _['tcp_options']['destination_port_range']['min'] <= 135 &&
-          _['tcp_options']['destination_port_range']['max'] >= 135 ||
-          _['tcp_options']['destination_port_range']['min'] <= 137 &&
-          _['tcp_options']['destination_port_range']['max'] >= 137 ||
-          _['tcp_options']['destination_port_range']['min'] <= 138 &&
-          _['tcp_options']['destination_port_range']['max'] >= 138 ||
-          _['tcp_options']['destination_port_range']['min'] <= 139 &&
-          _['tcp_options']['destination_port_range']['max'] >= 139 ||
-          _['tcp_options']['destination_port_range']['min'] <= 445 &&
-          _['tcp_options']['destination_port_range']['max'] >= 445
+          _['tcp_options'].any(
+            _['min'] <= 21 && _['max'] >= 21 ||
+            _['min'] <= 23 && _['max'] >= 23 ||
+            _['min'] <= 135 && _['max'] >= 135 ||
+            _['min'] <= 137 && _['max'] >= 137 ||
+            _['min'] <= 138 && _['max'] >= 138 ||
+            _['min'] <= 139 && _['max'] >= 139 ||
+            _['min'] <= 445 && _['max'] >= 445
+          )
         )
       )
   - uid: mondoo-oci-security-vcn-no-unrestricted-icmp-ingress
-    title: Ensure VCN security lists block unrestricted ICMP ingress from 0.0.0.0/0
+    title: Ensure VCN security lists block unrestricted ICMP ingress from the internet
     impact: 60
     tags:
       compliance/bsi-sys-1-5: false
@@ -7627,7 +7644,7 @@ queries:
       desc: |
         This check verifies that ICMP reachable from the internet is scoped to specific message types rather than opened wholesale.
 
-        An OCI ingress rule selects ICMP with protocol `1` for IPv4 or `58` for ICMPv6, and an optional `icmpOptions` block narrows it to a type and a code. A rule from `0.0.0.0/0` that names either ICMP protocol, or names all protocols, without an `icmpOptions` block admits every ICMP message the stack will answer, and that is the shape the check flags. Type and code are set in the rule editor in the Console or in the payload of `oci network security-list update`.
+        An OCI ingress rule selects ICMP with protocol `1` for IPv4 or `58` for ICMPv6, and an optional `icmpOptions` block narrows it to a type and a code. A rule from `0.0.0.0/0` that names either ICMP protocol, or names all protocols, without an `icmpOptions` block admits every ICMP message the stack will answer, and that is the shape the check flags. Type and code are set in the rule editor in the Console or in the payload of `oci network security-list update`. `::/0` is the IPv6 internet and counts the same as `0.0.0.0/0`.
 
         **Why this matters**
 
@@ -7718,16 +7735,16 @@ queries:
     filters: asset.platform == "oci-network-securitylist"
     mql: |
       oci.network.securityList.ingressRules.where(
-        source == "0.0.0.0/0" && icmpType == null
+        source == /^(0\.0\.0\.0|::)\/0$/ && icmpType == null
       ).none(
         protocol.in(["1", "58", "all"])
       )
   - uid: mondoo-oci-security-vcn-no-unrestricted-icmp-ingress-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "oci_core_security_list")
     mql: |
-      # An ingress rule from 0.0.0.0/0 that uses ICMP (protocol 1 or 58) or all-protocols must declare an icmp_options block scoping the type/code.
+      # An ingress rule from 0.0.0.0/0 or ::/0 that uses ICMP (protocol 1 or 58) or all-protocols must declare an icmp_options block scoping the type/code.
       terraform.resources("oci_core_security_list").all(
-        blocks.where(type == "ingress_security_rules" && arguments.source == "0.0.0.0/0").all(
+        blocks.where(type == "ingress_security_rules" && arguments.source == /^(0\.0\.0\.0|::)\/0$/).all(
           arguments.protocol != "1" && arguments.protocol != "58" && arguments.protocol != "all" ||
           blocks.where(type == "icmp_options") != empty
         )
@@ -7737,7 +7754,7 @@ queries:
     mql: |
       terraform.plan.resourceChanges.where(type == "oci_core_security_list").all(
         change.after.ingress_security_rules
-          .where(_['source'] == "0.0.0.0/0" && _['icmp_options'] == empty)
+          .where(_['source'] == /^(0\.0\.0\.0|::)\/0$/ && _['icmp_options'] == empty)
           .none(
             _['protocol'].in(["1", "58", "all"])
           )
@@ -7747,7 +7764,7 @@ queries:
     mql: |
       terraform.state.resources.where(type == "oci_core_security_list").all(
         values.ingress_security_rules
-          .where(_['source'] == "0.0.0.0/0" && _['icmp_options'] == empty)
+          .where(_['source'] == /^(0\.0\.0\.0|::)\/0$/ && _['icmp_options'] == empty)
           .none(
             _['protocol'].in(["1", "58", "all"])
           )
@@ -7935,12 +7952,10 @@ queries:
         change.after.ingress_security_rules.where(_['source'] == "::/0").none(
           _['protocol'] == "all" ||
           _['protocol'] == "6" && _['tcp_options'] == empty ||
-          _['protocol'] == "6" &&
-          _['tcp_options']['destination_port_range']['min'] <= 22 &&
-          _['tcp_options']['destination_port_range']['max'] >= 22 ||
-          _['protocol'] == "6" &&
-          _['tcp_options']['destination_port_range']['min'] <= 3389 &&
-          _['tcp_options']['destination_port_range']['max'] >= 3389 ||
+          _['protocol'] == "6" && _['tcp_options'].any(
+            _['min'] <= 22 && _['max'] >= 22 ||
+            _['min'] <= 3389 && _['max'] >= 3389
+          ) ||
           _['protocol'] == "17" && _['udp_options'] == empty
         )
       )
@@ -7951,12 +7966,10 @@ queries:
         values.ingress_security_rules.where(_['source'] == "::/0").none(
           _['protocol'] == "all" ||
           _['protocol'] == "6" && _['tcp_options'] == empty ||
-          _['protocol'] == "6" &&
-          _['tcp_options']['destination_port_range']['min'] <= 22 &&
-          _['tcp_options']['destination_port_range']['max'] >= 22 ||
-          _['protocol'] == "6" &&
-          _['tcp_options']['destination_port_range']['min'] <= 3389 &&
-          _['tcp_options']['destination_port_range']['max'] >= 3389 ||
+          _['protocol'] == "6" && _['tcp_options'].any(
+            _['min'] <= 22 && _['max'] >= 22 ||
+            _['min'] <= 3389 && _['max'] >= 3389
+          ) ||
           _['protocol'] == "17" && _['udp_options'] == empty
         )
       )
@@ -9013,7 +9026,7 @@ queries:
           desc: |
             A renewal rule only governs future renewals, so a near-expiry certificate still expires this cycle unless you issue a new version now. Do both: issue a fresh version immediately, then add a renewal rule so this does not recur.
 
-            1. Issue a new version immediately so the certificate stops failing this cycle. Set `timeOfValidityNotAfter` to an RFC 3339 timestamp more than 30 days in the future and within the issuing CA's own validity:
+            1. Issue a new version immediately so the certificate stops failing this cycle. Set `timeOfValidityNotAfter` to a timestamp more than 30 days in the future and within the issuing CA's own validity. Write it with milliseconds, such as `2027-06-01T00:00:00.000Z`, because OCI rejects the request as unprocessable JSON without them:
 
             ```bash
             oci certs-mgmt certificate update-certificate-managed-internally \
@@ -9044,380 +9057,6 @@ queries:
     refs:
       - url: https://docs.oracle.com/en-us/iaas/Content/certificates/managing-certificates.htm
         title: OCI - Managing Certificates
-  - uid: mondoo-oci-security-certificates-strong-key-algorithms
-    title: Ensure managed certificates use strong key algorithms
-    impact: 70
-    tags:
-      compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-04
-      compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-e-2-ii-transmission-security-encryption
-      compliance/iso-27001-2022: iso-27001-2022-a-8-24
-      compliance/nis-2: nis-2-21-2-h
-      compliance/nist-csf-1: nist-csf-1-pr-ds-2
-      compliance/nist-csf-2: nist-csf-2-pr-ds-02
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-13
-      compliance/nist-sp-800-171: nist-sp-800-171--3-13-11
-      compliance/owasp-top-10-2025: owasp-top-10-2025-a04
-      compliance/pci-dss-4: pcidss-requirement-4-2-1
-      compliance/soc2-2017: soc2-control-cc6-1-11
-      compliance/vda-isa-5: vda-isa-5-5-1-2
-    variants:
-      - uid: mondoo-oci-security-certificates-strong-key-algorithms-oci
-        tags:
-          mondoo.com/filter-title: OCI
-          mondoo.com/filter-icon: oci
-      - uid: mondoo-oci-security-certificates-strong-key-algorithms-terraform-hcl
-        tags:
-          mondoo.com/filter-title: Terraform HCL
-          mondoo.com/filter-icon: terraform
-      - uid: mondoo-oci-security-certificates-strong-key-algorithms-terraform-plan
-        tags:
-          mondoo.com/filter-title: Terraform Plan
-          mondoo.com/filter-icon: terraform
-      - uid: mondoo-oci-security-certificates-strong-key-algorithms-terraform-state
-        tags:
-          mondoo.com/filter-title: Terraform State
-          mondoo.com/filter-icon: terraform
-    docs:
-      desc: |
-        This check verifies that every active certificate in the OCI Certificates service is backed by a key algorithm from the approved set: `RSA2048`, `RSA4096`, `ECDSA_P256`, or `ECDSA_P384`.
-
-        The service handles two kinds of certificate. Ones it issues from a managed certificate authority take the key algorithm chosen at creation time. Imported ones carry whatever key the external issuer generated, and OCI applies no algorithm-strength gate at import, so a certificate holding a 1024-bit RSA key enters the inventory looking identical to a freshly issued one. Set the algorithm on the certificate configuration under Identity & Security > Certificates in the Console or with `oci certs-mgmt certificate create`, and reissue imported certificates that fall short.
-
-        **Why this matters**
-
-        A 1024-bit RSA key is considered factorable by a well-resourced attacker and is explicitly prohibited by NIST SP 800-131A. Every session protected by such a certificate inherits that weakness, and so does every signature the certificate has already produced, because recovering the private key unlocks all of it retroactively.
-
-        Certificate lifetimes make the exposure durable. A certificate issued today is typically valid for one to several years, so a weak key accepted now is a liability for that whole term, across which the tooling and hardware available to an attacker only improve.
-
-        Strength is not the only reason the approved list is narrow. Short elliptic-curve keys and curves outside the NIST set are rejected outright by strict TLS stacks, so an unusual choice produces intermittent connection failures that look like a network problem and get chased as one. Holding to the four approved algorithms avoids that availability failure alongside the cryptographic one.
-
-        Imported certificates are where this check earns its keep. They are the population nobody deliberately chose a key for, and the only route by which a pre-standard algorithm reaches production traffic without anyone making a decision about it.
-      audit: |
-        ### Audit via Console
-
-        1. Open **Identity & Security** in the OCI Console and navigate to **Certificates** -> **Certificates**.
-        2. Select each active certificate and open its details page.
-        3. In the **Certificate information** section, locate the **Key algorithm** field.
-        4. Verify the value is one of: `RSA2048`, `RSA4096`, `ECDSA_P256`, or `ECDSA_P384`.
-
-        A passing certificate shows a key algorithm of `RSA2048`, `RSA4096`, `ECDSA_P256`, or `ECDSA_P384`. A failing certificate shows a weaker algorithm such as `RSA1024`.
-
-        ### Audit via CLI
-
-        1. List active certificates and retrieve the key algorithm for each:
-
-        ```bash
-        oci certs-mgmt certificate list \
-          --compartment-id <compartment-ocid> \
-          --lifecycle-state ACTIVE \
-          --query 'data.items[*].{name:name, keyAlgorithm:"key-algorithm"}' \
-          --output table
-        ```
-
-        A passing certificate returns a `keyAlgorithm` value of `RSA2048`, `RSA4096`, `ECDSA_P256`, or `ECDSA_P384`. A failing certificate returns any other value.
-      remediation:
-        - id: console
-          desc: |
-            Re-issue certificates with weak key algorithms using a strong key:
-
-            1. Open **Identity & Security** → **Certificates** → **Certificates** → identify certificates with weak key algorithms.
-            2. For internally-issued certificates, create a replacement certificate with **RSA2048**, **RSA4096**, **ECDSA_P256**, or **ECDSA_P384** as the key algorithm. Renewing an existing certificate only changes its validity period, so it cannot fix the key algorithm.
-            3. For imported certificates, regenerate the certificate externally with a strong key algorithm and import it as a new certificate.
-            4. Move consumers to the replacement, then schedule the weak certificate for deletion. It stays active, and keeps failing, until deletion is scheduled.
-        - id: cli
-          desc: |
-            Key algorithms cannot be changed on an existing certificate. Issue a replacement internally-issued certificate with a strong key algorithm, migrate consumers, then retire the weak certificate.
-
-            1. Create the replacement. `--key-algorithm` must be `RSA2048`, `RSA4096`, `ECDSA_P256`, or `ECDSA_P384`, and `--signature-algorithm` must suit the key type, such as `SHA256_WITH_RSA` for an RSA key. Set `commonName` to the name the certificate serves and `timeOfValidityNotAfter` to an expiry within the issuing CA's validity:
-
-            ```bash
-            oci certs-mgmt certificate create-certificate-issued-by-internal-ca \
-              --compartment-id <compartment-ocid> \
-              --name app-tls-cert-v2 \
-              --issuer-certificate-authority-id <ca-ocid> \
-              --key-algorithm RSA2048 \
-              --signature-algorithm SHA256_WITH_RSA \
-              --subject '{"commonName":"app.example.com"}' \
-              --validity '{"timeOfValidityNotAfter":"2027-01-01T00:00:00Z"}'
-            ```
-
-            2. After every consumer uses the replacement, schedule the weak certificate for deletion. It remains `ACTIVE`, and keeps failing, until you do:
-
-            ```bash
-            oci certs-mgmt certificate schedule-deletion --certificate-id <weak-certificate-ocid>
-            ```
-        - id: terraform
-          desc: |
-            This Terraform fix applies only to internally-issued certificates. Imported certificates have no `key_algorithm` argument in HCL because their key material is generated outside OCI, so a weak imported certificate must be re-issued externally with a strong key algorithm and re-imported.
-
-            Set `certificate_config.key_algorithm` to a strong value on every internally-issued certificate:
-
-            ```hcl
-            resource "oci_certificates_management_certificate" "app" {
-              compartment_id = var.compartment_ocid
-              name           = "app-tls-cert"
-
-              certificate_config {
-                config_type                  = "ISSUED_BY_INTERNAL_CA"
-                issuer_certificate_authority_id = oci_certificates_management_certificate_authority.internal.id
-                key_algorithm                = "RSA2048"
-                signature_algorithm          = "SHA256_WITH_RSA"
-
-                subject {
-                  common_name = "app.example.com"
-                }
-
-                validity {
-                  time_of_validity_not_after = "2027-01-01T00:00:00Z"
-                }
-              }
-
-              certificate_rules {
-                rule_type              = "CERTIFICATE_RENEWAL_RULE"
-                advance_renewal_period = "P30D"
-                renewal_interval       = "P365D"
-              }
-            }
-            ```
-    refs:
-      - url: https://docs.oracle.com/en-us/iaas/Content/certificates/managing-certificates.htm
-        title: OCI - Managing Certificates
-  - uid: mondoo-oci-security-certificates-strong-key-algorithms-oci
-    filters: asset.platform == 'oci'
-    mql: |
-      oci.certificates.certificates.where(state == "ACTIVE").all(
-        keyAlgorithm.in(["RSA2048", "RSA4096", "ECDSA_P256", "ECDSA_P384"])
-      )
-  - uid: mondoo-oci-security-certificates-strong-key-algorithms-terraform-hcl
-    filters: |
-      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'oci_certificates_management_certificate')
-    mql: |
-      terraform.resources('oci_certificates_management_certificate').all(
-        blocks.where(type == 'certificate_config').where(arguments['config_type'] != "IMPORTED").all(
-          arguments['key_algorithm'] != null &&
-          arguments['key_algorithm'].in(["RSA2048", "RSA4096", "ECDSA_P256", "ECDSA_P384"])
-        )
-      )
-  - uid: mondoo-oci-security-certificates-strong-key-algorithms-terraform-plan
-    filters: |
-      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'oci_certificates_management_certificate')
-    mql: |
-      terraform.plan.resourceChanges.where(type == 'oci_certificates_management_certificate').all(
-        change.after['certificate_config'].where(_['config_type'] != "IMPORTED").all(
-          _['key_algorithm'] != null &&
-          _['key_algorithm'].in(["RSA2048", "RSA4096", "ECDSA_P256", "ECDSA_P384"])
-        )
-      )
-  - uid: mondoo-oci-security-certificates-strong-key-algorithms-terraform-state
-    filters: |
-      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'oci_certificates_management_certificate')
-    mql: |
-      terraform.state.resources.where(type == 'oci_certificates_management_certificate').all(
-        values['certificate_config'].where(_['config_type'] != "IMPORTED").all(
-          _['key_algorithm'] != null &&
-          _['key_algorithm'].in(["RSA2048", "RSA4096", "ECDSA_P256", "ECDSA_P384"])
-        )
-      )
-  - uid: mondoo-oci-security-certificates-strong-signature-algorithms
-    title: Ensure managed certificates use strong signature algorithms
-    impact: 70
-    tags:
-      compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-04
-      compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-e-2-ii-transmission-security-encryption
-      compliance/iso-27001-2022: iso-27001-2022-a-8-24
-      compliance/nis-2: nis-2-21-2-h
-      compliance/nist-csf-1: nist-csf-1-pr-ds-2
-      compliance/nist-csf-2: nist-csf-2-pr-ds-02
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-13
-      compliance/nist-sp-800-171: nist-sp-800-171--3-13-11
-      compliance/owasp-top-10-2025: owasp-top-10-2025-a04
-      compliance/pci-dss-4: pcidss-requirement-4-2-1
-      compliance/soc2-2017: soc2-control-cc6-1-11
-      compliance/vda-isa-5: vda-isa-5-5-1-2
-    variants:
-      - uid: mondoo-oci-security-certificates-strong-signature-algorithms-oci
-        tags:
-          mondoo.com/filter-title: OCI
-          mondoo.com/filter-icon: oci
-      - uid: mondoo-oci-security-certificates-strong-signature-algorithms-terraform-hcl
-        tags:
-          mondoo.com/filter-title: Terraform HCL
-          mondoo.com/filter-icon: terraform
-      - uid: mondoo-oci-security-certificates-strong-signature-algorithms-terraform-plan
-        tags:
-          mondoo.com/filter-title: Terraform Plan
-          mondoo.com/filter-icon: terraform
-      - uid: mondoo-oci-security-certificates-strong-signature-algorithms-terraform-state
-        tags:
-          mondoo.com/filter-title: Terraform State
-          mondoo.com/filter-icon: terraform
-    docs:
-      desc: |
-        This check verifies that every active certificate in the OCI Certificates service is signed with a SHA-2 family algorithm: `SHA256_WITH_RSA`, `SHA384_WITH_RSA`, `SHA512_WITH_RSA`, `SHA256_WITH_ECDSA`, `SHA384_WITH_ECDSA`, or `SHA512_WITH_ECDSA`.
-
-        The signature algorithm is what binds a certificate's contents to the authority that issued it. For certificates OCI issues, the algorithm is part of the certificate configuration you supply. For imported certificates it is whatever the external authority used, and the service enforces no signature-algorithm gate at import, so a deprecated SHA-1 or MD5 signature can enter the inventory without warning. Set or review the algorithm under Identity & Security > Certificates in the Console or with `oci certs-mgmt certificate update`.
-
-        **Why this matters**
-
-        SHA-1 collisions have been publicly demonstrated since 2017 and have only grown cheaper. The consequence is concrete: an attacker with sufficient resources can obtain a signature over benign content and transplant it onto a certificate naming a service they do not own, producing something that chains to a legitimate authority and defeats the identity assurance the certificate exists to provide.
-
-        MD5 was retired even earlier and is worse. Collisions against it are computable on ordinary hardware, so a certificate still signed with MD5 is best treated as a forgery primitive rather than a credential.
-
-        Weak signatures survive because browsers are not the only relying party. Public clients stopped accepting SHA-1 years ago, but internally issued certificates are frequently still honored by scripts, agents, and legacy services that never had a policy engine to update. Those trust paths are exploitable and invisible in routine monitoring, precisely because nothing complains about them.
-
-        Reissuing under a SHA-2 algorithm keeps the inventory aligned with NIST SP 800-131A guidance on retired hash functions, and it is usually a configuration change rather than a migration, because the subject key itself does not have to change.
-      audit: |
-        ### Audit via Console
-
-        1. Open **Identity & Security** in the OCI Console and navigate to **Certificates** -> **Certificates**.
-        2. Select each active certificate and open its details page.
-        3. In the **Certificate information** section, locate the **Signature algorithm** field.
-        4. Verify the value is one of: `SHA256_WITH_RSA`, `SHA384_WITH_RSA`, `SHA512_WITH_RSA`, `SHA256_WITH_ECDSA`, `SHA384_WITH_ECDSA`, or `SHA512_WITH_ECDSA`.
-
-        A passing certificate shows a SHA-2 family signature algorithm. A failing certificate shows a deprecated algorithm such as `SHA1_WITH_RSA`.
-
-        ### Audit via CLI
-
-        1. List active certificates and retrieve the signature algorithm for each:
-
-        ```bash
-        oci certs-mgmt certificate list \
-          --compartment-id <compartment-ocid> \
-          --lifecycle-state ACTIVE \
-          --query 'data.items[*].{name:name, signatureAlgorithm:"signature-algorithm"}' \
-          --output table
-        ```
-
-        A passing certificate returns a `signatureAlgorithm` value in the SHA-2 family (`SHA256_WITH_RSA`, `SHA384_WITH_RSA`, `SHA512_WITH_RSA`, `SHA256_WITH_ECDSA`, `SHA384_WITH_ECDSA`, or `SHA512_WITH_ECDSA`). A failing certificate returns a value outside that set.
-      remediation:
-        - id: console
-          desc: |
-            Re-issue certificates with weak signatures using a SHA-2 algorithm:
-
-            1. Open **Identity & Security** → **Certificates** → **Certificates** → identify certificates with weak signature algorithms.
-            2. For internally-issued certificates, create a replacement certificate with a `SHA256_WITH_*`, `SHA384_WITH_*`, or `SHA512_WITH_*` signature algorithm. Renewing an existing certificate only changes its validity period, so it cannot fix the signature algorithm.
-            3. For imported certificates, re-issue them externally using a SHA-2 signature and import them as new certificates.
-            4. Move consumers to the replacement, then schedule the weak certificate for deletion. It stays active, and keeps failing, until deletion is scheduled.
-        - id: cli
-          desc: |
-            Signature algorithms cannot be changed on an existing certificate. Issue a replacement internally-issued certificate with a SHA-2 signature algorithm, migrate consumers, then retire the weak certificate.
-
-            1. Create the replacement. `--signature-algorithm` must be `SHA256_WITH_RSA`, `SHA384_WITH_RSA`, or `SHA512_WITH_RSA` for an RSA key, or the matching `_WITH_ECDSA` value for an ECDSA key. Set `commonName` to the name the certificate serves and `timeOfValidityNotAfter` to an expiry within the issuing CA's validity:
-
-            ```bash
-            oci certs-mgmt certificate create-certificate-issued-by-internal-ca \
-              --compartment-id <compartment-ocid> \
-              --name app-tls-cert-v2 \
-              --issuer-certificate-authority-id <ca-ocid> \
-              --key-algorithm RSA2048 \
-              --signature-algorithm SHA256_WITH_RSA \
-              --subject '{"commonName":"app.example.com"}' \
-              --validity '{"timeOfValidityNotAfter":"2027-01-01T00:00:00Z"}'
-            ```
-
-            2. After every consumer uses the replacement, schedule the weak certificate for deletion. It remains `ACTIVE`, and keeps failing, until you do:
-
-            ```bash
-            oci certs-mgmt certificate schedule-deletion --certificate-id <weak-certificate-ocid>
-            ```
-        - id: terraform
-          desc: |
-            This Terraform fix applies only to internally-issued certificates. Imported certificates have no `signature_algorithm` argument in HCL because they are signed outside OCI, so a weak imported certificate must be re-issued externally with a strong signature algorithm and re-imported.
-
-            Set `certificate_config.signature_algorithm` to a SHA-2 value on every internally-issued certificate:
-
-            ```hcl
-            resource "oci_certificates_management_certificate" "app" {
-              compartment_id = var.compartment_ocid
-              name           = "app-tls-cert"
-
-              certificate_config {
-                config_type                  = "ISSUED_BY_INTERNAL_CA"
-                issuer_certificate_authority_id = oci_certificates_management_certificate_authority.internal.id
-                key_algorithm                = "RSA2048"
-                signature_algorithm          = "SHA256_WITH_RSA"
-
-                subject {
-                  common_name = "app.example.com"
-                }
-
-                validity {
-                  time_of_validity_not_after = "2027-01-01T00:00:00Z"
-                }
-              }
-            }
-            ```
-    refs:
-      - url: https://docs.oracle.com/en-us/iaas/Content/certificates/managing-certificates.htm
-        title: OCI - Managing Certificates
-  - uid: mondoo-oci-security-certificates-strong-signature-algorithms-oci
-    filters: asset.platform == 'oci'
-    mql: |
-      oci.certificates.certificates.where(state == "ACTIVE").all(
-        signatureAlgorithm.in([
-          "SHA256_WITH_RSA",
-          "SHA384_WITH_RSA",
-          "SHA512_WITH_RSA",
-          "SHA256_WITH_ECDSA",
-          "SHA384_WITH_ECDSA",
-          "SHA512_WITH_ECDSA"
-        ])
-      )
-  - uid: mondoo-oci-security-certificates-strong-signature-algorithms-terraform-hcl
-    filters: |
-      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'oci_certificates_management_certificate')
-    mql: |
-      terraform.resources('oci_certificates_management_certificate').all(
-        blocks.where(type == 'certificate_config').where(arguments['config_type'] != "IMPORTED").all(
-          arguments['signature_algorithm'] != null &&
-          arguments['signature_algorithm'].in([
-            "SHA256_WITH_RSA",
-            "SHA384_WITH_RSA",
-            "SHA512_WITH_RSA",
-            "SHA256_WITH_ECDSA",
-            "SHA384_WITH_ECDSA",
-            "SHA512_WITH_ECDSA"
-          ])
-        )
-      )
-  - uid: mondoo-oci-security-certificates-strong-signature-algorithms-terraform-plan
-    filters: |
-      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'oci_certificates_management_certificate')
-    mql: |
-      terraform.plan.resourceChanges.where(type == 'oci_certificates_management_certificate').all(
-        change.after['certificate_config'].where(_['config_type'] != "IMPORTED").all(
-          _['signature_algorithm'] != null &&
-          _['signature_algorithm'].in([
-            "SHA256_WITH_RSA",
-            "SHA384_WITH_RSA",
-            "SHA512_WITH_RSA",
-            "SHA256_WITH_ECDSA",
-            "SHA384_WITH_ECDSA",
-            "SHA512_WITH_ECDSA"
-          ])
-        )
-      )
-  - uid: mondoo-oci-security-certificates-strong-signature-algorithms-terraform-state
-    filters: |
-      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'oci_certificates_management_certificate')
-    mql: |
-      terraform.state.resources.where(type == 'oci_certificates_management_certificate').all(
-        values['certificate_config'].where(_['config_type'] != "IMPORTED").all(
-          _['signature_algorithm'] != null &&
-          _['signature_algorithm'].in([
-            "SHA256_WITH_RSA",
-            "SHA384_WITH_RSA",
-            "SHA512_WITH_RSA",
-            "SHA256_WITH_ECDSA",
-            "SHA384_WITH_ECDSA",
-            "SHA512_WITH_ECDSA"
-          ])
-        )
-      )
   - uid: mondoo-oci-security-certificates-auto-renewal-enabled
     title: Ensure managed certificates have auto-renewal enabled
     impact: 60
@@ -9457,7 +9096,7 @@ queries:
       desc: |
         This check verifies that every active certificate issued by an internal certificate authority in the OCI Certificates service renews itself automatically through an attached renewal rule.
 
-        A certificate can carry a rule of type `CERTIFICATE_RENEWAL_RULE`, which tells the service to issue a new version on a defined interval and an advance window before the current version expires. No such rule is attached when a certificate is created, so automatic renewal is something you turn on rather than something you inherit. Imported certificates cannot renew through the service, since the issuing authority sits outside OCI, and the check excludes them. Attach the rule under Identity & Security > Certificates in the Console or with `oci certs-mgmt certificate update`.
+        A certificate can carry a rule of type `CERTIFICATE_RENEWAL_RULE`, which tells the service to issue a new version on a defined interval and an advance window before the current version expires. No such rule is attached when a certificate is created, so automatic renewal is something you turn on rather than something you inherit. Imported certificates cannot renew through the service, since the issuing authority sits outside OCI, and neither can a certificate issued from your own certificate signing request, since OCI holds no private key for it and rejects a renewal rule on it. The check excludes both. Attach the rule under Identity & Security > Certificates in the Console or with `oci certs-mgmt certificate update`.
 
         **Why this matters**
 
@@ -9542,15 +9181,19 @@ queries:
   - uid: mondoo-oci-security-certificates-auto-renewal-enabled-oci
     filters: asset.platform == 'oci'
     mql: |
+      # Only a certificate the service both issues and manages can carry a renewal
+      # rule. OCI rejects the rule on a certificate issued from a customer's own CSR
+      # (MANAGED_EXTERNALLY_ISSUED_BY_INTERNAL_CA), since it holds no private key to
+      # renew with, so matching that config type too failed certificates nobody could fix.
       oci.certificates.certificates.where(
-        state == "ACTIVE" && configType.contains("ISSUED_BY_INTERNAL_CA")
+        state == "ACTIVE" && configType == "ISSUED_BY_INTERNAL_CA"
       ).all(autoRenewalEnabled == true)
   - uid: mondoo-oci-security-certificates-auto-renewal-enabled-terraform-hcl
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'oci_certificates_management_certificate')
     mql: |
       terraform.resources('oci_certificates_management_certificate').where(
-        blocks.where(type == 'certificate_config').where(arguments['config_type'] != "IMPORTED") != empty
+        blocks.where(type == 'certificate_config').where(arguments['config_type'] == "ISSUED_BY_INTERNAL_CA") != empty
       ).all(
         blocks.where(type == 'certificate_rules').where(
           arguments['rule_type'] == "CERTIFICATE_RENEWAL_RULE"
@@ -9561,7 +9204,7 @@ queries:
       asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'oci_certificates_management_certificate')
     mql: |
       terraform.plan.resourceChanges.where(type == 'oci_certificates_management_certificate').where(
-        change.after['certificate_config'].where(_['config_type'] != "IMPORTED") != empty
+        change.after['certificate_config'].where(_['config_type'] == "ISSUED_BY_INTERNAL_CA") != empty
       ).all(
         change.after['certificate_rules'] != null &&
         change.after['certificate_rules'].where(_['rule_type'] == "CERTIFICATE_RENEWAL_RULE") != empty
@@ -9571,187 +9214,11 @@ queries:
       asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'oci_certificates_management_certificate')
     mql: |
       terraform.state.resources.where(type == 'oci_certificates_management_certificate').where(
-        values['certificate_config'].where(_['config_type'] != "IMPORTED") != empty
+        values['certificate_config'].where(_['config_type'] == "ISSUED_BY_INTERNAL_CA") != empty
       ).all(
         values['certificate_rules'] != null &&
         values['certificate_rules'].where(_['rule_type'] == "CERTIFICATE_RENEWAL_RULE") != empty
       )
-  - uid: mondoo-oci-security-certificate-authorities-customer-managed-keys
-    title: Ensure certificate authorities use customer-managed KMS keys
-    impact: 70
-    tags:
-      compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
-      compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-a-2-iv-access-control-encryption-and-decryption
-      compliance/iso-27001-2022: iso-27001-2022-a-8-24
-      compliance/nis-2: nis-2-21-2-h
-      compliance/nist-csf-1: nist-csf-1-pr-ds-1
-      compliance/nist-csf-2: nist-csf-2-pr-ds-01
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-12
-      compliance/nist-sp-800-171: nist-sp-800-171--3-13-10
-      compliance/owasp-top-10-2025: owasp-top-10-2025-a04
-      compliance/pci-dss-4: pcidss-requirement-3-6-1
-      compliance/soc2-2017: soc2-control-cc6-1-11
-      compliance/vda-isa-5: vda-isa-5-5-1-1
-    variants:
-      - uid: mondoo-oci-security-certificate-authorities-customer-managed-keys-oci
-        tags:
-          mondoo.com/filter-title: OCI
-          mondoo.com/filter-icon: oci
-      - uid: mondoo-oci-security-certificate-authorities-customer-managed-keys-terraform-hcl
-        tags:
-          mondoo.com/filter-title: Terraform HCL
-          mondoo.com/filter-icon: terraform
-      - uid: mondoo-oci-security-certificate-authorities-customer-managed-keys-terraform-plan
-        tags:
-          mondoo.com/filter-title: Terraform Plan
-          mondoo.com/filter-icon: terraform
-      - uid: mondoo-oci-security-certificate-authorities-customer-managed-keys-terraform-state
-        tags:
-          mondoo.com/filter-title: Terraform State
-          mondoo.com/filter-icon: terraform
-    docs:
-      desc: |
-        This check verifies that every active certificate authority in the OCI Certificates service has its private key material protected by a customer-managed key in OCI Vault.
-
-        An authority can be created against a key the customer owns in Vault or left under Oracle-managed encryption. The default path means the organization's own key-management policies, its Vault IAM statements such as `allow group KeyAdmins to use keys in compartment Security`, and its HSM-backed key-shape requirements cannot be applied to the material that controls every certificate the authority will ever issue. Bind the key when creating the authority under Identity & Security > Certificate Authorities in the Console, or supply the key OCID to `oci certs-mgmt certificate-authority create`.
-
-        **Why this matters**
-
-        A certificate authority's private key is the master credential of the entire public key infrastructure it anchors. Whoever can use it can mint a trusted certificate for any service name in the tenancy, for partner domains, and for the SaaS endpoints your clients resolve. No per-certificate control limits that, because the ability to issue is the control.
-
-        Containment is what customers discover too late. With an Oracle-managed key there is no Vault policy to revoke, so a suspected compromise cannot be stopped by any change the customer makes and requires Oracle to intervene. With a customer-managed key, disabling or rotating it cuts off access to the private material immediately and without rebuilding the authority.
-
-        The same gap applies to evidence. Key operations under Oracle management leave no entry in the customer's Vault audit log, so signing activity is visible only through the authority's own service records. A customer-managed key puts every use of the private material into a log the customer controls, independent of the service performing the operation.
-
-        Subordinate authorities inherit the problem rather than escaping it. A subordinate created without a customer-managed key is still a fully capable issuer whose key material the customer can neither control nor independently audit.
-      audit: |
-        ### Audit via Console
-
-        1. Open **Identity & Security** in the OCI Console and navigate to **Certificates** -> **Certificate Authorities**.
-        2. Select each active certificate authority and open its details page.
-        3. In the **Encryption** section, verify that a **KMS Key** is listed.
-
-        A passing certificate authority shows a populated **KMS Key** field referencing a customer-managed key. A failing certificate authority shows no KMS key configured.
-
-        ### Audit via CLI
-
-        1. List active certificate authorities and check the `kms-key-id` field for each:
-
-        ```bash
-        oci certs-mgmt certificate-authority list \
-          --compartment-id <compartment-ocid> \
-          --lifecycle-state ACTIVE \
-          --query 'data.items[*].{name:name, id:id, kmsKeyId:"kms-key-id"}' \
-          --output table
-        ```
-
-        A passing certificate authority returns a non-null, non-empty `kmsKeyId`. A failing certificate authority returns `null` or an empty string for `kmsKeyId`.
-      remediation:
-        - id: console
-          desc: |
-            Re-create CAs without customer-managed encryption using a vault-backed key. (CA encryption keys are set at create time and cannot be changed in place.)
-
-            1. Open **Identity & Security** → **Certificates** → **Certificate Authorities** → identify CAs without a Vault key.
-            2. Decide whether the CA can be retired (preferred) or must be replaced.
-            3. To replace: create a new CA in **Create Certificate Authority** with **KMS Vault** and **KMS Key** set to a customer-managed key, re-issue subordinate CAs and certificates from the new root, then schedule deletion of the old CA.
-        - id: cli
-          desc: |
-            CA encryption keys are set at create time, so a CA without a customer-managed key must be replaced rather than updated.
-
-            1. Create a replacement root CA. `<kms-key-ocid>` must be an HSM-protected asymmetric Vault key, RSA 2048 or 4096 bits or ECDSA NIST_P384, because the Certificates service does not accept software-protected or symmetric keys. Choose a `--signing-algorithm` that suits the key type, such as `SHA256_WITH_RSA` for an RSA key:
-
-            ```bash
-            oci certs-mgmt certificate-authority create-root-ca-by-generating-config-details \
-              --compartment-id <compartment-ocid> \
-              --name internal-root-ca-v2 \
-              --kms-key-id <kms-key-ocid> \
-              --signing-algorithm SHA256_WITH_RSA \
-              --subject '{"commonName":"Internal Root CA"}' \
-              --validity '{"timeOfValidityNotAfter":"2031-01-01T00:00:00Z"}'
-            ```
-
-            2. Re-issue subordinate CAs and certificates from the new CA and move consumers to them, then schedule the old CA for deletion. It remains `ACTIVE`, and keeps failing, until you do, and it can issue nothing once deleted, so finish the migration first:
-
-            ```bash
-            oci certs-mgmt certificate-authority schedule-deletion --certificate-authority-id <old-ca-ocid>
-            ```
-        - id: terraform
-          desc: |
-            Set `kms_key_id` on every `oci_certificates_management_certificate_authority` to reference a customer-managed key:
-
-            ```hcl
-            resource "oci_kms_vault" "pki" {
-              compartment_id = var.compartment_ocid
-              display_name   = "pki-vault"
-              vault_type     = "DEFAULT"
-            }
-
-            resource "oci_kms_key" "pki" {
-              compartment_id      = var.compartment_ocid
-              display_name        = "pki-ca-key"
-              management_endpoint = oci_kms_vault.pki.management_endpoint
-              protection_mode     = "HSM"
-
-              key_shape {
-                algorithm = "RSA"
-                length    = 256 # bytes; 256 bytes = RSA-2048
-              }
-            }
-
-            resource "oci_certificates_management_certificate_authority" "root" {
-              compartment_id = var.compartment_ocid
-              name           = "internal-root-ca"
-              kms_key_id     = oci_kms_key.pki.id
-
-              certificate_authority_config {
-                config_type         = "ROOT_CA_GENERATED_INTERNALLY"
-                signing_algorithm   = "SHA256_WITH_RSA"
-
-                subject {
-                  common_name = "Internal Root CA"
-                }
-
-                validity {
-                  time_of_validity_not_after = "2031-01-01T00:00:00Z"
-                }
-              }
-            }
-            ```
-    refs:
-      - url: https://docs.oracle.com/en-us/iaas/Content/certificates/managing-certificate-authorities.htm
-        title: OCI - Managing Certificate Authorities
-  - uid: mondoo-oci-security-certificate-authorities-customer-managed-keys-oci
-    filters: asset.platform == 'oci'
-    mql: |
-      oci.certificates.certificateAuthorities.where(state == "ACTIVE").all(
-        kmsKey != null
-      )
-  - uid: mondoo-oci-security-certificate-authorities-customer-managed-keys-terraform-hcl
-    filters: |
-      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'oci_certificates_management_certificate_authority')
-    mql: |
-      terraform.resources('oci_certificates_management_certificate_authority').all(
-        arguments['kms_key_id'] != null && arguments['kms_key_id'] != ""
-      )
-  - uid: mondoo-oci-security-certificate-authorities-customer-managed-keys-terraform-plan
-    filters: |
-      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'oci_certificates_management_certificate_authority')
-    mql: |
-      terraform.plan.resourceChanges
-        .where(type == 'oci_certificates_management_certificate_authority')
-        .all(
-          change.after['kms_key_id'] != null && change.after['kms_key_id'] != ""
-        )
-  - uid: mondoo-oci-security-certificate-authorities-customer-managed-keys-terraform-state
-    filters: |
-      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'oci_certificates_management_certificate_authority')
-    mql: |
-      terraform.state.resources.where(type == 'oci_certificates_management_certificate_authority').all(
-        values['kms_key_id'] != null && values['kms_key_id'] != ""
-      )
-  # No Terraform variants: the runtime check resolves the cluster's typed `subnet` reference and reads `prohibitPublicIpOnVnic`. Terraform stores subnet references as opaque strings (`oci_core_subnet.foo.id`) that cannot be cross-resolved against `oci_core_subnet.arguments['prohibit_public_ip_on_vnic']` without brittle reference-string parsing. The same limitation is documented on `mondoo-oci-security-oke-node-pool-private-subnets`.
   - uid: mondoo-oci-security-redis-cluster-private-subnet
     title: Ensure OCI Cache clusters are deployed in private subnets
     impact: 90
@@ -10231,17 +9698,17 @@ queries:
 
         ### Audit via CLI
 
-        1. List all security zones in the tenancy root compartment:
+        1. List the security zones attached to each compartment. The call returns only the zones attached to the compartment it is given, so a zone on a child compartment does not appear when the tenancy root is queried; repeat it for every compartment:
 
         ```bash
         oci cloud-guard security-zone-collection list-security-zones \
-          --compartment-id <tenancy-ocid> \
+          --compartment-id <compartment-ocid> \
           --lifecycle-state ACTIVE \
           --query 'data.items[*].{name:"display-name", id:id}' \
           --output table
         ```
 
-        A passing tenancy returns at least one row in the output. A failing tenancy returns an empty list.
+        A passing tenancy returns at least one row for some compartment. A failing tenancy returns an empty list for every compartment.
       remediation:
         - id: console
           desc: |
@@ -10454,7 +9921,7 @@ queries:
       desc: |
         This check verifies that password complexity is enforced strongly enough to resist guessing, requiring a minimum length of 14 characters, at least one uppercase letter, one lowercase letter, one numeral, and one special character, and passwords that do not contain the username.
 
-        OCI keeps password rules in two places, and both are checked. The legacy tenancy-wide authentication policy applies to local IAM users and is edited with `oci iam authentication-policy update` against the tenancy. A tenancy using identity domains keeps a separate password policy per domain under Identity & Security > Domains, and that is the policy the domain's users actually authenticate against, so a hardened tenancy policy sitting alongside a default domain policy still leaves real accounts weakly protected. A tenancy with no identity domains is judged on the tenancy-wide policy alone. The OCI default enforces only a 12-character minimum with a single character drawn from three of the four character classes.
+        OCI keeps password rules in two places, and both are checked. The legacy tenancy-wide authentication policy applies to local IAM users and is edited with `oci iam authentication-policy update` against the tenancy. A tenancy using identity domains keeps a separate password policy per domain under Identity & Security > Domains, and that is the policy the domain's users actually authenticate against, so a hardened tenancy policy sitting alongside a default domain policy still leaves real accounts weakly protected. In each domain the check reads the default password policy and every policy assigned to a group, and requires each to use `Custom` strength, because the individual rules take effect only on a custom policy. A tenancy with no identity domains is judged on the tenancy-wide policy alone. The OCI default enforces only a 12-character minimum with a single character drawn from three of the four character classes.
 
         **Why this matters**
 
@@ -10505,7 +9972,7 @@ queries:
               --password-policy '{"minimumPasswordLength": 14, "isUppercaseCharactersRequired": true, "isLowercaseCharactersRequired": true, "isNumericCharactersRequired": true, "isSpecialCharactersRequired": true, "isUsernameContainmentAllowed": false}'
             ```
 
-            2. Update the password policy in each identity domain, using that domain's own endpoint. `<domain-url>` is the host name from the domain URL shown on the domain's details page, such as `idcs-0123456789abcdef.identity.oraclecloud.com`, and `oci identity-domains password-policies list --endpoint https://<domain-url>` returns the `<password-policy-id>` values. The first operation switches the policy to `Custom` strength, because the individual rules only apply to a custom policy:
+            2. Update the password policy in each identity domain, using that domain's own endpoint. `<domain-url>` is the host name from the domain URL shown on the domain's details page, such as `idcs-0123456789abcdef.identity.oraclecloud.com`, and `oci identity-domains password-policies list --endpoint https://<domain-url>` returns the `<password-policy-id>` values. Patch `defaultPasswordPolicy` and every policy assigned to a group; `simplePasswordPolicy` and `standardPasswordPolicy` are templates and are not evaluated. The first operation switches the policy to `Custom` strength, because the individual rules only apply to a custom policy:
 
             ```bash
             oci identity-domains password-policy patch \
@@ -10545,14 +10012,25 @@ queries:
       oci.identity.authenticationPolicy.passwordRequiresSpecial == true
       oci.identity.authenticationPolicy.passwordUsernameContainmentAllowed == false
       # authenticationPolicy is the legacy tenancy-wide policy. A tenancy on identity
-      # domains keeps a separate password policy per domain, and that is the one its
-      # users actually authenticate against. Vacuously true on a tenancy with no domains.
-      oci.identity.domains.all(passwordPolicy.minLength >= 14)
-      oci.identity.domains.all(passwordPolicy.minUpperCase >= 1)
-      oci.identity.domains.all(passwordPolicy.minLowerCase >= 1)
-      oci.identity.domains.all(passwordPolicy.minNumerals >= 1)
-      oci.identity.domains.all(passwordPolicy.minSpecialChars >= 1)
-      oci.identity.domains.all(passwordPolicy.userNameDisallowed == true)
+      # domains keeps password policies per domain, and those are what its users
+      # authenticate against: the domain's defaultPasswordPolicy, plus any policy
+      # assigned to groups. The Simple and Standard entries are templates. The
+      # individual rules take effect only on a Custom-strength policy. Vacuously true
+      # on a tenancy with no domains.
+      oci.identity.domains.all(
+        passwordPolicies.where(name == "defaultPasswordPolicy" || groups != empty) != empty
+      )
+      oci.identity.domains.all(
+        passwordPolicies.where(name == "defaultPasswordPolicy" || groups != empty).all(
+          passwordStrength == "Custom" &&
+          minLength >= 14 &&
+          minUpperCase >= 1 &&
+          minLowerCase >= 1 &&
+          minNumerals >= 1 &&
+          minSpecialChars >= 1 &&
+          userNameDisallowed == true
+        )
+      )
   - uid: mondoo-oci-security-iam-password-policy-strong-terraform-hcl
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'oci_identity_authentication_policy')
@@ -10889,10 +10367,10 @@ queries:
         1. List the keys in a vault and review their rotation configuration:
 
         ```bash
-        oci kms management key list --compartment-id <compartment-ocid> --endpoint <vault-management-endpoint> --query 'data[*].{name:"display-name", autoRotation:"auto-key-rotation-details"}'
+        oci kms management key list --compartment-id <compartment-ocid> --endpoint <vault-management-endpoint> --query 'data[*].{name:"display-name", autoRotation:"is-auto-rotation-enabled"}'
         ```
 
-        A passing key returns a populated `auto-key-rotation-details` object with rotation enabled. A failing key returns `null`.
+        A passing key returns `autoRotation` as `true`. A failing key returns `false`.
       remediation:
         - id: console
           desc: |
@@ -14674,13 +14152,13 @@ queries:
             4. Select **Save changes** and apply the policy.
         - id: cli
           desc: |
-            To harden a decryption profile using the OCI CLI, keep `--type` set to the profile's existing type. The example is a forward-proxy profile. For an `SSL_INBOUND_INSPECTION` profile, pass only `isUnsupportedCipherBlocked`, `isUnsupportedVersionBlocked`, and `isOutOfCapacityBlocked`, because the certificate settings exist only on forward-proxy profiles:
+            To harden a decryption profile using the OCI CLI, keep `--type` set to the profile's existing type, and repeat it as `type` inside `--decryption-profile-details`, which the CLI requires. The example is a forward-proxy profile. For an `SSL_INBOUND_INSPECTION` profile, pass only `type`, `isUnsupportedCipherBlocked`, `isUnsupportedVersionBlocked`, and `isOutOfCapacityBlocked`, because the certificate settings exist only on forward-proxy profiles:
 
             ```bash
             oci network-firewall decryption-profile update \
               --network-firewall-policy-id <policy-ocid> --decryption-profile-name <profile-name> \
               --type SSL_FORWARD_PROXY \
-              --decryption-profile-details '{"isExpiredCertificateBlocked":true,"isUntrustedIssuerBlocked":true,"isRevocationStatusTimeoutBlocked":true,"isUnknownRevocationStatusBlocked":true,"isUnsupportedCipherBlocked":true,"isUnsupportedVersionBlocked":true,"isOutOfCapacityBlocked":true}'
+              --decryption-profile-details '{"type":"SSL_FORWARD_PROXY","isExpiredCertificateBlocked":true,"isUntrustedIssuerBlocked":true,"isRevocationStatusTimeoutBlocked":true,"isUnknownRevocationStatusBlocked":true,"isUnsupportedCipherBlocked":true,"isUnsupportedVersionBlocked":true,"isOutOfCapacityBlocked":true}'
             ```
         - id: terraform
           desc: |
@@ -15009,10 +14487,16 @@ queries:
 
         ### Audit via CLI
 
-        1. List the bastions in a compartment and review their allow lists:
+        1. List the bastions in a compartment:
 
         ```bash
-        oci bastion bastion list --compartment-id <compartment-ocid> --query 'data[].{name:name,cidrs:"client-cidr-block-allow-list"}'
+        oci bastion bastion list --compartment-id <compartment-ocid> --query 'data[].{name:name,id:id}'
+        ```
+
+        2. Retrieve each bastion's allow lists, which the list call does not return:
+
+        ```bash
+        oci bastion bastion get --bastion-id <bastion-ocid> --query 'data.{name:name,cidrs:"client-cidr-block-allow-list"}'
         ```
 
         A passing bastion returns an allow list without `0.0.0.0/0`. A failing bastion includes it.
@@ -15140,13 +14624,19 @@ queries:
 
         ### Audit via CLI
 
-        1. List the bastions in a compartment and review their maximum session TTL:
+        1. List the bastions in a compartment:
 
         ```bash
-        oci bastion bastion list --compartment-id <compartment-ocid> --query 'data[].{name:name,ttl:"max-session-ttl-in-seconds"}'
+        oci bastion bastion list --compartment-id <compartment-ocid> --query 'data[].{name:name,id:id}'
         ```
 
-        A passing bastion returns a `maxSessionTtlInSeconds` of 3600 or less. A failing bastion returns more.
+        2. Retrieve each bastion's maximum session TTL, which the list call does not return:
+
+        ```bash
+        oci bastion bastion get --bastion-id <bastion-ocid> --query 'data.{name:name,ttl:"max-session-ttl-in-seconds"}'
+        ```
+
+        A passing bastion returns a `ttl` of 3600 or less. A failing bastion returns more.
       remediation:
         - id: console
           desc: |
@@ -15442,12 +14932,12 @@ queries:
             4. Select **Save changes** and apply the matching proposal on the customer-premises equipment.
         - id: cli
           desc: |
-            To raise a tunnel's Diffie-Hellman group using the OCI CLI, set a custom proposal on both phases. Phase 1 takes the group as `diffieHelmanGroup`, spelled as the API spells it, and phase 2 applies its group through perfect forward secrecy as `pfsDhGroup`. Use `GROUP14` or a stronger group such as `GROUP19` or `GROUP20`, and apply the same proposal on the customer-premises equipment, or the tunnel will not re-establish:
+            To raise a tunnel's Diffie-Hellman group using the OCI CLI, set a custom proposal on both phases. Phase 1 takes the group as `diffieHelmanGroup`, spelled as the API spells it, and phase 2 applies its group through perfect forward secrecy as `pfsDhGroup`. A custom proposal must name every parameter of its phase, the authentication and encryption algorithms and the lifetime as well as the group, or OCI rejects it. Use `GROUP14` or a stronger group such as `GROUP19` or `GROUP20`, and apply the same proposal on the customer-premises equipment, or the tunnel will not re-establish:
 
             ```bash
             oci network ip-sec-tunnel update --ipsc-id <ipsec-connection-ocid> --tunnel-id <tunnel-ocid> \
-              --phase-one-config '{"isCustomPhaseOneConfig":true,"diffieHelmanGroup":"GROUP14"}' \
-              --phase-two-config '{"isCustomPhaseTwoConfig":true,"isPfsEnabled":true,"pfsDhGroup":"GROUP14"}'
+              --phase-one-config '{"isCustomPhaseOneConfig":true,"authenticationAlgorithm":"SHA2_384","encryptionAlgorithm":"AES_256_CBC","diffieHelmanGroup":"GROUP14","lifetimeInSeconds":28800}' \
+              --phase-two-config '{"isCustomPhaseTwoConfig":true,"authenticationAlgorithm":"HMAC_SHA2_256_128","encryptionAlgorithm":"AES_256_CBC","lifetimeInSeconds":3600,"isPfsEnabled":true,"pfsDhGroup":"GROUP14"}'
             ```
         - id: terraform
           desc: |
@@ -15648,11 +15138,11 @@ queries:
             4. Select **Save changes** and apply the matching setting on the customer-premises equipment.
         - id: cli
           desc: |
-            To enable perfect forward secrecy using the OCI CLI, turn on `isPfsEnabled` and set `pfsDhGroup` to `GROUP14` or stronger. Apply the matching setting on the customer-premises equipment in the same window, because the tunnel will not re-establish until both sides agree:
+            To enable perfect forward secrecy using the OCI CLI, turn on `isPfsEnabled` and set `pfsDhGroup` to `GROUP14` or stronger. A custom phase 2 proposal must also name its authentication and encryption algorithms and its lifetime, or OCI rejects it. Apply the matching setting on the customer-premises equipment in the same window, because the tunnel will not re-establish until both sides agree:
 
             ```bash
             oci network ip-sec-tunnel update --ipsc-id <ipsec-connection-ocid> --tunnel-id <tunnel-ocid> \
-              --phase-two-config '{"isCustomPhaseTwoConfig":true,"isPfsEnabled":true,"pfsDhGroup":"GROUP14"}'
+              --phase-two-config '{"isCustomPhaseTwoConfig":true,"authenticationAlgorithm":"HMAC_SHA2_256_128","encryptionAlgorithm":"AES_256_CBC","lifetimeInSeconds":3600,"isPfsEnabled":true,"pfsDhGroup":"GROUP14"}'
             ```
         - id: terraform
           desc: |
@@ -15912,7 +15402,7 @@ queries:
       desc: |
         This check verifies that every network load balancer holding a public IP address has at least one network security group attached to filter what reaches it.
 
-        A network load balancer operates at layer 4, so ingress filtering is the whole of its access control. The check passes when the load balancer is private or when at least one network security group is attached to it. Attach groups under Networking > Load balancers > Network load balancers in the Console, or with `oci nlb network-load-balancer update`.
+        A network load balancer operates at layer 4, so ingress filtering is the whole of its access control. The check passes when the load balancer is private or when at least one network security group is attached to it. Attach groups under Networking > Load balancers > Network load balancers in the Console, or with `oci nlb network-load-balancer update-network-security-groups`.
 
         **Why this matters**
 
@@ -16041,7 +15531,7 @@ queries:
       desc: |
         This check verifies that no network load balancer has a working path from the internet, judging reachability as a whole rather than treating a public address as the answer.
 
-        Reachability requires three conditions at once. The load balancer has a public IP address, it sits on a subnet whose route table sends a default route to an enabled internet gateway, and an attached network security group or the subnet's security list admits traffic from any source address. Break any one of the three and it is not on the internet, whatever its address suggests. A load balancer meant to serve the public will fail this check, which is expected: the check is written for internal load balancers, where a public path is a mistake rather than a design.
+        Reachability requires three conditions at once. The load balancer has a public IP address, it sits on a subnet whose route table sends a default route to an enabled internet gateway, and an attached network security group or the subnet's security list admits traffic from any source address. A load balancer with no listener accepts no connection and is not counted. Break any one of the three and it is not on the internet, whatever its address suggests. A load balancer meant to serve the public will fail this check, which is expected: the check is written for internal load balancers, where a public path is a mistake rather than a design.
 
         **Why this matters**
 
