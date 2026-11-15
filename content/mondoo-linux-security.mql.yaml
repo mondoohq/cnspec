@@ -411,8 +411,16 @@ queries:
     filters: |
       asset.kind != "container-image"
     mql: |
-      file("/etc/default/aide").exists &&
-      ["/etc/default/aide"].where(file(_).exists).all(parse.ini(_).params["CRON_DAILY_RUN"] == "yes") ||
+      // Debian and Ubuntu's aide-common schedules the daily check itself, from
+      // /etc/cron.daily/aide on older releases and dailyaidecheck.timer on newer ones.
+      // Both skip the run when /etc/default/aide sets CRON_DAILY_RUN to anything but
+      // yes. The scripts read it as ${CRON_DAILY_RUN:-yes}, so unset or empty means yes.
+      aideDailyRunEnabled = ["/etc/default/aide"].where(file(_).exists).all(
+        parse.ini(_).params["CRON_DAILY_RUN"] == empty ||
+        parse.ini(_).params["CRON_DAILY_RUN"] == /^["']?yes["']?$/
+      )
+      aideDailyRunEnabled && file("/etc/cron.daily/aide").exists ||
+      aideDailyRunEnabled && systemd.timer("dailyaidecheck").enabled ||
       crontab.entries.where(user == "root").any(command.contains("aide --check")) ||
       crontab.entries.where(user == "root").any(command.contains("aide.conf --check")) ||
       systemd.timer('aidecheck').enabled
@@ -420,7 +428,7 @@ queries:
       desc: |
         This check verifies that AIDE integrity comparisons run on a schedule rather than only when someone remembers to start one.
 
-        Any of three arrangements satisfies it: `CRON_DAILY_RUN=yes` in `/etc/default/aide`, a root crontab entry that runs `aide --check`, or an enabled `aidecheck` systemd timer. Distributions differ in which they ship, so any one of them is accepted.
+        Any of three arrangements satisfies it: the daily check that the Debian and Ubuntu `aide-common` package schedules itself, a root crontab entry that runs `aide --check`, or an enabled `aidecheck` systemd timer. Distributions differ in which they ship, so any one of them is accepted. The `aide-common` check runs from `/etc/cron.daily/aide` on older releases and from `dailyaidecheck.timer` on newer ones, and either counts only while `CRON_DAILY_RUN` in `/etc/default/aide` is unset or `yes`. Setting it to any other value turns the daily run off.
 
         **Why this matters**
 
@@ -436,11 +444,13 @@ queries:
 
         ```bash
         grep -E '^CRON_DAILY_RUN' /etc/default/aide
+        ls /etc/cron.daily/aide
+        systemctl is-enabled dailyaidecheck.timer
         crontab -u root -l | grep aide
         systemctl is-enabled aidecheck.timer
         ```
 
-        A passing result shows `CRON_DAILY_RUN=yes`, a root cron entry that runs `aide --check`, or an enabled `aidecheck.timer`. A failing result shows none of these are present.
+        A passing result shows one of these: `/etc/cron.daily/aide` exists or `dailyaidecheck.timer` is enabled while `CRON_DAILY_RUN` is absent, commented out, or `yes`; a root cron entry runs `aide --check`; or `aidecheck.timer` is enabled. A failing result shows none of these, or shows `CRON_DAILY_RUN` set to `no` with no other schedule in place.
       remediation:
         - id: cli
           desc: |
@@ -1894,7 +1904,7 @@ queries:
     filters: |
       asset.kind != "container-image"
       asset.runtime != "docker-container"
-      kernel.modules.any(name == "atm")
+      kernel.module("atm").onDisk || kernel.module("atm").loaded
     mql: |
       kernel.module("atm").blacklisted
       kernel.module("atm").installBypass
@@ -1902,7 +1912,7 @@ queries:
       desc: |
         This check verifies that the ATM kernel module cannot be loaded.
 
-        Asynchronous Transfer Mode is a cell-switched networking technology from the era of DSL aggregation and telecom backbones, and the `atm` module provides its `AF_ATM` socket family. The check reads the modprobe configuration in `/etc/modprobe.d/`, which must both blacklist the module and redirect its install command to `/bin/false`. Both directives are required: blacklisting alone stops automatic loading but still allows an explicit `modprobe atm`.
+        Asynchronous Transfer Mode is a cell-switched networking technology from the era of DSL aggregation and telecom backbones, and the `atm` module provides its `AF_ATM` socket family. The check reads the modprobe configuration in `/etc/modprobe.d/`, which must both blacklist the module and redirect its install command to `/bin/false`. Both directives are required: blacklisting alone stops automatic loading but still allows an explicit `modprobe atm`. The check applies wherever the running kernel ships the module as a loadable file or has it loaded. A kernel without it has nothing to disable, and a kernel with the protocol compiled in cannot be blocked this way.
 
         **Why this matters**
 
@@ -2008,7 +2018,7 @@ queries:
     filters: |
       asset.kind != "container-image"
       asset.runtime != "docker-container"
-      kernel.modules.any(name == "can")
+      kernel.module("can").onDisk || kernel.module("can").loaded
     mql: |
       kernel.module("can").blacklisted
       kernel.module("can").installBypass
@@ -2016,7 +2026,7 @@ queries:
       desc: |
         This check verifies that the CAN kernel module cannot be loaded.
 
-        Controller Area Network is the bus used in vehicles, robotics, and factory equipment to connect microcontrollers without a host computer, and the `can` module provides its `AF_CAN` socket family. The check reads the modprobe configuration in `/etc/modprobe.d/`, which must both blacklist the module and redirect its install command to `/bin/false`. Both directives are required: blacklisting alone stops automatic loading but still allows an explicit `modprobe can`.
+        Controller Area Network is the bus used in vehicles, robotics, and factory equipment to connect microcontrollers without a host computer, and the `can` module provides its `AF_CAN` socket family. The check reads the modprobe configuration in `/etc/modprobe.d/`, which must both blacklist the module and redirect its install command to `/bin/false`. Both directives are required: blacklisting alone stops automatic loading but still allows an explicit `modprobe can`. The check applies wherever the running kernel ships the module as a loadable file or has it loaded. A kernel without it has nothing to disable, and a kernel with the protocol compiled in cannot be blocked this way.
 
         **Why this matters**
 
@@ -2121,7 +2131,7 @@ queries:
     filters: |
       asset.kind != "container-image"
       asset.runtime != "docker-container"
-      kernel.modules.any(name == "dccp")
+      kernel.module("dccp").onDisk || kernel.module("dccp").loaded
     mql: |
       kernel.module("dccp").blacklisted
       kernel.module("dccp").installBypass
@@ -2129,7 +2139,7 @@ queries:
       desc: |
         This check verifies that the DCCP kernel module cannot be loaded.
 
-        The Datagram Congestion Control Protocol offers congestion-controlled datagram delivery for streaming and telephony, and the `dccp` module implements it. It saw essentially no production deployment, and applications needing these properties use UDP with application-level pacing, QUIC, or SCTP instead. The check reads the modprobe configuration in `/etc/modprobe.d/`, which must both blacklist the module and redirect its install command to `/bin/false`. Both directives are required: blacklisting alone stops automatic loading but still allows an explicit `modprobe dccp`.
+        The Datagram Congestion Control Protocol offers congestion-controlled datagram delivery for streaming and telephony, and the `dccp` module implements it. It saw essentially no production deployment, and applications needing these properties use UDP with application-level pacing, QUIC, or SCTP instead. The check reads the modprobe configuration in `/etc/modprobe.d/`, which must both blacklist the module and redirect its install command to `/bin/false`. Both directives are required: blacklisting alone stops automatic loading but still allows an explicit `modprobe dccp`. The check applies wherever the running kernel ships the module as a loadable file or has it loaded. A kernel without it has nothing to disable, and a kernel with the protocol compiled in cannot be blocked this way.
 
         **Why this matters**
 
@@ -2234,7 +2244,7 @@ queries:
     filters: |
       asset.kind != "container-image"
       asset.runtime != "docker-container"
-      kernel.modules.any(name == "rds")
+      kernel.module("rds").onDisk || kernel.module("rds").loaded
     mql: |
       kernel.module("rds").blacklisted
       kernel.module("rds").installBypass
@@ -2242,7 +2252,7 @@ queries:
       desc: |
         This check verifies that the RDS kernel module cannot be loaded.
 
-        Reliable Datagram Sockets provide connectionless, reliable messaging between nodes, built originally for Oracle RAC database interconnects over InfiniBand, and the `rds` module implements it. The check reads the modprobe configuration in `/etc/modprobe.d/`, which must both blacklist the module and redirect its install command to `/bin/false`. Both directives are required: blacklisting alone stops automatic loading but still allows an explicit `modprobe rds`.
+        Reliable Datagram Sockets provide connectionless, reliable messaging between nodes, built originally for Oracle RAC database interconnects over InfiniBand, and the `rds` module implements it. The check reads the modprobe configuration in `/etc/modprobe.d/`, which must both blacklist the module and redirect its install command to `/bin/false`. Both directives are required: blacklisting alone stops automatic loading but still allows an explicit `modprobe rds`. The check applies wherever the running kernel ships the module as a loadable file or has it loaded. A kernel without it has nothing to disable, and a kernel with the protocol compiled in cannot be blocked this way.
 
         **Why this matters**
 
@@ -2347,7 +2357,7 @@ queries:
     filters: |
       asset.kind != "container-image"
       asset.runtime != "docker-container"
-      kernel.modules.any(name == "sctp")
+      kernel.module("sctp").onDisk || kernel.module("sctp").loaded
     mql: |
       kernel.module("sctp").blacklisted
       kernel.module("sctp").installBypass
@@ -2355,7 +2365,7 @@ queries:
       desc: |
         This check verifies that the SCTP kernel module cannot be loaded.
 
-        The Stream Control Transmission Protocol provides multi-homed, message-oriented transport with multiple independent streams per association, and the `sctp` module implements it. It is used almost exclusively in telecom signaling such as Diameter and SIGTRAN. The check reads the modprobe configuration in `/etc/modprobe.d/`, which must both blacklist the module and redirect its install command to `/bin/false`. Both directives are required: blacklisting alone stops automatic loading but still allows an explicit `modprobe sctp`.
+        The Stream Control Transmission Protocol provides multi-homed, message-oriented transport with multiple independent streams per association, and the `sctp` module implements it. It is used almost exclusively in telecom signaling such as Diameter and SIGTRAN. The check reads the modprobe configuration in `/etc/modprobe.d/`, which must both blacklist the module and redirect its install command to `/bin/false`. Both directives are required: blacklisting alone stops automatic loading but still allows an explicit `modprobe sctp`. The check applies wherever the running kernel ships the module as a loadable file or has it loaded. A kernel without it has nothing to disable, and a kernel with the protocol compiled in cannot be blocked this way.
 
         **Why this matters**
 
@@ -2460,7 +2470,7 @@ queries:
     filters: |
       asset.kind != "container-image"
       asset.runtime != "docker-container"
-      kernel.modules.any(name == "tipc")
+      kernel.module("tipc").onDisk || kernel.module("tipc").loaded
     mql: |
       kernel.module("tipc").blacklisted
       kernel.module("tipc").installBypass
@@ -2468,7 +2478,7 @@ queries:
       desc: |
         This check verifies that the TIPC kernel module cannot be loaded.
 
-        Transparent Inter-Process Communication provides cluster-internal messaging between nodes with its own addressing and service discovery, and the `tipc` module implements it. It needs an explicitly configured bearer interface to do anything useful, so a host that was never set up for TIPC gains nothing from having the module available. The check reads the modprobe configuration in `/etc/modprobe.d/`, which must both blacklist the module and redirect its install command to `/bin/false`. Both directives are required: blacklisting alone stops automatic loading but still allows an explicit `modprobe tipc`.
+        Transparent Inter-Process Communication provides cluster-internal messaging between nodes with its own addressing and service discovery, and the `tipc` module implements it. It needs an explicitly configured bearer interface to do anything useful, so a host that was never set up for TIPC gains nothing from having the module available. The check reads the modprobe configuration in `/etc/modprobe.d/`, which must both blacklist the module and redirect its install command to `/bin/false`. Both directives are required: blacklisting alone stops automatic loading but still allows an explicit `modprobe tipc`. The check applies wherever the running kernel ships the module as a loadable file or has it loaded. A kernel without it has nothing to disable, and a kernel with the protocol compiled in cannot be blocked this way.
 
         **Why this matters**
 
@@ -2983,14 +2993,20 @@ queries:
             set -e
 
             echo "Stopping, disabling, and masking Avahi daemon..."
+            units=()
             for unit in avahi-daemon.socket avahi-daemon.service; do
               # Skip units that are not installed or already masked. systemctl exits 5 on a unit it cannot load.
               if systemctl cat "$unit" >/dev/null 2>&1; then
-                systemctl stop "$unit"
-                systemctl disable "$unit"
-                systemctl mask "$unit"
+                units+=("$unit")
               fi
             done
+            if [ "${#units[@]}" -gt 0 ]; then
+              # Disable and mask before stopping. Clients such as cups-browsed start the daemon
+              # again through D-Bus while it stops, which cancels a stop issued first.
+              systemctl disable "${units[@]}"
+              systemctl mask "${units[@]}"
+              systemctl stop "${units[@]}"
+            fi
             ```
         - id: ansible
           desc: |
@@ -3031,9 +3047,11 @@ queries:
             Use this Chef Infra recipe code to stop, disable, and mask the Avahi daemon and its activation socket:
 
             ```ruby
+            # Disable and mask before stopping. Clients such as cups-browsed start the daemon
+            # again through D-Bus while it stops, which cancels a stop issued first.
             %w(avahi-daemon.socket avahi-daemon.service).each do |unit|
               systemd_unit unit do
-                action %i(stop disable mask)
+                action %i(disable mask stop)
                 only_if "systemctl cat #{unit}"
               end
             end
@@ -3198,9 +3216,23 @@ queries:
     mql: |
       service("dhcpd").enabled == false
       service("dhcpd").running == false
+      service("dhcpd6").enabled == false
+      service("dhcpd6").running == false
+      service("kea-dhcp4").enabled == false
+      service("kea-dhcp4").running == false
+      service("kea-dhcp6").enabled == false
+      service("kea-dhcp6").running == false
+      service("isc-dhcp-server").enabled == false
+      service("isc-dhcp-server").running == false
+      service("isc-dhcp-server6").enabled == false
+      service("isc-dhcp-server6").running == false
+      service("kea-dhcp4-server").enabled == false
+      service("kea-dhcp4-server").running == false
+      service("kea-dhcp6-server").enabled == false
+      service("kea-dhcp6-server").running == false
     docs:
       desc: |
-        This check verifies that the `dhcpd` service is neither running nor enabled at boot.
+        This check verifies that no DHCP server service is running or enabled at boot. It covers the ISC DHCP units `dhcpd` and `dhcpd6`, and the Kea units `kea-dhcp4` and `kea-dhcp6`. Red Hat Enterprise Linux 10 ships only Kea, which replaced the ISC DHCP server. Debian and Ubuntu name the same servers `isc-dhcp-server`, `isc-dhcp-server6`, `kea-dhcp4-server`, and `kea-dhcp6-server`.
 
         **Why this matters**
 
@@ -3208,34 +3240,34 @@ queries:
 
         An unintended DHCP server on a network segment is therefore a network takeover primitive. If it answers faster than the legitimate server, it decides where every newly booting machine on that segment sends its traffic. Pointing them at an attacker-controlled gateway puts that attacker in the middle of the connections, and pointing them at an attacker-controlled resolver lets them redirect any name to any address.
 
-        This does not require malice to cause damage. A `dhcpd` left enabled from a test or from a package's default configuration will begin issuing addresses from whatever pool it was last configured with, colliding with the real server's leases and producing duplicate-address failures that are difficult to trace back to their source.
+        This does not require malice to cause damage. A DHCP server left enabled from a test or from a package's default configuration will begin issuing addresses from whatever pool it was last configured with, colliding with the real server's leases and producing duplicate-address failures that are difficult to trace back to their source.
 
-        Run `dhcpd` only on hosts whose role is to serve DHCP for a defined scope. On every other host, stop and disable it.
+        Run a DHCP server only on hosts whose role is to serve DHCP for a defined scope. On every other host, stop and disable it.
       audit: |
-        Run this command to confirm the DHCP server service is stopped and disabled:
+        Run this command to confirm the DHCP server services are stopped and disabled:
 
         ```bash
-        systemctl is-active dhcpd
-        systemctl is-enabled dhcpd
+        systemctl is-active dhcpd dhcpd6 kea-dhcp4 kea-dhcp6 isc-dhcp-server isc-dhcp-server6 kea-dhcp4-server kea-dhcp6-server
+        systemctl is-enabled dhcpd dhcpd6 kea-dhcp4 kea-dhcp6 isc-dhcp-server isc-dhcp-server6 kea-dhcp4-server kea-dhcp6-server
         ```
 
-        A passing result reports `inactive` and `disabled` (or `masked`) for every listed unit. A failing result reports any unit as `active` or `enabled`.
+        A passing result reports `inactive` and `disabled`, `masked`, or a missing unit for every listed unit. A failing result reports any unit as `active` or `enabled`.
       remediation:
         - id: cli
           desc: |
             **Using the CLI**
 
-            1. Run this command to stop and disable `dhcpd`:
+            1. Run these commands to stop and disable each DHCP server unit that is installed:
 
                 ```bash
-                systemctl stop dhcpd
-                systemctl disable dhcpd
+                systemctl stop dhcpd dhcpd6 kea-dhcp4 kea-dhcp6 isc-dhcp-server isc-dhcp-server6 kea-dhcp4-server kea-dhcp6-server
+                systemctl disable dhcpd dhcpd6 kea-dhcp4 kea-dhcp6 isc-dhcp-server isc-dhcp-server6 kea-dhcp4-server kea-dhcp6-server
                 ```
 
-            2. To make the service `dhcpd` invisible to other services run this command:
+            2. To make the units invisible to other services run this command:
 
                 ```bash
-                systemctl mask dhcpd
+                systemctl mask dhcpd dhcpd6 kea-dhcp4 kea-dhcp6 isc-dhcp-server isc-dhcp-server6 kea-dhcp4-server kea-dhcp6-server
                 ```
         - id: bash
           desc: |
@@ -3247,39 +3279,53 @@ queries:
             #!/bin/bash
             set -e
 
-            # Skip the unit when it is not installed or already masked. systemctl exits 5 on a unit it cannot load.
-            if systemctl cat dhcpd.service >/dev/null 2>&1; then
-              echo "Stopping, disabling, and masking DHCP server..."
-              systemctl stop dhcpd.service
-              systemctl disable dhcpd.service
-              systemctl mask dhcpd.service
-            fi
+            for unit in dhcpd dhcpd6 kea-dhcp4 kea-dhcp6 isc-dhcp-server isc-dhcp-server6 kea-dhcp4-server kea-dhcp6-server; do
+              # Skip the unit when it is not installed or already masked. systemctl exits 5 on a unit it cannot load.
+              if systemctl cat "$unit.service" >/dev/null 2>&1; then
+                echo "Stopping, disabling, and masking $unit..."
+                systemctl stop "$unit.service"
+                systemctl disable "$unit.service"
+                systemctl mask "$unit.service"
+              fi
+            done
             ```
         - id: ansible
           desc: |
             **Using Ansible**
 
-            Use this Ansible playbook to stop and disable `dhcpd`:
+            Use this Ansible playbook to stop and disable the DHCP server:
 
             ```yaml
             ---
-            - name: Stop and disable DHCP server service
+            - name: Stop and disable DHCP server services
               hosts: all
               become: true
 
               tasks:
-                - name: Read the state of the DHCP server unit
+                - name: Read the state of the DHCP server units
                   ansible.builtin.systemd:
-                    name: dhcpd
-                  register: dhcpd_unit
+                    name: "{{ item }}"
+                  loop:
+                    - dhcpd
+                    - dhcpd6
+                    - kea-dhcp4
+                    - kea-dhcp6
+                    - isc-dhcp-server
+                    - isc-dhcp-server6
+                    - kea-dhcp4-server
+                    - kea-dhcp6-server
+                  register: dhcp_units
 
-                - name: Ensure DHCP server (dhcpd) is stopped and disabled
+                - name: Ensure the DHCP server units are stopped, disabled, and masked
                   ansible.builtin.systemd:
-                    name: dhcpd
+                    name: "{{ item.item }}"
                     state: stopped
-                    enabled: no
+                    enabled: false
                     masked: true
-                  when: dhcpd_unit.status.LoadState != 'not-found'
+                  loop: "{{ dhcp_units.results }}"
+                  loop_control:
+                    label: "{{ item.item }}"
+                  when: item.status.LoadState != 'not-found'
             ```
         - id: chef
           desc: |
@@ -3288,9 +3334,11 @@ queries:
             Use this Chef Infra recipe code to stop, disable, and mask the DHCP server:
 
             ```ruby
-            systemd_unit 'dhcpd.service' do
-              action %i(stop disable mask)
-              only_if 'systemctl cat dhcpd.service'
+            %w(dhcpd dhcpd6 kea-dhcp4 kea-dhcp6 isc-dhcp-server isc-dhcp-server6 kea-dhcp4-server kea-dhcp6-server).each do |unit|
+              systemd_unit "#{unit}.service" do
+                action %i(stop disable mask)
+                only_if "systemctl cat #{unit}.service"
+              end
             end
             ```
     refs:
@@ -4944,9 +4992,10 @@ queries:
       systemd.socket("rsh").running == false
       systemd.socket("rlogin").running == false
       systemd.socket("rexec").running == false
+      inetd.config.serviceNames.none(_.in(["shell", "login", "exec"]))
     docs:
       desc: |
-        This check verifies that the `rsh`, `rlogin`, and `rexec` systemd socket units are neither running nor enabled.
+        This check verifies that the rsh, rlogin, and rexec servers are not enabled: the `rsh`, `rlogin`, and `rexec` systemd socket units are neither running nor enabled, and inetd is not configured to start the `shell`, `login`, or `exec` services.
 
         **Why this matters**
 
@@ -4966,6 +5015,14 @@ queries:
         ```
 
         A passing result reports `inactive` and `disabled` for every listed socket unit. A failing result reports any socket as `active` or `enabled`.
+
+        On Debian and Ubuntu, the server packages register the rsh, rlogin, and rexec services with inetd rather than with systemd. Run this command to list the entries inetd starts:
+
+        ```bash
+        grep -E '^(shell|login|exec)[[:space:]]' /etc/inetd.conf
+        ```
+
+        A passing result prints nothing. A failing result prints an uncommented entry.
       remediation:
         - id: cli
           desc: |
@@ -4981,6 +5038,12 @@ queries:
             systemctl disable rsh.socket
             systemctl disable rlogin.socket
             systemctl disable rexec.socket
+            ```
+
+            On Debian and Ubuntu, the server packages register the rsh, rlogin, and rexec services with inetd instead. Disable the entries with `update-inetd`, which comments them out of `/etc/inetd.conf` and tells inetd to reread it:
+
+            ```bash
+            update-inetd --disable shell,login,exec
             ```
         - id: bash
           desc: |
@@ -5000,6 +5063,13 @@ queries:
                 systemctl disable "$unit"
               fi
             done
+
+            # Debian and Ubuntu packages register the rsh, rlogin, and rexec services with inetd rather than systemd.
+            # update-inetd comments the entries out and tells inetd to reread its configuration.
+            if command -v update-inetd >/dev/null 2>&1 && grep -qE '^(shell|login|exec)[[:space:]]' /etc/inetd.conf 2>/dev/null; then
+              echo "Disabling the rsh, rlogin, and rexec services in inetd..."
+              update-inetd --disable shell,login,exec
+            fi
             ```
         - id: ansible
           desc: |
@@ -5032,6 +5102,18 @@ queries:
                   loop_control:
                     label: "{{ item.item }}"
                   when: item.status.LoadState != 'not-found'
+
+                # Debian and Ubuntu packages register the rsh, rlogin, and rexec services with inetd rather than systemd.
+                - name: Find the rsh, rlogin, and rexec services entries in the inetd configuration
+                  ansible.builtin.command: grep -qE '^(shell|login|exec)[[:space:]]' /etc/inetd.conf
+                  register: rsh_inetd
+                  changed_when: false
+                  failed_when: false
+
+                - name: Disable the rsh, rlogin, and rexec services in inetd
+                  ansible.builtin.command: update-inetd --disable shell,login,exec
+                  changed_when: true
+                  when: rsh_inetd.rc == 0
             ```
         - id: chef
           desc: |
@@ -5045,6 +5127,14 @@ queries:
                 action %i(stop disable)
                 only_if "systemctl cat #{unit}"
               end
+            end
+
+            # Debian and Ubuntu packages register the rsh, rlogin, and rexec services with inetd rather than systemd.
+            # update-inetd comments the entries out and tells inetd to reread its configuration.
+            execute 'disable the rsh, rlogin, and rexec services in inetd' do
+              command 'update-inetd --disable shell,login,exec'
+              only_if { ::File.exist?('/etc/inetd.conf') && ::File.read('/etc/inetd.conf').match?(/^(shell|login|exec)\s/) }
+              only_if { which('update-inetd') }
             end
             ```
     refs:
@@ -5073,9 +5163,10 @@ queries:
     mql: |
       systemd.socket("telnet").enabled == false
       systemd.socket("telnet").running == false
+      inetd.config.serviceNames.none(_ == "telnet")
     docs:
       desc: |-
-        This check verifies that the `telnet` systemd socket unit is neither running nor enabled.
+        This check verifies that the Telnet server is not enabled: the `telnet` systemd socket unit is neither running nor enabled, and inetd is not configured to start the `telnet` service.
 
         **Why this matters**
 
@@ -5095,6 +5186,14 @@ queries:
         ```
 
         A passing result reports `inactive` and `disabled` for every listed socket unit. A failing result reports any socket as `active` or `enabled`.
+
+        On Debian and Ubuntu, the server packages register the Telnet server with inetd rather than with systemd. Run this command to list the entries inetd starts:
+
+        ```bash
+        grep -E '^(telnet)[[:space:]]' /etc/inetd.conf
+        ```
+
+        A passing result prints nothing. A failing result prints an uncommented entry.
       remediation:
         - id: cli
           desc: |
@@ -5105,6 +5204,12 @@ queries:
             ```bash
             systemctl stop telnet.socket
             systemctl disable telnet.socket
+            ```
+
+            On Debian and Ubuntu, the server packages register the Telnet server with inetd instead. Disable the entries with `update-inetd`, which comments them out of `/etc/inetd.conf` and tells inetd to reread it:
+
+            ```bash
+            update-inetd --disable telnet
             ```
         - id: bash
           desc: |
@@ -5121,6 +5226,13 @@ queries:
               echo "Stopping and disabling telnet service..."
               systemctl stop telnet.socket
               systemctl disable telnet.socket
+            fi
+
+            # Debian and Ubuntu packages register the Telnet server with inetd rather than systemd.
+            # update-inetd comments the entries out and tells inetd to reread its configuration.
+            if command -v update-inetd >/dev/null 2>&1 && grep -qE '^(telnet)[[:space:]]' /etc/inetd.conf 2>/dev/null; then
+              echo "Disabling the Telnet server in inetd..."
+              update-inetd --disable telnet
             fi
             ```
         - id: ansible
@@ -5147,6 +5259,18 @@ queries:
                     state: stopped
                     enabled: no
                   when: telnet_unit.status.LoadState != 'not-found'
+
+                # Debian and Ubuntu packages register the Telnet server with inetd rather than systemd.
+                - name: Find the Telnet server entries in the inetd configuration
+                  ansible.builtin.command: grep -qE '^(telnet)[[:space:]]' /etc/inetd.conf
+                  register: telnet_inetd
+                  changed_when: false
+                  failed_when: false
+
+                - name: Disable the Telnet server in inetd
+                  ansible.builtin.command: update-inetd --disable telnet
+                  changed_when: true
+                  when: telnet_inetd.rc == 0
             ```
         - id: chef
           desc: |
@@ -5158,6 +5282,14 @@ queries:
             systemd_unit 'telnet.socket' do
               action %i(stop disable)
               only_if 'systemctl cat telnet.socket'
+            end
+
+            # Debian and Ubuntu packages register the Telnet server with inetd rather than systemd.
+            # update-inetd comments the entries out and tells inetd to reread its configuration.
+            execute 'disable the Telnet server in inetd' do
+              command 'update-inetd --disable telnet'
+              only_if { ::File.exist?('/etc/inetd.conf') && ::File.read('/etc/inetd.conf').match?(/^(telnet)\s/) }
+              only_if { which('update-inetd') }
             end
             ```
     refs:
@@ -5186,9 +5318,11 @@ queries:
     mql: |
       systemd.socket("tftp").enabled == false
       systemd.socket("tftp").running == false
+      service("tftpd-hpa").enabled == false
+      service("tftpd-hpa").running == false
     docs:
       desc: |
-        This check verifies that the `tftp` systemd socket unit is neither running nor enabled.
+        This check verifies that no TFTP server is running or enabled: neither the `tftp` systemd socket unit that Red Hat family systems use, nor the `tftpd-hpa` service that Debian and Ubuntu install.
 
         **Why this matters**
 
@@ -5198,27 +5332,29 @@ queries:
 
         The protocol runs over UDP with no session state, so source addresses can be forged and the transfers are hard to attribute after the fact.
 
-        Where TFTP is required for PXE boot or device provisioning, run it read-only, confine it to an isolated provisioning network, and keep only boot artifacts under its root. Everywhere else, disable the socket unit.
+        Where TFTP is required for PXE boot or device provisioning, run it read-only, confine it to an isolated provisioning network, and keep only boot artifacts under its root. Everywhere else, disable the server.
       audit: |
-        Run this command to confirm the TFTP socket units are stopped and disabled:
+        Run this command to confirm the TFTP server units are stopped and disabled:
 
         ```bash
-        systemctl is-active tftp.socket
-        systemctl is-enabled tftp.socket
+        systemctl is-active tftp.socket tftpd-hpa
+        systemctl is-enabled tftp.socket tftpd-hpa
         ```
 
-        A passing result reports `inactive` and `disabled` for every listed socket unit. A failing result reports any socket as `active` or `enabled`.
+        A passing result reports `inactive` and `disabled`, `masked`, or `not-found` for every listed unit. A failing result reports any unit as `active` or `enabled`.
       remediation:
         - id: cli
           desc: |
             **Using CLI**
 
-            Run these commands to stop and disable tftp:
+            Run these commands to stop and disable tftp. Red Hat family systems use `tftp.socket`, and Debian and Ubuntu use `tftpd-hpa`:
 
             ```bash
-            systemctl stop tftp.socket
-            systemctl disable tftp.socket
+            systemctl stop tftp.socket tftpd-hpa
+            systemctl disable tftp.socket tftpd-hpa
             ```
+
+            A unit that is not installed reports an error that can be ignored.
         - id: bash
           desc: |
             **Using a Bash Script**
@@ -5229,12 +5365,15 @@ queries:
             #!/bin/bash
             set -e
 
-            # Skip the unit when it is not installed. systemctl exits 5 on a unit it cannot load.
-            if systemctl cat tftp.socket >/dev/null 2>&1; then
-              echo "Stopping and disabling TFTP service..."
-              systemctl stop tftp.socket
-              systemctl disable tftp.socket
-            fi
+            # tftp.socket is the Red Hat family unit, tftpd-hpa the Debian and Ubuntu one.
+            for unit in tftp.socket tftpd-hpa.service; do
+              # Skip the unit when it is not installed. systemctl exits 5 on a unit it cannot load.
+              if systemctl cat "$unit" >/dev/null 2>&1; then
+                echo "Stopping and disabling $unit..."
+                systemctl stop "$unit"
+                systemctl disable "$unit"
+              fi
+            done
             ```
         - id: ansible
           desc: |
@@ -5249,28 +5388,38 @@ queries:
               become: true
 
               tasks:
-                - name: Read the state of the TFTP socket
+                # tftp.socket is the Red Hat family unit, tftpd-hpa the Debian and Ubuntu one.
+                - name: Read the state of the TFTP server units
                   ansible.builtin.systemd:
-                    name: tftp.socket
-                  register: tftp_unit
+                    name: "{{ item }}"
+                  loop:
+                    - tftp.socket
+                    - tftpd-hpa
+                  register: tftp_units
 
-                - name: Ensure TFTP server is stopped and disabled
+                - name: Ensure the TFTP server units are stopped and disabled
                   ansible.builtin.systemd:
-                    name: tftp.socket
+                    name: "{{ item.item }}"
                     state: stopped
                     enabled: no
-                  when: tftp_unit.status.LoadState != 'not-found'
+                  loop: "{{ tftp_units.results }}"
+                  loop_control:
+                    label: "{{ item.item }}"
+                  when: item.status.LoadState != 'not-found'
             ```
         - id: chef
           desc: |
             **Using Chef Infra**
 
-            Use this Chef Infra recipe code to stop and disable the TFTP socket:
+            Use this Chef Infra recipe code to stop and disable the TFTP server units:
 
             ```ruby
-            systemd_unit 'tftp.socket' do
-              action %i(stop disable)
-              only_if 'systemctl cat tftp.socket'
+            # tftp.socket is the Red Hat family unit, tftpd-hpa the Debian and Ubuntu one.
+            %w(tftp.socket tftpd-hpa.service).each do |unit|
+              systemd_unit unit do
+                action %i(stop disable)
+                only_if "systemctl cat #{unit}"
+              end
             end
             ```
     refs:
@@ -5299,9 +5448,11 @@ queries:
     mql: |
       service("rsyncd").enabled == false
       service("rsyncd").running == false
+      service("rsync").enabled == false
+      service("rsync").running == false
     docs:
       desc: |
-        This check verifies that the `rsyncd` service is neither running nor enabled at boot. This concerns the rsync daemon on port 873, not the ordinary use of `rsync` over SSH.
+        This check verifies that the rsync daemon service is neither running nor enabled at boot. The unit is `rsyncd` on Red Hat family systems and `rsync` on Debian and Ubuntu, which install it enabled with the `rsync` package and start it once `/etc/rsyncd.conf` exists. This concerns the rsync daemon on port 873, not the ordinary use of `rsync` over SSH.
 
         **Why this matters**
 
@@ -5316,11 +5467,11 @@ queries:
         Run this command to confirm the rsync service is stopped and disabled:
 
         ```bash
-        systemctl is-active rsyncd
-        systemctl is-enabled rsyncd
+        systemctl is-active rsyncd rsync
+        systemctl is-enabled rsyncd rsync
         ```
 
-        A passing result reports `inactive` and `disabled` (or `masked`) for every listed unit. A failing result reports any unit as `active` or `enabled`.
+        A passing result reports `inactive` and `disabled`, `masked`, or `not-found` for every listed unit. A failing result reports any unit as `active` or `enabled`.
       remediation:
         - id: cli
           desc: |
@@ -5329,11 +5480,11 @@ queries:
             Run these commands to stop and disable `rsync`:
 
             ```bash
-            systemctl stop rsyncd.socket rsyncd.service
-            systemctl disable rsyncd.socket rsyncd.service
+            systemctl stop rsyncd.socket rsyncd.service rsync.service
+            systemctl disable rsyncd.socket rsyncd.service rsync.service
             ```
 
-            The `rsyncd.socket` unit is included because it restarts the daemon on the next inbound connection when socket activation is enabled. A unit that is not installed reports an error that can be ignored.
+            Red Hat family systems name the daemon `rsyncd`, and Debian and Ubuntu name it `rsync`. The `rsyncd.socket` unit is included because it restarts the daemon on the next inbound connection when socket activation is enabled. A unit that is not installed reports an error that can be ignored.
         - id: bash
           desc: |
             **Using a Bash Script**
@@ -5344,8 +5495,9 @@ queries:
             #!/bin/bash
             set -e
 
-            echo "Stopping and disabling rsyncd units..."
-            for unit in rsyncd.socket rsyncd.service; do
+            # rsyncd is the Red Hat family name, rsync the Debian and Ubuntu one.
+            echo "Stopping and disabling rsync daemon units..."
+            for unit in rsyncd.socket rsyncd.service rsync.service; do
               if [ -n "$(systemctl list-unit-files "$unit" --no-legend 2>/dev/null)" ]; then
                 systemctl stop "$unit"
                 systemctl disable "$unit"
@@ -5370,9 +5522,11 @@ queries:
                     name: "{{ item }}"
                     state: stopped
                     enabled: no
+                  # rsyncd is the Red Hat family name, rsync the Debian and Ubuntu one.
                   loop:
                     - rsyncd.socket
                     - rsyncd
+                    - rsync
                   register: rsync_units
                   failed_when:
                     - rsync_units.failed
@@ -5385,7 +5539,8 @@ queries:
             Use this Chef Infra recipe code to stop and disable the rsync units:
 
             ```ruby
-            %w(rsyncd.socket rsyncd.service).each do |unit|
+            # rsyncd is the Red Hat family name, rsync the Debian and Ubuntu one.
+            %w(rsyncd.socket rsyncd.service rsync.service).each do |unit|
               systemd_unit unit do
                 action %i(stop disable)
                 only_if "systemctl cat #{unit}"
@@ -5420,9 +5575,10 @@ queries:
       service("ntalk").running == false
       service("talkd").enabled == false
       service("talkd").running == false
+      inetd.config.serviceNames.none(_.in(["talk", "ntalk"]))
     docs:
       desc: |
-        This check verifies that the `talkd` and `ntalk` services are neither running nor enabled at boot.
+        This check verifies that the talk server is not enabled: the `talkd` and `ntalk` services are neither running nor enabled at boot, and inetd is not configured to start the `talk` or `ntalk` services.
 
         **Why this matters**
 
@@ -5442,6 +5598,14 @@ queries:
         ```
 
         A passing result reports `inactive` and `disabled` (or `masked`) for every listed unit. A failing result reports any unit as `active` or `enabled`.
+
+        On Debian and Ubuntu, the server packages register the talk services with inetd rather than with systemd. Run this command to list the entries inetd starts:
+
+        ```bash
+        grep -E '^(talk|ntalk)[[:space:]]' /etc/inetd.conf
+        ```
+
+        A passing result prints nothing. A failing result prints an uncommented entry.
       remediation:
         - id: cli
           desc: |
@@ -5455,6 +5619,12 @@ queries:
             ```
 
             Typically only one of these alternative units is installed. A unit that is not installed reports an error that can be ignored; the commands still apply to the units that exist.
+
+            On Debian and Ubuntu, the server packages register the talk services with inetd instead. Disable the entries with `update-inetd`, which comments them out of `/etc/inetd.conf` and tells inetd to reread it:
+
+            ```bash
+            update-inetd --disable talk,ntalk
+            ```
         - id: bash
           desc: |
             **Using a Bash Script**
@@ -5472,6 +5642,13 @@ queries:
                 systemctl disable "$unit"
               fi
             done
+
+            # Debian and Ubuntu packages register the talk services with inetd rather than systemd.
+            # update-inetd comments the entries out and tells inetd to reread its configuration.
+            if command -v update-inetd >/dev/null 2>&1 && grep -qE '^(talk|ntalk)[[:space:]]' /etc/inetd.conf 2>/dev/null; then
+              echo "Disabling the talk services in inetd..."
+              update-inetd --disable talk,ntalk
+            fi
             ```
         - id: ansible
           desc: |
@@ -5498,6 +5675,18 @@ queries:
                   failed_when:
                     - talk_units.failed
                     - "'Could not find the requested service' not in (talk_units.msg | default(''))"
+
+                # Debian and Ubuntu packages register the talk services with inetd rather than systemd.
+                - name: Find the talk services entries in the inetd configuration
+                  ansible.builtin.command: grep -qE '^(talk|ntalk)[[:space:]]' /etc/inetd.conf
+                  register: talk_inetd
+                  changed_when: false
+                  failed_when: false
+
+                - name: Disable the talk services in inetd
+                  ansible.builtin.command: update-inetd --disable talk,ntalk
+                  changed_when: true
+                  when: talk_inetd.rc == 0
             ```
         - id: chef
           desc: |
@@ -5511,6 +5700,14 @@ queries:
                 action %i(stop disable)
                 only_if "systemctl cat #{unit}"
               end
+            end
+
+            # Debian and Ubuntu packages register the talk services with inetd rather than systemd.
+            # update-inetd comments the entries out and tells inetd to reread its configuration.
+            execute 'disable the talk services in inetd' do
+              command 'update-inetd --disable talk,ntalk'
+              only_if { ::File.exist?('/etc/inetd.conf') && ::File.read('/etc/inetd.conf').match?(/^(talk|ntalk)\s/) }
+              only_if { which('update-inetd') }
             end
             ```
     refs:
@@ -7468,6 +7665,8 @@ queries:
                 update-grub
                 ```
 
+                Where `update-grub` reports that it found the host's own system on its root partition, as it does on Ubuntu 20.04 cloud images, run it a second time. Those extra entries come from os-prober, which copies them from the previous `grub.cfg` that does not have `audit=1` yet.
+
                 On SUSE:
 
                 ```bash
@@ -7529,6 +7728,10 @@ queries:
               grubby --update-kernel=ALL --args="audit=1"
             elif command -v update-grub >/dev/null 2>&1; then
               echo "Regenerating the GRUB configuration with update-grub"
+              update-grub
+              # Where os-prober lists the running root file system as another system, as on
+              # Ubuntu 20.04 cloud images, it copies those entries from the previous grub.cfg.
+              # A second run copies them from the configuration that now has audit=1.
               update-grub
             elif command -v grub2-mkconfig >/dev/null 2>&1; then
               echo "Regenerating the GRUB configuration with grub2-mkconfig"
@@ -7598,6 +7801,15 @@ queries:
                   ansible.builtin.command: "{{ 'update-grub' if ansible_os_family == 'Debian' else 'grub2-mkconfig -o /boot/grub2/grub.cfg' }}"
                   changed_when: true
                   when: ansible_os_family != "RedHat"
+
+                # Where os-prober lists the running root file system as another system, as on
+                # Ubuntu 20.04 cloud images, it copies those entries from the previous grub.cfg.
+                # A second run copies them from the configuration that now has audit=1.
+                - name: Regenerate GRUB configuration again for the entries os-prober copies
+                  ansible.builtin.command: update-grub
+                  changed_when: true
+                  listen: Regenerate GRUB configuration
+                  when: ansible_os_family == "Debian"
             ```
         - id: chef
           desc: |
@@ -7607,8 +7819,11 @@ queries:
 
             ```ruby
             grub_default = '/etc/default/grub'
+            # Where os-prober lists the running root file system as another system, as on
+            # Ubuntu 20.04 cloud images, it copies those entries from the previous grub.cfg.
+            # A second update-grub copies them from the configuration that now has audit=1.
             grub_command = if platform_family?('debian')
-                             'update-grub'
+                             'update-grub && update-grub'
                            else
                              'grub2-mkconfig -o /boot/grub2/grub.cfg'
                            end
@@ -11841,6 +12056,8 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-10-2-1
       compliance/soc2-2017: soc2-control-cc7-2-1
       compliance/vda-isa-5: vda-isa-5-5-2-4
+    filters: |
+      sudo.implementation != "sudo-rs"
     mql: |
       auditd.rules.watches.contains(w:
         w.path == "/var/log/sudo.log" && w.permissions == ["w", "a"]
@@ -11863,6 +12080,8 @@ queries:
         The watch rule closes that. Writes and attribute changes to the file generate audit records held in a separate subsystem, so removing lines from `sudo.log` produces an entry in the audit log showing that the file was modified, along with the account responsible. The attacker must then compromise the audit trail as well, which the immutable-configuration check makes considerably harder.
 
         Note the asymmetry this creates deliberately: `sudo` writes to the file constantly during normal use, but those writes come from the `sudo` binary itself. A write from a text editor or a shell redirection is the anomaly worth alerting on.
+
+        The check does not apply where `sudo` is sudo-rs, which Ubuntu installs as `sudo` from 25.10 on. sudo-rs cannot write `/var/log/sudo.log`, so a watch on that path records nothing.
       audit: |
         Run this command to confirm the audit rules for administrator actions recorded in the sudo log are loaded:
 
@@ -12252,6 +12471,8 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-7-2-1
       compliance/soc2-2017: soc2-control-cc6-3-1
       compliance/vda-isa-5: vda-isa-5-5-2-4
+    filters: |
+      sudo.implementation != "sudo-rs"
     mql: |
       sudoers.defaults.where(parameter == "logfile").any(value == "/var/log/sudo.log")
     docs:
@@ -12269,6 +12490,8 @@ queries:
         The separation also survives the ordinary failure modes of a shared log. A burst of authentication failures, or aggressive rotation tuned to that volume, ages sudo history out of `/var/log/auth.log` far sooner than anyone intends. A separate file rotates on its own much slower schedule.
 
         A local log file is evidence for an investigation, not protection from one. Anyone who reaches root can edit or truncate it, so forward the records off the host as well.
+
+        The check does not apply where `sudo` is sudo-rs, the Rust implementation Ubuntu installs as `sudo` from 25.10 on. sudo-rs has no `logfile` setting and `visudo` rejects the line. It records each command through syslog, so on Ubuntu the records still reach `/var/log/auth.log` and the journal.
       audit: |
         Run this command to confirm sudo is configured to write a log file:
 
@@ -13668,6 +13891,8 @@ queries:
                     file_type: file
                   register: log_files
 
+                # Only files that need the change are touched. journald renames and removes its
+                # files while it runs, and a file that is gone by its turn fails the task.
                 - name: Remove group write/execute and other rwx on log files
                   ansible.builtin.file:
                     path: "{{ item.path }}"
@@ -13675,6 +13900,7 @@ queries:
                   loop: "{{ log_files.files }}"
                   loop_control:
                     label: "{{ item.path }}"
+                  when: item.wgrp or item.xgrp or item.roth or item.woth or item.xoth
 
                 - name: Configure rsyslog default file creation mode
                   ansible.builtin.lineinfile:
@@ -20412,10 +20638,18 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-1-3
       compliance/vda-isa-5: false
     mql: |
-      users.list.all(gid != empty)
+      // The system's account lookups skip a passwd entry whose GID field is empty or
+      // not a number, and so does the users resource, so such an account never
+      // appears there. Read the file instead. NIS compat lines starting with + or -
+      // carry no GID of their own.
+      file("/etc/passwd").content.lines
+        .where(_ != /^\s*(#|$|[+-])/)
+        .all(_ == /^[^:]*:[^:]*:[^:]*:[0-9]+:/)
     docs:
       desc: |
-        This check verifies that every entry in `/etc/passwd` has a primary GID set. It is concerned with the field being populated; a separate check confirms that the GID resolves to a real group.
+        This check verifies that every entry in `/etc/passwd` has a primary GID set. It is concerned with the field holding a number; a separate check confirms that the GID resolves to a real group.
+
+        The check reads `/etc/passwd` itself. `getent passwd` and `id` do not show an entry whose GID field is empty or not a number, because the C library skips the line, so such an account is visible only in the file.
 
         **Why this matters**
 
@@ -20427,13 +20661,13 @@ queries:
 
         Assign an appropriate primary group with `usermod -g <group> <user>`, using a dedicated per-user group where the distribution's convention calls for one.
       audit: |
-        Run this command to find accounts with no primary GID set:
+        Run this command to find accounts with no numeric primary GID set:
 
         ```bash
-        awk -F: '$4 == "" {print $1}' /etc/passwd
+        awk -F: '$1 !~ /^[+-]/ && $4 !~ /^[0-9]+$/ {print $1}' /etc/passwd
         ```
 
-        A passing result returns no output. A failing result lists accounts whose primary GID field is empty.
+        A passing result returns no output. A failing result lists accounts whose primary GID field is empty or not a number.
       remediation:
         - id: cli
           desc: |
@@ -20442,13 +20676,19 @@ queries:
             To ensure that each user is a member of a group, you can run the following command to list users who are not members of any group:
 
             ```bash
-            awk -F: '($4 == "") {print $1}' /etc/passwd
+            awk -F: '$1 !~ /^[+-]/ && $4 !~ /^[0-9]+$/ {print $1}' /etc/passwd
             ```
 
-            If any users are found without a group, you can add them to a primary group using the `usermod` command:
+            `usermod` cannot repair these accounts, because it skips the malformed entry and reports that the user does not exist. Edit the file with `vipw`, which locks it while you work, and put the numeric GID of the account's primary group in the fourth field:
 
             ```bash
-            usermod -g <primary group> <user>
+            vipw
+            ```
+
+            Then confirm that `pwck` no longer reports the entry as invalid:
+
+            ```bash
+            pwck -r
             ```
         # No Chef Infra remediation: the fix is choosing which account or group to renumber, which is a human decision rather than a converge step.
     refs:
