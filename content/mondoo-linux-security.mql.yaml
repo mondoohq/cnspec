@@ -13268,17 +13268,24 @@ queries:
           desc: |
             **Using the CLI**
 
-            1. To configure journald to forward logs to rsyslog, edit the `/etc/systemd/journald.conf` file and add the following line in the `[Journal]` section. Settings placed outside that section are ignored:
+            journald reads `journald.conf` first and then every `*.conf` drop-in under `journald.conf.d` in `/etc/systemd`, `/run/systemd`, `/usr/local/lib/systemd`, and `/usr/lib/systemd`. It sorts the drop-ins by file name, whichever directory holds them, and a later file overrides an earlier one. A drop-in in `/etc` replaces a drop-in with the same name in the other directories. A value set only in `journald.conf` is therefore lost to any drop-in that sets `ForwardToSyslog`.
 
-                ```ini
-                ForwardToSyslog=yes
+            1. To configure journald to forward logs to rsyslog, create a drop-in that sets the value:
+
+                ```bash
+                mkdir -p /etc/systemd/journald.conf.d
+                printf '[Journal]\nForwardToSyslog=yes\n' > /etc/systemd/journald.conf.d/99-mondoo-forward-to-syslog.conf
                 ```
 
-                Fedora, openSUSE Leap 16, and Red Hat Enterprise Linux 10 and its rebuilds install the defaults only as `/usr/lib/systemd/journald.conf`, so `/etc/systemd/journald.conf` does not exist there. Create it with a `[Journal]` line followed by the setting. journald then reads it in place of the file in `/usr/lib`.
+            2. List the drop-ins that set `ForwardToSyslog`:
 
-                journald reads the drop-in files in `journald.conf.d` after this file, so a drop-in that sets `ForwardToSyslog` overrides it. Remove or correct the setting in any drop-in that the audit command shows after this file.
+                ```bash
+                systemd-analyze cat-config systemd/journald.conf | grep -E '^(# /|ForwardToSyslog=)'
+                ```
 
-            2. Restart the service to load the new configuration values:
+                A drop-in that sorts after `99-mondoo-forward-to-syslog.conf` still overrides it. Comment out `ForwardToSyslog` in any other drop-in that sets a different value. For a drop-in in `/usr/lib/systemd` or `/usr/local/lib/systemd`, which the package manager owns, copy it to `/etc/systemd/journald.conf.d/` under the same name and comment the line out in the copy.
+
+            3. Restart the service to load the new configuration values:
 
                 ```bash
                 systemctl restart systemd-journald
@@ -13287,30 +13294,63 @@ queries:
           desc: |
             **Using a Bash Script**
 
-            To configure journald to forward logs to rsyslog, you can run the following bash script:
+            To configure journald to forward logs to rsyslog, run the following bash script. It writes the value to its own drop-in and comments the setting out of every other drop-in that sets a different value, because a drop-in that sorts later would otherwise override it:
 
             ```bash
             #!/bin/bash
             set -e
 
-            echo "Configuring journald to forward logs to rsyslog..."
+            KEY=ForwardToSyslog
+            VALUE=yes
+            DROPIN_DIR=/etc/systemd/journald.conf.d
+            DROPIN=$DROPIN_DIR/99-mondoo-forward-to-syslog.conf
 
-            grep -q '^\[Journal\]' /etc/systemd/journald.conf 2>/dev/null || echo '[Journal]' >> /etc/systemd/journald.conf
-
-            if grep -q '^ForwardToSyslog=' /etc/systemd/journald.conf; then
-              sed -i 's/^ForwardToSyslog=.*/ForwardToSyslog=yes/' /etc/systemd/journald.conf
-            else
-              echo "ForwardToSyslog=yes" >> /etc/systemd/journald.conf
+            # Restart journald only when something changed. systemd refuses a sixth start
+            # within ten seconds and leaves the service stopped.
+            changed=0
+            mkdir -p "$DROPIN_DIR"
+            if [ "$(cat "$DROPIN" 2>/dev/null)" != "$(printf '[Journal]\n%s=%s' "$KEY" "$VALUE")" ]; then
+              echo "Writing $KEY=$VALUE to $DROPIN..."
+              printf '[Journal]\n%s=%s\n' "$KEY" "$VALUE" > "$DROPIN"
+              changed=1
             fi
+            chmod 0644 "$DROPIN"
 
-            echo "Restarting systemd-journald service..."
-            systemctl restart systemd-journald
+            # journald sorts the drop-ins by file name across these directories, and a later
+            # file overrides an earlier one. The first directory holding a name wins, so a
+            # vendor drop-in is replaced by a copy in /etc rather than edited.
+            declare -A seen
+            for dir in /etc /run /usr/local/lib /usr/lib; do
+              for f in "$dir"/systemd/journald.conf.d/*.conf; do
+                [ -e "$f" ] || [ -L "$f" ] || continue
+                name=$(basename "$f")
+                [ -z "${seen[$name]}" ] || continue
+                seen[$name]=1
+                # Skip our own drop-in and any drop-in masked with a link to /dev/null.
+                [ "$f" != "$DROPIN" ] && [ -f "$f" ] || continue
+                grep -E "^[[:space:]]*${KEY}[[:space:]]*=" "$f" | grep -qvE "=[[:space:]]*${VALUE}[[:space:]]*$" || continue
+                case "$dir" in
+                  /etc|/run) target=$f ;;
+                  *) target=$DROPIN_DIR/$name; cp "$f" "$target" ;;
+                esac
+                echo "Commenting out $KEY in $target..."
+                sed -i -E "s/^([[:space:]]*${KEY}[[:space:]]*=)/#\1/" "$target"
+                changed=1
+              done
+            done
+
+            if [ "$changed" -eq 1 ]; then
+              echo "Restarting systemd-journald service..."
+              systemctl restart systemd-journald
+            else
+              echo "journald already uses $KEY=$VALUE."
+            fi
             ```
         - id: ansible
           desc: |
             **Using Ansible**
 
-            To configure journald to forward logs to rsyslog, use the following Ansible playbook:
+            To configure journald to forward logs to rsyslog, use the following Ansible playbook. It writes the value to its own drop-in and comments the setting out of every other drop-in that sets a different value, because a drop-in that sorts later would otherwise override it:
 
             ```yaml
             ---
@@ -13319,21 +13359,72 @@ queries:
               become: true
 
               tasks:
-                - name: Ensure the Journal section header exists in journald.conf
-                  ansible.builtin.lineinfile:
-                    path: /etc/systemd/journald.conf
-                    regexp: '^\[Journal\]'
-                    line: '[Journal]'
-                    create: yes
+                - name: Ensure the journald drop-in directory exists
+                  ansible.builtin.file:
+                    path: /etc/systemd/journald.conf.d
+                    state: directory
+                    owner: root
+                    group: root
+                    mode: '0755'
+
+                - name: Set ForwardToSyslog=yes in a journald drop-in
+                  ansible.builtin.copy:
+                    dest: /etc/systemd/journald.conf.d/99-mondoo-forward-to-syslog.conf
+                    content: |
+                      [Journal]
+                      ForwardToSyslog=yes
+                    owner: root
+                    group: root
+                    mode: '0644'
                   notify: Restart systemd-journald
 
-                - name: Ensure ForwardToSyslog=yes is set in journald.conf
-                  ansible.builtin.lineinfile:
-                    path: /etc/systemd/journald.conf
-                    regexp: '^#?ForwardToSyslog='
-                    line: 'ForwardToSyslog=yes'
-                    insertafter: '^\[Journal\]'
-                    backup: yes
+                # journald sorts the drop-ins by file name across these directories, and a later
+                # file overrides an earlier one. A drop-in in /etc or /run replaces a vendor
+                # drop-in with the same name.
+                - name: List the drop-ins in /etc and /run
+                  ansible.builtin.find:
+                    paths:
+                      - /etc/systemd/journald.conf.d
+                      - /run/systemd/journald.conf.d
+                    patterns: '*.conf'
+                    file_type: any
+                  register: journald_local_dropins
+
+                - name: Find the drop-ins that set a different ForwardToSyslog value
+                  ansible.builtin.find:
+                    paths:
+                      - /etc/systemd/journald.conf.d
+                      - /run/systemd/journald.conf.d
+                      - /usr/local/lib/systemd/journald.conf.d
+                      - /usr/lib/systemd/journald.conf.d
+                    patterns: '*.conf'
+                    contains: '^\s*ForwardToSyslog\s*=\s*(?!yes\s*$)'
+                  register: journald_conflicts
+
+                - name: Replace the conflicting vendor drop-ins with a copy in /etc
+                  ansible.builtin.copy:
+                    src: "{{ item.path }}"
+                    dest: "/etc/systemd/journald.conf.d/{{ item.path | basename }}"
+                    remote_src: true
+                    owner: root
+                    group: root
+                    mode: '0644'
+                  loop: "{{ journald_conflicts.files }}"
+                  loop_control:
+                    label: "{{ item.path }}"
+                  when:
+                    - item.path is not match('/(etc|run)/')
+                    - (item.path | basename) not in (journald_local_dropins.files | map(attribute='path') | map('basename') | list)
+                  register: journald_vendor_copies
+
+                - name: Comment out ForwardToSyslog in the conflicting drop-ins
+                  ansible.builtin.replace:
+                    path: "{{ item }}"
+                    regexp: '^(\s*ForwardToSyslog\s*=.*)$'
+                    replace: '#\1'
+                  loop: >-
+                    {{ (journald_conflicts.files | map(attribute='path') | select('match', '/(etc|run)/') | list)
+                       + (journald_vendor_copies.results | selectattr('dest', 'defined') | map(attribute='dest') | list) }}
                   notify: Restart systemd-journald
 
               handlers:
@@ -13346,29 +13437,58 @@ queries:
           desc: |
             **Using Chef Infra**
 
-            Use this Chef Infra recipe code to forward journald records to rsyslog:
+            Use this Chef Infra recipe code to forward journald records to rsyslog. It writes the value to its own drop-in and comments the setting out of every other drop-in that sets a different value, because a drop-in that sorts later would otherwise override it:
 
             ```ruby
-            journald_conf = '/etc/systemd/journald.conf'
+            key = 'ForwardToSyslog'
+            value = 'yes'
+            dropin_dir = '/etc/systemd/journald.conf.d'
+            dropin = "#{dropin_dir}/99-mondoo-forward-to-syslog.conf"
+            setting = /^\s*#{key}\s*=/
 
             service 'systemd-journald' do
               action :nothing
             end
 
-            ruby_block 'set ForwardToSyslog in journald.conf' do
-              block do
-                body = ::File.exist?(journald_conf) ? ::File.read(journald_conf) : ''
-                body = "[Journal]\n#{body}" unless body.match?(/^\[Journal\]$/)
-                directive = 'ForwardToSyslog=yes'
-                body = if body.match?(/^\s*#?\s*ForwardToSyslog=/)
-                         body.gsub(/^\s*#?\s*ForwardToSyslog=.*$/, directive)
-                       else
-                         body.sub(/^\[Journal\]$/, "[Journal]\n#{directive}")
-                       end
-                ::File.write(journald_conf, body)
-              end
-              not_if { ::File.exist?(journald_conf) && ::File.read(journald_conf).match?(/^ForwardToSyslog=yes\s*$/) }
+            directory dropin_dir do
+              owner 'root'
+              group 'root'
+              mode '0755'
+            end
+
+            file dropin do
+              content "[Journal]\n#{key}=#{value}\n"
+              owner 'root'
+              group 'root'
+              mode '0644'
               notifies :restart, 'service[systemd-journald]', :delayed
+            end
+
+            # journald sorts the drop-ins by file name across these directories, and a later
+            # file overrides an earlier one. The first directory holding a name wins, so a
+            # vendor drop-in is replaced by a copy in /etc rather than edited.
+            seen = {}
+            %w(/etc /run /usr/local/lib /usr/lib).each do |dir|
+              ::Dir.glob("#{dir}/systemd/journald.conf.d/*.conf").sort.each do |source|
+                name = ::File.basename(source)
+                next if seen.key?(name)
+
+                seen[name] = true
+                # Skip this recipe's drop-in and any drop-in masked with a link to /dev/null.
+                next if source == dropin || !::File.file?(source)
+
+                body = ::File.read(source)
+                next unless body.lines.any? { |line| line.match?(setting) && line.split('=', 2).last.strip != value }
+
+                file "comment out #{key} in #{name}" do
+                  path(%w(/etc /run).include?(dir) ? source : "#{dropin_dir}/#{name}")
+                  content body.gsub(/^(\s*#{key}\s*=.*)$/, '#\1')
+                  owner 'root'
+                  group 'root'
+                  mode '0644'
+                  notifies :restart, 'service[systemd-journald]', :delayed
+                end
+              end
             end
             ```
     refs:
@@ -13422,15 +13542,24 @@ queries:
           desc: |
             **Using the CLI**
 
-            1. To configure journald to compress large log files, edit the `/etc/systemd/journald.conf` file and add the following line in the `[Journal]` section. Settings placed outside that section are ignored:
+            journald reads `journald.conf` first and then every `*.conf` drop-in under `journald.conf.d` in `/etc/systemd`, `/run/systemd`, `/usr/local/lib/systemd`, and `/usr/lib/systemd`. It sorts the drop-ins by file name, whichever directory holds them, and a later file overrides an earlier one. A drop-in in `/etc` replaces a drop-in with the same name in the other directories. A value set only in `journald.conf` is therefore lost to any drop-in that sets `Compress`.
 
-                ```ini
-                Compress=yes
+            1. To configure journald to compress large log files, create a drop-in that sets the value:
+
+                ```bash
+                mkdir -p /etc/systemd/journald.conf.d
+                printf '[Journal]\nCompress=yes\n' > /etc/systemd/journald.conf.d/99-mondoo-compress.conf
                 ```
 
-                journald reads the drop-in files in `journald.conf.d` after this file, so a drop-in that sets `Compress` overrides it. Remove or correct the setting in any drop-in that the audit command shows after this file.
+            2. List the drop-ins that set `Compress`:
 
-            2. Restart the service to load the new configuration values:
+                ```bash
+                systemd-analyze cat-config systemd/journald.conf | grep -E '^(# /|Compress=)'
+                ```
+
+                A drop-in that sorts after `99-mondoo-compress.conf` still overrides it. Comment out `Compress` in any other drop-in that sets a different value. For a drop-in in `/usr/lib/systemd` or `/usr/local/lib/systemd`, which the package manager owns, copy it to `/etc/systemd/journald.conf.d/` under the same name and comment the line out in the copy.
+
+            3. Restart the service to load the new configuration values:
 
                 ```bash
                 systemctl restart systemd-journald
@@ -13439,30 +13568,63 @@ queries:
           desc: |
             **Using a Bash Script**
 
-            To configure journald to compress large log files, you can run the following bash script:
+            To configure journald to compress large log files, run the following bash script. It writes the value to its own drop-in and comments the setting out of every other drop-in that sets a different value, because a drop-in that sorts later would otherwise override it:
 
             ```bash
             #!/bin/bash
             set -e
 
-            echo "Configuring journald to compress large log files..."
+            KEY=Compress
+            VALUE=yes
+            DROPIN_DIR=/etc/systemd/journald.conf.d
+            DROPIN=$DROPIN_DIR/99-mondoo-compress.conf
 
-            grep -q '^\[Journal\]' /etc/systemd/journald.conf 2>/dev/null || echo '[Journal]' >> /etc/systemd/journald.conf
-
-            if grep -q '^Compress=' /etc/systemd/journald.conf; then
-              sed -i 's/^Compress=.*/Compress=yes/' /etc/systemd/journald.conf
-            else
-              echo "Compress=yes" >> /etc/systemd/journald.conf
+            # Restart journald only when something changed. systemd refuses a sixth start
+            # within ten seconds and leaves the service stopped.
+            changed=0
+            mkdir -p "$DROPIN_DIR"
+            if [ "$(cat "$DROPIN" 2>/dev/null)" != "$(printf '[Journal]\n%s=%s' "$KEY" "$VALUE")" ]; then
+              echo "Writing $KEY=$VALUE to $DROPIN..."
+              printf '[Journal]\n%s=%s\n' "$KEY" "$VALUE" > "$DROPIN"
+              changed=1
             fi
+            chmod 0644 "$DROPIN"
 
-            echo "Restarting systemd-journald service..."
-            systemctl restart systemd-journald
+            # journald sorts the drop-ins by file name across these directories, and a later
+            # file overrides an earlier one. The first directory holding a name wins, so a
+            # vendor drop-in is replaced by a copy in /etc rather than edited.
+            declare -A seen
+            for dir in /etc /run /usr/local/lib /usr/lib; do
+              for f in "$dir"/systemd/journald.conf.d/*.conf; do
+                [ -e "$f" ] || [ -L "$f" ] || continue
+                name=$(basename "$f")
+                [ -z "${seen[$name]}" ] || continue
+                seen[$name]=1
+                # Skip our own drop-in and any drop-in masked with a link to /dev/null.
+                [ "$f" != "$DROPIN" ] && [ -f "$f" ] || continue
+                grep -E "^[[:space:]]*${KEY}[[:space:]]*=" "$f" | grep -qvE "=[[:space:]]*${VALUE}[[:space:]]*$" || continue
+                case "$dir" in
+                  /etc|/run) target=$f ;;
+                  *) target=$DROPIN_DIR/$name; cp "$f" "$target" ;;
+                esac
+                echo "Commenting out $KEY in $target..."
+                sed -i -E "s/^([[:space:]]*${KEY}[[:space:]]*=)/#\1/" "$target"
+                changed=1
+              done
+            done
+
+            if [ "$changed" -eq 1 ]; then
+              echo "Restarting systemd-journald service..."
+              systemctl restart systemd-journald
+            else
+              echo "journald already uses $KEY=$VALUE."
+            fi
             ```
         - id: ansible
           desc: |
             **Using Ansible**
 
-            To configure journald to compress large log files, use the following Ansible playbook:
+            To configure journald to compress large log files, use the following Ansible playbook. It writes the value to its own drop-in and comments the setting out of every other drop-in that sets a different value, because a drop-in that sorts later would otherwise override it:
 
             ```yaml
             ---
@@ -13471,21 +13633,72 @@ queries:
               become: true
 
               tasks:
-                - name: Ensure the Journal section header exists in journald.conf
-                  ansible.builtin.lineinfile:
-                    path: /etc/systemd/journald.conf
-                    regexp: '^\[Journal\]'
-                    line: '[Journal]'
-                    create: yes
+                - name: Ensure the journald drop-in directory exists
+                  ansible.builtin.file:
+                    path: /etc/systemd/journald.conf.d
+                    state: directory
+                    owner: root
+                    group: root
+                    mode: '0755'
+
+                - name: Set Compress=yes in a journald drop-in
+                  ansible.builtin.copy:
+                    dest: /etc/systemd/journald.conf.d/99-mondoo-compress.conf
+                    content: |
+                      [Journal]
+                      Compress=yes
+                    owner: root
+                    group: root
+                    mode: '0644'
                   notify: Restart systemd-journald
 
-                - name: Ensure Compress=yes is set in journald.conf
-                  ansible.builtin.lineinfile:
-                    path: /etc/systemd/journald.conf
-                    regexp: '^#?Compress='
-                    line: 'Compress=yes'
-                    insertafter: '^\[Journal\]'
-                    backup: yes
+                # journald sorts the drop-ins by file name across these directories, and a later
+                # file overrides an earlier one. A drop-in in /etc or /run replaces a vendor
+                # drop-in with the same name.
+                - name: List the drop-ins in /etc and /run
+                  ansible.builtin.find:
+                    paths:
+                      - /etc/systemd/journald.conf.d
+                      - /run/systemd/journald.conf.d
+                    patterns: '*.conf'
+                    file_type: any
+                  register: journald_local_dropins
+
+                - name: Find the drop-ins that set a different Compress value
+                  ansible.builtin.find:
+                    paths:
+                      - /etc/systemd/journald.conf.d
+                      - /run/systemd/journald.conf.d
+                      - /usr/local/lib/systemd/journald.conf.d
+                      - /usr/lib/systemd/journald.conf.d
+                    patterns: '*.conf'
+                    contains: '^\s*Compress\s*=\s*(?!yes\s*$)'
+                  register: journald_conflicts
+
+                - name: Replace the conflicting vendor drop-ins with a copy in /etc
+                  ansible.builtin.copy:
+                    src: "{{ item.path }}"
+                    dest: "/etc/systemd/journald.conf.d/{{ item.path | basename }}"
+                    remote_src: true
+                    owner: root
+                    group: root
+                    mode: '0644'
+                  loop: "{{ journald_conflicts.files }}"
+                  loop_control:
+                    label: "{{ item.path }}"
+                  when:
+                    - item.path is not match('/(etc|run)/')
+                    - (item.path | basename) not in (journald_local_dropins.files | map(attribute='path') | map('basename') | list)
+                  register: journald_vendor_copies
+
+                - name: Comment out Compress in the conflicting drop-ins
+                  ansible.builtin.replace:
+                    path: "{{ item }}"
+                    regexp: '^(\s*Compress\s*=.*)$'
+                    replace: '#\1'
+                  loop: >-
+                    {{ (journald_conflicts.files | map(attribute='path') | select('match', '/(etc|run)/') | list)
+                       + (journald_vendor_copies.results | selectattr('dest', 'defined') | map(attribute='dest') | list) }}
                   notify: Restart systemd-journald
 
               handlers:
@@ -13498,29 +13711,58 @@ queries:
           desc: |
             **Using Chef Infra**
 
-            Use this Chef Infra recipe code to compress large journal files:
+            Use this Chef Infra recipe code to compress large journal files. It writes the value to its own drop-in and comments the setting out of every other drop-in that sets a different value, because a drop-in that sorts later would otherwise override it:
 
             ```ruby
-            journald_conf = '/etc/systemd/journald.conf'
+            key = 'Compress'
+            value = 'yes'
+            dropin_dir = '/etc/systemd/journald.conf.d'
+            dropin = "#{dropin_dir}/99-mondoo-compress.conf"
+            setting = /^\s*#{key}\s*=/
 
             service 'systemd-journald' do
               action :nothing
             end
 
-            ruby_block 'set Compress in journald.conf' do
-              block do
-                body = ::File.exist?(journald_conf) ? ::File.read(journald_conf) : ''
-                body = "[Journal]\n#{body}" unless body.match?(/^\[Journal\]$/)
-                directive = 'Compress=yes'
-                body = if body.match?(/^\s*#?\s*Compress=/)
-                         body.gsub(/^\s*#?\s*Compress=.*$/, directive)
-                       else
-                         body.sub(/^\[Journal\]$/, "[Journal]\n#{directive}")
-                       end
-                ::File.write(journald_conf, body)
-              end
-              not_if { ::File.exist?(journald_conf) && ::File.read(journald_conf).match?(/^Compress=yes\s*$/) }
+            directory dropin_dir do
+              owner 'root'
+              group 'root'
+              mode '0755'
+            end
+
+            file dropin do
+              content "[Journal]\n#{key}=#{value}\n"
+              owner 'root'
+              group 'root'
+              mode '0644'
               notifies :restart, 'service[systemd-journald]', :delayed
+            end
+
+            # journald sorts the drop-ins by file name across these directories, and a later
+            # file overrides an earlier one. The first directory holding a name wins, so a
+            # vendor drop-in is replaced by a copy in /etc rather than edited.
+            seen = {}
+            %w(/etc /run /usr/local/lib /usr/lib).each do |dir|
+              ::Dir.glob("#{dir}/systemd/journald.conf.d/*.conf").sort.each do |source|
+                name = ::File.basename(source)
+                next if seen.key?(name)
+
+                seen[name] = true
+                # Skip this recipe's drop-in and any drop-in masked with a link to /dev/null.
+                next if source == dropin || !::File.file?(source)
+
+                body = ::File.read(source)
+                next unless body.lines.any? { |line| line.match?(setting) && line.split('=', 2).last.strip != value }
+
+                file "comment out #{key} in #{name}" do
+                  path(%w(/etc /run).include?(dir) ? source : "#{dropin_dir}/#{name}")
+                  content body.gsub(/^(\s*#{key}\s*=.*)$/, '#\1')
+                  owner 'root'
+                  group 'root'
+                  mode '0644'
+                  notifies :restart, 'service[systemd-journald]', :delayed
+                end
+              end
             end
             ```
     refs:
@@ -13576,17 +13818,24 @@ queries:
           desc: |
             **Using the CLI**
 
-            1. To configure journald to write log files to a persistent disk, edit the `/etc/systemd/journald.conf` file and add the following line in the `[Journal]` section. Settings placed outside that section are ignored:
+            journald reads `journald.conf` first and then every `*.conf` drop-in under `journald.conf.d` in `/etc/systemd`, `/run/systemd`, `/usr/local/lib/systemd`, and `/usr/lib/systemd`. It sorts the drop-ins by file name, whichever directory holds them, and a later file overrides an earlier one. A drop-in in `/etc` replaces a drop-in with the same name in the other directories. A value set only in `journald.conf` is therefore lost to any drop-in that sets `Storage`.
 
-                ```ini
-                Storage=persistent
+            1. To configure journald to write log files to a persistent disk, create a drop-in that sets the value:
+
+                ```bash
+                mkdir -p /etc/systemd/journald.conf.d
+                printf '[Journal]\nStorage=persistent\n' > /etc/systemd/journald.conf.d/99-mondoo-storage.conf
                 ```
 
-                Fedora, openSUSE Leap 16, and Red Hat Enterprise Linux 10 and its rebuilds install the defaults only as `/usr/lib/systemd/journald.conf`, so `/etc/systemd/journald.conf` does not exist there. Create it with a `[Journal]` line followed by the setting. journald then reads it in place of the file in `/usr/lib`.
+            2. List the drop-ins that set `Storage`:
 
-                journald reads the drop-in files in `journald.conf.d` after this file, so a drop-in that sets `Storage` overrides it. Remove or correct the setting in any drop-in that the audit command shows after this file.
+                ```bash
+                systemd-analyze cat-config systemd/journald.conf | grep -E '^(# /|Storage=)'
+                ```
 
-            2. Restart the service to load the new configuration values:
+                A drop-in that sorts after `99-mondoo-storage.conf` still overrides it. Comment out `Storage` in any other drop-in that sets a different value. For a drop-in in `/usr/lib/systemd` or `/usr/local/lib/systemd`, which the package manager owns, copy it to `/etc/systemd/journald.conf.d/` under the same name and comment the line out in the copy.
+
+            3. Restart the service to load the new configuration values:
 
                 ```bash
                 systemctl restart systemd-journald
@@ -13595,53 +13844,137 @@ queries:
           desc: |
             **Using a Bash Script**
 
-            To configure journald to write log files to a persistent disk, you can run the following bash script:
+            To configure journald to write log files to a persistent disk, run the following bash script. It writes the value to its own drop-in and comments the setting out of every other drop-in that sets a different value, because a drop-in that sorts later would otherwise override it:
 
             ```bash
             #!/bin/bash
             set -e
 
-            echo "Configuring journald to write logs to persistent storage..."
+            KEY=Storage
+            VALUE=persistent
+            DROPIN_DIR=/etc/systemd/journald.conf.d
+            DROPIN=$DROPIN_DIR/99-mondoo-storage.conf
 
-            grep -q '^\[Journal\]' /etc/systemd/journald.conf 2>/dev/null || echo '[Journal]' >> /etc/systemd/journald.conf
-
-            if grep -q '^Storage=' /etc/systemd/journald.conf; then
-              sed -i 's/^Storage=.*/Storage=persistent/' /etc/systemd/journald.conf
-            else
-              echo "Storage=persistent" >> /etc/systemd/journald.conf
+            # Restart journald only when something changed. systemd refuses a sixth start
+            # within ten seconds and leaves the service stopped.
+            changed=0
+            mkdir -p "$DROPIN_DIR"
+            if [ "$(cat "$DROPIN" 2>/dev/null)" != "$(printf '[Journal]\n%s=%s' "$KEY" "$VALUE")" ]; then
+              echo "Writing $KEY=$VALUE to $DROPIN..."
+              printf '[Journal]\n%s=%s\n' "$KEY" "$VALUE" > "$DROPIN"
+              changed=1
             fi
+            chmod 0644 "$DROPIN"
 
-            echo "Restarting systemd-journald service..."
-            systemctl restart systemd-journald
+            # journald sorts the drop-ins by file name across these directories, and a later
+            # file overrides an earlier one. The first directory holding a name wins, so a
+            # vendor drop-in is replaced by a copy in /etc rather than edited.
+            declare -A seen
+            for dir in /etc /run /usr/local/lib /usr/lib; do
+              for f in "$dir"/systemd/journald.conf.d/*.conf; do
+                [ -e "$f" ] || [ -L "$f" ] || continue
+                name=$(basename "$f")
+                [ -z "${seen[$name]}" ] || continue
+                seen[$name]=1
+                # Skip our own drop-in and any drop-in masked with a link to /dev/null.
+                [ "$f" != "$DROPIN" ] && [ -f "$f" ] || continue
+                grep -E "^[[:space:]]*${KEY}[[:space:]]*=" "$f" | grep -qvE "=[[:space:]]*${VALUE}[[:space:]]*$" || continue
+                case "$dir" in
+                  /etc|/run) target=$f ;;
+                  *) target=$DROPIN_DIR/$name; cp "$f" "$target" ;;
+                esac
+                echo "Commenting out $KEY in $target..."
+                sed -i -E "s/^([[:space:]]*${KEY}[[:space:]]*=)/#\1/" "$target"
+                changed=1
+              done
+            done
+
+            if [ "$changed" -eq 1 ]; then
+              echo "Restarting systemd-journald service..."
+              systemctl restart systemd-journald
+            else
+              echo "journald already uses $KEY=$VALUE."
+            fi
             ```
         - id: ansible
           desc: |
             **Using Ansible**
 
-            To configure journald to write log files to a persistent disk, use the following Ansible playbook:
+            To configure journald to write log files to a persistent disk, use the following Ansible playbook. It writes the value to its own drop-in and comments the setting out of every other drop-in that sets a different value, because a drop-in that sorts later would otherwise override it:
 
             ```yaml
             ---
-            - name: Configure journald to write logs to persistent storage
+            - name: Configure journald to write log files to a persistent disk
               hosts: all
               become: true
 
               tasks:
-                - name: Ensure the Journal section header exists in journald.conf
-                  ansible.builtin.lineinfile:
-                    path: /etc/systemd/journald.conf
-                    regexp: '^\[Journal\]'
-                    line: '[Journal]'
-                    create: yes
+                - name: Ensure the journald drop-in directory exists
+                  ansible.builtin.file:
+                    path: /etc/systemd/journald.conf.d
+                    state: directory
+                    owner: root
+                    group: root
+                    mode: '0755'
+
+                - name: Set Storage=persistent in a journald drop-in
+                  ansible.builtin.copy:
+                    dest: /etc/systemd/journald.conf.d/99-mondoo-storage.conf
+                    content: |
+                      [Journal]
+                      Storage=persistent
+                    owner: root
+                    group: root
+                    mode: '0644'
                   notify: Restart systemd-journald
 
-                - name: Ensure Storage=persistent is set in journald.conf
-                  ansible.builtin.lineinfile:
-                    path: /etc/systemd/journald.conf
-                    regexp: '^#?Storage='
-                    line: 'Storage=persistent'
-                    insertafter: '^\[Journal\]'
-                    backup: yes
+                # journald sorts the drop-ins by file name across these directories, and a later
+                # file overrides an earlier one. A drop-in in /etc or /run replaces a vendor
+                # drop-in with the same name.
+                - name: List the drop-ins in /etc and /run
+                  ansible.builtin.find:
+                    paths:
+                      - /etc/systemd/journald.conf.d
+                      - /run/systemd/journald.conf.d
+                    patterns: '*.conf'
+                    file_type: any
+                  register: journald_local_dropins
+
+                - name: Find the drop-ins that set a different Storage value
+                  ansible.builtin.find:
+                    paths:
+                      - /etc/systemd/journald.conf.d
+                      - /run/systemd/journald.conf.d
+                      - /usr/local/lib/systemd/journald.conf.d
+                      - /usr/lib/systemd/journald.conf.d
+                    patterns: '*.conf'
+                    contains: '^\s*Storage\s*=\s*(?!persistent\s*$)'
+                  register: journald_conflicts
+
+                - name: Replace the conflicting vendor drop-ins with a copy in /etc
+                  ansible.builtin.copy:
+                    src: "{{ item.path }}"
+                    dest: "/etc/systemd/journald.conf.d/{{ item.path | basename }}"
+                    remote_src: true
+                    owner: root
+                    group: root
+                    mode: '0644'
+                  loop: "{{ journald_conflicts.files }}"
+                  loop_control:
+                    label: "{{ item.path }}"
+                  when:
+                    - item.path is not match('/(etc|run)/')
+                    - (item.path | basename) not in (journald_local_dropins.files | map(attribute='path') | map('basename') | list)
+                  register: journald_vendor_copies
+
+                - name: Comment out Storage in the conflicting drop-ins
+                  ansible.builtin.replace:
+                    path: "{{ item }}"
+                    regexp: '^(\s*Storage\s*=.*)$'
+                    replace: '#\1'
+                  loop: >-
+                    {{ (journald_conflicts.files | map(attribute='path') | select('match', '/(etc|run)/') | list)
+                       + (journald_vendor_copies.results | selectattr('dest', 'defined') | map(attribute='dest') | list) }}
                   notify: Restart systemd-journald
 
               handlers:
@@ -13654,29 +13987,58 @@ queries:
           desc: |
             **Using Chef Infra**
 
-            Use this Chef Infra recipe code to keep the journal across reboots:
+            Use this Chef Infra recipe code to keep the journal across reboots. It writes the value to its own drop-in and comments the setting out of every other drop-in that sets a different value, because a drop-in that sorts later would otherwise override it:
 
             ```ruby
-            journald_conf = '/etc/systemd/journald.conf'
+            key = 'Storage'
+            value = 'persistent'
+            dropin_dir = '/etc/systemd/journald.conf.d'
+            dropin = "#{dropin_dir}/99-mondoo-storage.conf"
+            setting = /^\s*#{key}\s*=/
 
             service 'systemd-journald' do
               action :nothing
             end
 
-            ruby_block 'set Storage in journald.conf' do
-              block do
-                body = ::File.exist?(journald_conf) ? ::File.read(journald_conf) : ''
-                body = "[Journal]\n#{body}" unless body.match?(/^\[Journal\]$/)
-                directive = 'Storage=persistent'
-                body = if body.match?(/^\s*#?\s*Storage=/)
-                         body.gsub(/^\s*#?\s*Storage=.*$/, directive)
-                       else
-                         body.sub(/^\[Journal\]$/, "[Journal]\n#{directive}")
-                       end
-                ::File.write(journald_conf, body)
-              end
-              not_if { ::File.exist?(journald_conf) && ::File.read(journald_conf).match?(/^Storage=persistent\s*$/) }
+            directory dropin_dir do
+              owner 'root'
+              group 'root'
+              mode '0755'
+            end
+
+            file dropin do
+              content "[Journal]\n#{key}=#{value}\n"
+              owner 'root'
+              group 'root'
+              mode '0644'
               notifies :restart, 'service[systemd-journald]', :delayed
+            end
+
+            # journald sorts the drop-ins by file name across these directories, and a later
+            # file overrides an earlier one. The first directory holding a name wins, so a
+            # vendor drop-in is replaced by a copy in /etc rather than edited.
+            seen = {}
+            %w(/etc /run /usr/local/lib /usr/lib).each do |dir|
+              ::Dir.glob("#{dir}/systemd/journald.conf.d/*.conf").sort.each do |source|
+                name = ::File.basename(source)
+                next if seen.key?(name)
+
+                seen[name] = true
+                # Skip this recipe's drop-in and any drop-in masked with a link to /dev/null.
+                next if source == dropin || !::File.file?(source)
+
+                body = ::File.read(source)
+                next unless body.lines.any? { |line| line.match?(setting) && line.split('=', 2).last.strip != value }
+
+                file "comment out #{key} in #{name}" do
+                  path(%w(/etc /run).include?(dir) ? source : "#{dropin_dir}/#{name}")
+                  content body.gsub(/^(\s*#{key}\s*=.*)$/, '#\1')
+                  owner 'root'
+                  group 'root'
+                  mode '0644'
+                  notifies :restart, 'service[systemd-journald]', :delayed
+                end
+              end
             end
             ```
     refs:
