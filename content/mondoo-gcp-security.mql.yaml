@@ -158,10 +158,8 @@ policies:
       - title: Compute Disks
         checks:
           - uid: mondoo-gcp-security-compute-disk-cmek-encryption
-          - uid: mondoo-gcp-security-compute-disk-csek-encryption
       - title: Compute Snapshots and Images
         checks:
-          - uid: mondoo-gcp-security-compute-snapshot-iam-no-public-principals
           - uid: mondoo-gcp-security-compute-snapshot-iam-no-primitive-roles
           - uid: mondoo-gcp-security-compute-image-iam-no-public-principals
           - uid: mondoo-gcp-security-compute-image-iam-no-primitive-roles
@@ -1058,7 +1056,7 @@ queries:
   - uid: mondoo-gcp-security-compute-instances-oslogin-enabled-gcp
     filters: asset.platform == 'gcp-compute-instance'
     mql: |
-      gcp.compute.instance.metadata['enable-oslogin'] == true ||
+      gcp.compute.instance.osLoginEnabled == true ||
       gcp.project.effectiveOrgPolicy(constraint: "constraints/compute.requireOsLogin").enforced == true
   - uid: mondoo-gcp-security-compute-instances-oslogin-enabled-terraform-hcl
     filters: |
@@ -4492,9 +4490,7 @@ queries:
       asset.platform == 'gcp-compute-instance'
       gcp.compute.instance.name != /^gke-/
     mql: |
-      gcp.compute.instance {
-        metadata['block-project-ssh-keys'] == true
-      }
+      gcp.compute.instance.blockProjectSshKeysEnabled == true
   - uid: mondoo-gcp-security-compute-instances-block-project-wide-ssh-keys-terraform-hcl
     filters: |
       asset.platform == 'terraform-hcl' &&
@@ -4556,7 +4552,7 @@ queries:
       desc: |
         This check verifies that the memory of a running workload is encrypted while it is in use.
 
-        Standard Google Cloud encryption covers data at rest and data in transit. Confidential VM extends that protection to data in use: on supported machine types such as the N2D series, the AMD processor encrypts the instance's RAM with an instance-specific key that the hardware generates and never exports. In the Google Cloud console the control appears as `Confidential VM service` during instance creation. From the command line it is the `--confidential-compute` flag, which must be paired with `--maintenance-policy=TERMINATE`.
+        Standard Google Cloud encryption covers data at rest and data in transit. Confidential VM extends that protection to data in use: on supported machine types such as the N2D series, the AMD processor encrypts the instance's RAM with an instance-specific key that the hardware generates and never exports. In the Google Cloud console the control appears as `Confidential VM service` during instance creation. From the command line it is the `--confidential-compute-type` flag, such as `--confidential-compute-type=SEV`, which must be paired with `--maintenance-policy=TERMINATE`. An instance passes when `enableConfidentialCompute` is true or `confidentialInstanceType` names a technology (`SEV`, `SEV_SNP`, or `TDX`); instances created with `--confidential-compute-type` carry only the second field.
 
         **Why this matters**
 
@@ -4583,13 +4579,13 @@ queries:
         ```bash
         gcloud compute instances list --format='json(name,machineType,confidentialInstanceConfig)'
         ```
-        2. For instances using a supported machine type such as those containing "n2d-", verify that the `confidentialInstanceConfig` section exists and the `enableConfidentialCompute` field is set to `true`.
+        2. For instances using a supported machine type such as those containing "n2d-", verify that the `confidentialInstanceConfig` section exists and either `enableConfidentialCompute` is `true` or `confidentialInstanceType` is `SEV`, `SEV_SNP`, or `TDX`.
 
         Example output for a configured instance:
         ```json
         {
          "confidentialInstanceConfig": {
-          "enableConfidentialCompute": true
+          "confidentialInstanceType": "SEV"
          },
          "machineType": "...",
          "name": "..."
@@ -4647,13 +4643,13 @@ queries:
           desc: |
             The Confidential VM service can only be activated when creating a new VM instance. It cannot be enabled on an existing instance. To remediate an existing instance, create a replacement Confidential VM, migrate its workloads and persistent disks, repoint clients, and then decommission the original instance during a planned maintenance window.
 
-            To ensure Confidential VM Service is enabled for all VM instances using the Google Cloud CLI, use the `--confidential-compute` flag during instance creation. You must also set the maintenance policy to `TERMINATE`.
+            To ensure Confidential VM Service is enabled for all VM instances using the Google Cloud CLI, use the `--confidential-compute-type` flag during instance creation. You must also set the maintenance policy to `TERMINATE`.
 
             ```bash
             gcloud compute instances create INSTANCE_NAME \
              --zone=ZONE \
              --machine-type=N2D_MACHINE_TYPE \
-             --confidential-compute \
+             --confidential-compute-type=SEV \
              --maintenance-policy=TERMINATE
             # Add other necessary flags like --image-project, --image, --network, etc.
             ```
@@ -4670,9 +4666,10 @@ queries:
       gcp.compute.instance.name != /^gke-/
       gcp.compute.instance.machineType.name == /n2d-/
     mql: |
-      gcp.compute.instance {
-        confidentialCompute.enabled == true
-      }
+      # Selecting a confidential computing technology with confidentialInstanceType makes a
+      # confidential VM without setting the older enableConfidentialCompute flag.
+      gcp.compute.instance.confidentialCompute.enabled == true ||
+      gcp.compute.instance.confidentialCompute.instanceType == /^(SEV|SEV_SNP|TDX)$/
   - uid: mondoo-gcp-security-compute-instances-confidential-vm-service-enabled-terraform-hcl
     filters: |
       asset.platform == 'terraform-hcl' &&
@@ -4682,7 +4679,8 @@ queries:
       terraform.resources('google_compute_instance').all(
         blocks.where(type == 'confidential_instance_config') != empty &&
         blocks.where(type == 'confidential_instance_config').all(
-          arguments.enable_confidential_compute == true
+          arguments.enable_confidential_compute == true ||
+          arguments.confidential_instance_type == /^(SEV|SEV_SNP|TDX)$/
         )
       )
   - uid: mondoo-gcp-security-compute-instances-confidential-vm-service-enabled-terraform-plan
@@ -4690,8 +4688,10 @@ queries:
       asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_compute_instance')
     mql: |
       terraform.plan.resourceChanges.where(type == 'google_compute_instance').all(
+        change.after.confidential_instance_config != empty &&
         change.after.confidential_instance_config.all(
-          enable_confidential_compute == true
+          _['enable_confidential_compute'] == true ||
+          _['confidential_instance_type'] == /^(SEV|SEV_SNP|TDX)$/
         )
       )
   - uid: mondoo-gcp-security-compute-instances-confidential-vm-service-enabled-terraform-state
@@ -4699,8 +4699,10 @@ queries:
       asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_compute_instance')
     mql: |
       terraform.state.resources.where(type == "google_compute_instance").all(
+        values['confidential_instance_config'] != empty &&
         values['confidential_instance_config'].all(
-          _['enable_confidential_compute'] == true
+          _['enable_confidential_compute'] == true ||
+          _['confidential_instance_type'] == /^(SEV|SEV_SNP|TDX)$/
         )
       )
   - uid: mondoo-gcp-security-compute-instances-secure-boot-enabled
@@ -6988,7 +6990,7 @@ queries:
       desc: |
         This check verifies that the key anchoring a public Cloud DNS zone's DNSSEC trust chain uses a signing algorithm that still holds up.
 
-        The zone must have DNSSEC enabled and its key-signing key (KSK) must use something other than `rsasha1`. Google has deprecated RSASHA1 and now requires a support contract and allowlisting to use it at all, which is a fair summary of how much confidence the algorithm still commands. Inspect the current setting with `gcloud dns managed-zones describe ZONE_NAME --format="json(dnsName,dnssecConfig.state,dnssecConfig.defaultKeySpecs)"`.
+        The zone must have DNSSEC enabled and its key-signing key (KSK) must use something other than `rsasha1`. Google has deprecated RSASHA1 and now requires a support contract and allowlisting to use it at all, which is a fair summary of how much confidence the algorithm still commands. The check reads the zone's DNSSEC keys rather than its default key specs, because the default specs only describe how new keys are generated. Inspect the keys with `gcloud dns dns-keys list --zone=ZONE_NAME --format="table(type,algorithm,isActive)"`.
 
         **Why this matters**
 
@@ -7000,10 +7002,10 @@ queries:
       audit: |
         **Using Google Cloud CLI**
 
-        Ensure the property algorithm for keyType keySigning is not using `RSASHA1`:
+        List the zone's DNSSEC keys and ensure no key of type `keySigning` uses `rsasha1`:
 
         ```bash
-        gcloud dns managed-zones describe ZONE_NAME --format="json(dnsName,dnssecConfig.state,dnssecConfig.defaultKeySpecs)"
+        gcloud dns dns-keys list --zone=ZONE_NAME --format="table(type,algorithm,isActive)"
         ```
       remediation:
         - id: console
@@ -7081,9 +7083,11 @@ queries:
       gcp.project.dnsService.managedzone.visibility != "private"
     mql: |
       gcp.dns.managedzone.dnssecEnabled == true
-      gcp.dns.managedzone.dnssecConfig.defaultKeySpecs
-        .where(keyType == 'keySigning')
-        .all(algorithm != 'rsasha1')
+      # dnsKeys are the keys the zone is signed with today. dnssecConfig.defaultKeySpecs only
+      # describes how new keys are generated.
+      gcp.dns.managedzone.dnsKeys
+        .where(type == 'keySigning')
+        .all(algorithm != 'rsasha1' && algorithm != 'rsasha1-nsec3-sha1')
   - uid: mondoo-gcp-security-cloud-dns-rsasha1-ksk-not-used-terraform-hcl
     filters: |
       asset.platform == 'terraform-hcl' &&
@@ -7725,7 +7729,7 @@ queries:
         3. Review each firewall rule with **Direction** set to `Ingress`.
         4. Check whether any rule allows TCP port 22 (or all ports on TCP) with a **Source IP range** of `0.0.0.0/0` or `::/0`.
 
-        A passing firewall configuration shows no ingress rules that allow TCP port 22 from `0.0.0.0/0` or `::/0`. A failing configuration shows one or more ingress rules permitting SSH from any source IP.
+        A passing firewall configuration shows no ingress rules that allow TCP port 22 from `0.0.0.0/0`, `::/0`, or another range of /7 or wider. A failing configuration shows one or more ingress rules permitting SSH from any source IP.
 
         ### Audit via CLI
 
@@ -7745,7 +7749,7 @@ queries:
           --format="table(name,direction,allowed,sourceRanges)"
         ```
 
-        A passing configuration returns no results for rules permitting port 22 from the internet. A failing configuration returns one or more firewall rules with `0.0.0.0/0` or `::/0` source ranges allowing TCP port 22.
+        A passing configuration returns no results for rules permitting port 22 from the internet. A failing configuration returns one or more firewall rules with `0.0.0.0/0`, `::/0`, or another range of /7 or wider source ranges allowing TCP port 22.
       remediation:
         - id: terraform
           desc: |
@@ -7832,8 +7836,7 @@ queries:
           arguments.ports.contains("22")
         )
       ).all(
-        arguments.source_ranges.none(_ == '0.0.0.0/0') &&
-        arguments.source_ranges.none(_ == '::/0')
+        arguments.source_ranges.none(_ == /^\d+\.\d+\.\d+\.\d+\/[0-7]$|^[0-9a-fA-F:]+\/[0-6]$/)
       )
   - uid: mondoo-gcp-security-firewall-no-ingress-ssh-from-internet-terraform-plan
     filters: |
@@ -7849,8 +7852,7 @@ queries:
           _['ports'].contains("22")
         )
       ).all(
-        change.after.source_ranges.none(_ == '0.0.0.0/0') &&
-        change.after.source_ranges.none(_ == '::/0')
+        change.after.source_ranges.none(_ == /^\d+\.\d+\.\d+\.\d+\/[0-7]$|^[0-9a-fA-F:]+\/[0-6]$/)
       )
   - uid: mondoo-gcp-security-firewall-no-ingress-ssh-from-internet-terraform-state
     filters: |
@@ -7866,8 +7868,7 @@ queries:
           _['ports'].contains("22")
         )
       ).all(
-        values.source_ranges.none(_ == '0.0.0.0/0') &&
-        values.source_ranges.none(_ == '::/0')
+        values.source_ranges.none(_ == /^\d+\.\d+\.\d+\.\d+\/[0-7]$|^[0-9a-fA-F:]+\/[0-6]$/)
       )
   - uid: mondoo-gcp-security-firewall-no-ingress-rdp-from-internet
     title: Ensure RDP access is restricted from the internet
@@ -7927,7 +7928,7 @@ queries:
         3. Review each firewall rule with **Direction** set to `Ingress`.
         4. Check whether any rule allows TCP port 3389 (or all ports on TCP) with a **Source IP range** of `0.0.0.0/0` or `::/0`.
 
-        A passing firewall configuration shows no ingress rules that allow TCP port 3389 from `0.0.0.0/0` or `::/0`. A failing configuration shows one or more ingress rules permitting RDP from any source IP.
+        A passing firewall configuration shows no ingress rules that allow TCP port 3389 from `0.0.0.0/0`, `::/0`, or another range of /7 or wider. A failing configuration shows one or more ingress rules permitting RDP from any source IP.
 
         ### Audit via CLI
 
@@ -7947,7 +7948,7 @@ queries:
           --format="table(name,direction,allowed,sourceRanges)"
         ```
 
-        A passing configuration returns no results for rules permitting port 3389 from the internet. A failing configuration returns one or more firewall rules with `0.0.0.0/0` or `::/0` source ranges allowing TCP port 3389.
+        A passing configuration returns no results for rules permitting port 3389 from the internet. A failing configuration returns one or more firewall rules with `0.0.0.0/0`, `::/0`, or another range of /7 or wider source ranges allowing TCP port 3389.
       remediation:
         - id: terraform
           desc: |
@@ -8015,8 +8016,7 @@ queries:
           arguments.ports.contains("3389")
         )
       ).all(
-        arguments.source_ranges.none(_ == '0.0.0.0/0') &&
-        arguments.source_ranges.none(_ == '::/0')
+        arguments.source_ranges.none(_ == /^\d+\.\d+\.\d+\.\d+\/[0-7]$|^[0-9a-fA-F:]+\/[0-6]$/)
       )
   - uid: mondoo-gcp-security-firewall-no-ingress-rdp-from-internet-terraform-plan
     filters: |
@@ -8032,8 +8032,7 @@ queries:
           _['ports'].contains("3389")
         )
       ).all(
-        change.after.source_ranges.none(_ == '0.0.0.0/0') &&
-        change.after.source_ranges.none(_ == '::/0')
+        change.after.source_ranges.none(_ == /^\d+\.\d+\.\d+\.\d+\/[0-7]$|^[0-9a-fA-F:]+\/[0-6]$/)
       )
   - uid: mondoo-gcp-security-firewall-no-ingress-rdp-from-internet-terraform-state
     filters: |
@@ -8049,8 +8048,7 @@ queries:
           _['ports'].contains("3389")
         )
       ).all(
-        values.source_ranges.none(_ == '0.0.0.0/0') &&
-        values.source_ranges.none(_ == '::/0')
+        values.source_ranges.none(_ == /^\d+\.\d+\.\d+\.\d+\/[0-7]$|^[0-9a-fA-F:]+\/[0-6]$/)
       )
   - uid: mondoo-gcp-security-firewall-no-unrestricted-ingress-all-protocols
     title: Ensure firewall rules do not allow unrestricted ingress on all protocols
@@ -8112,7 +8110,7 @@ queries:
         3. Review each firewall rule with **Direction** set to `Ingress`.
         4. Check whether any rule has **Protocols and ports** set to `Allow all` with a **Source IP range** of `0.0.0.0/0` or `::/0`.
 
-        A passing firewall configuration shows no ingress rules that allow all protocols from `0.0.0.0/0` or `::/0`. A failing configuration shows one or more ingress rules with all-protocol access from any source IP.
+        A passing firewall configuration shows no ingress rules that allow all protocols from `0.0.0.0/0`, `::/0`, or another range of /7 or wider. A failing configuration shows one or more ingress rules with all-protocol access from any source IP.
 
         ### Audit via CLI
 
@@ -8124,7 +8122,7 @@ queries:
           --format="table(name,direction,allowed,sourceRanges)"
         ```
 
-        A passing configuration returns no results. A failing configuration returns one or more firewall rules with `IPProtocol: all` and source ranges of `0.0.0.0/0` or `::/0`.
+        A passing configuration returns no results. A failing configuration returns one or more firewall rules with `IPProtocol: all` and source ranges of `0.0.0.0/0`, `::/0`, or another range of /7 or wider.
       remediation:
         - id: terraform
           desc: |
@@ -8183,7 +8181,8 @@ queries:
       asset.platform == 'gcp-compute-firewall'
       gcp.compute.firewall.direction == "INGRESS"
     mql: |
-      gcp.compute.firewall.openToInternet == false ||
+      gcp.compute.firewall.disabled == true ||
+      gcp.compute.firewall.sourceRanges.none(_ == /^\d+\.\d+\.\d+\.\d+\/[0-7]$|^[0-9a-fA-F:]+\/[0-6]$/) ||
       gcp.compute.firewall.allowedProtocols.keys.none(_ == "all")
   - uid: mondoo-gcp-security-firewall-no-unrestricted-ingress-all-protocols-terraform-hcl
     filters: |
@@ -8194,8 +8193,7 @@ queries:
       ).where(
         blocks.where(type == 'allow').any(arguments.protocol == 'all')
       ).all(
-        arguments.source_ranges.none(_ == '0.0.0.0/0') &&
-        arguments.source_ranges.none(_ == '::/0')
+        arguments.source_ranges.none(_ == /^\d+\.\d+\.\d+\.\d+\/[0-7]$|^[0-9a-fA-F:]+\/[0-6]$/)
       )
   - uid: mondoo-gcp-security-firewall-no-unrestricted-ingress-all-protocols-terraform-plan
     filters: |
@@ -8206,8 +8204,7 @@ queries:
       ).where(
         change.after.allow.any(_['protocol'] == 'all')
       ).all(
-        change.after.source_ranges.none(_ == '0.0.0.0/0') &&
-        change.after.source_ranges.none(_ == '::/0')
+        change.after.source_ranges.none(_ == /^\d+\.\d+\.\d+\.\d+\/[0-7]$|^[0-9a-fA-F:]+\/[0-6]$/)
       )
   - uid: mondoo-gcp-security-firewall-no-unrestricted-ingress-all-protocols-terraform-state
     filters: |
@@ -8218,8 +8215,7 @@ queries:
       ).where(
         values.allow.any(_['protocol'] == 'all')
       ).all(
-        values.source_ranges.none(_ == '0.0.0.0/0') &&
-        values.source_ranges.none(_ == '::/0')
+        values.source_ranges.none(_ == /^\d+\.\d+\.\d+\.\d+\/[0-7]$|^[0-9a-fA-F:]+\/[0-6]$/)
       )
   - uid: mondoo-gcp-security-firewall-no-ingress-database-ports-from-internet
     title: Ensure firewall rules block internet ingress to database ports
@@ -8260,7 +8256,7 @@ queries:
       desc: |
         This check verifies that database listeners are not reachable from the public internet.
 
-        The ports assessed are TCP 3306 for MySQL, 5432 for PostgreSQL, 1433 for SQL Server, and 27017 for MongoDB. A failing configuration is an ingress rule reachable from `0.0.0.0/0` or `::/0` that reaches one of those ports in any of four ways:
+        The ports assessed are TCP 3306 for MySQL, 5432 for PostgreSQL, 1433 for SQL Server, and 27017 for MongoDB. A failing configuration is an ingress rule reachable from `0.0.0.0/0`, `::/0`, or another range of /7 or wider that reaches one of those ports in any of four ways:
 
         - It names the port directly, such as `tcp:3306`.
         - It allows a port range that covers the port, such as `tcp:3000-4000`.
@@ -8287,7 +8283,7 @@ queries:
         4. Check whether any rule allows TCP ports 3306 (MySQL), 5432 (PostgreSQL), 1433 (SQL Server), or 27017 (MongoDB) with a **Source IP range** of `0.0.0.0/0` or `::/0`.
         5. Check the same rules for a port range that covers one of those ports, such as `3000-4000`, for a TCP entry with no ports listed, and for **Protocols and ports** set to **Allow all**.
 
-        A passing firewall configuration shows no ingress rules exposing database ports to `0.0.0.0/0` or `::/0`. A failing configuration shows one or more ingress rules allowing internet access to one of those database ports, whether by naming the port, by covering it with a range, or by allowing every port of the protocol.
+        A passing firewall configuration shows no ingress rules exposing database ports to `0.0.0.0/0`, `::/0`, or another range of /7 or wider. A failing configuration shows one or more ingress rules allowing internet access to one of those database ports, whether by naming the port, by covering it with a range, or by allowing every port of the protocol.
 
         ### Audit via CLI
 
@@ -8309,7 +8305,7 @@ queries:
           --format="table(name,direction,allowed,sourceRanges)"
         ```
 
-        A passing configuration returns no results for any database port check, and every rule in the second listing shows explicit ports that avoid the database ports. A failing configuration returns one or more firewall rules with `0.0.0.0/0` or `::/0` source ranges that reach a database port.
+        A passing configuration returns no results for any database port check, and every rule in the second listing shows explicit ports that avoid the database ports. A failing configuration returns one or more firewall rules with `0.0.0.0/0`, `::/0`, or another range of /7 or wider source ranges that reach a database port.
       remediation:
         - id: terraform
           desc: |
@@ -8364,18 +8360,22 @@ queries:
       asset.platform == 'gcp-compute-firewall'
       gcp.compute.firewall.direction == "INGRESS"
     mql: |
+      # A source range of /7 or wider is mostly public address space, which covers 0.0.0.0/0, ::/0,
+      # and the same space split into halves such as 0.0.0.0/1 plus 128.0.0.0/1.
+      fromInternet = gcp.compute.firewall.disabled != true &&
+        gcp.compute.firewall.sourceRanges.any(_ == /^\d+\.\d+\.\d+\.\d+\/[0-7]$|^[0-9a-fA-F:]+\/[0-6]$/)
       # Protocol "all" carries no port list and opens every database port.
-      gcp.compute.firewall.openToInternet == false ||
+      fromInternet == false ||
       gcp.compute.firewall.allowedProtocols.keys.none(_ == "all")
       # An empty port list on a TCP entry means every TCP port, which includes the database ports.
-      gcp.compute.firewall.openToInternet == false ||
+      fromInternet == false ||
       gcp.compute.firewall.allowedProtocols.where(key == /^(tcp|6)$/i).values.all(_.length > 0)
       # A port entry is either a single port or an inclusive range such as "3000-4000", and MQL
       # cannot convert either to a number. Each database port therefore gets one regex that accepts
       # the port itself or any range whose lower bound is at or below it and whose upper bound is at
       # or above it. The upper halves also accept values above 65535, which Google Cloud rejects
       # when the rule is created.
-      gcp.compute.firewall.openToInternet == false ||
+      fromInternet == false ||
       gcp.compute.firewall.allowedProtocols.where(key == /^(tcp|6)$/i).values.flat.none(
         _ == /^(1433|(\d{1,3}|1[0-3]\d{2}|14[0-2]\d|143[0-3])-(143[3-9]|14[4-9]\d|1[5-9]\d{2}|[2-9]\d{3}|\d{5}))$/ ||
         _ == /^(3306|(\d{1,3}|[12]\d{3}|3[0-2]\d{2}|330[0-6])-(330[6-9]|33[1-9]\d|3[4-9]\d{2}|[4-9]\d{3}|\d{5}))$/ ||
@@ -8400,8 +8400,7 @@ queries:
           )
         )
       ).all(
-        arguments.source_ranges.none(_ == '0.0.0.0/0') &&
-        arguments.source_ranges.none(_ == '::/0')
+        arguments.source_ranges.none(_ == /^\d+\.\d+\.\d+\.\d+\/[0-7]$|^[0-9a-fA-F:]+\/[0-6]$/)
       )
   - uid: mondoo-gcp-security-firewall-no-ingress-database-ports-from-internet-terraform-plan
     filters: |
@@ -8421,8 +8420,7 @@ queries:
           )
         )
       ).all(
-        change.after.source_ranges.none(_ == '0.0.0.0/0') &&
-        change.after.source_ranges.none(_ == '::/0')
+        change.after.source_ranges.none(_ == /^\d+\.\d+\.\d+\.\d+\/[0-7]$|^[0-9a-fA-F:]+\/[0-6]$/)
       )
   - uid: mondoo-gcp-security-firewall-no-ingress-database-ports-from-internet-terraform-state
     filters: |
@@ -8442,8 +8440,7 @@ queries:
           )
         )
       ).all(
-        values.source_ranges.none(_ == '0.0.0.0/0') &&
-        values.source_ranges.none(_ == '::/0')
+        values.source_ranges.none(_ == /^\d+\.\d+\.\d+\.\d+\/[0-7]$|^[0-9a-fA-F:]+\/[0-6]$/)
       )
   - uid: mondoo-gcp-security-firewall-no-overly-permissive-ingress
     title: Ensure firewall rules do not allow unrestricted internet ingress
@@ -8519,7 +8516,7 @@ queries:
           --format="table(name,direction,allowed,sourceRanges)"
         ```
 
-        Review the `ALLOW` column output. A passing rule shows `tcp:80` or similar entries with explicit port numbers. A failing rule shows `tcp` or `udp` with no port numbers, or `all`, in the `ALLOW` column alongside a source range of `0.0.0.0/0` or `::/0`. A bare `icmp` entry has no ports to show and is not assessed.
+        Review the `ALLOW` column output. A passing rule shows `tcp:80` or similar entries with explicit port numbers. A failing rule shows `tcp` or `udp` with no port numbers, or `all`, in the `ALLOW` column alongside a source range of `0.0.0.0/0`, `::/0`, or another range of /7 or wider. A bare `icmp` entry has no ports to show and is not assessed.
       remediation:
         - id: terraform
           desc: |
@@ -8566,11 +8563,14 @@ queries:
     filters: |
       asset.platform == 'gcp-compute-firewall'
       gcp.compute.firewall.direction == "INGRESS"
-      gcp.compute.firewall.sourceRanges.any(_ == "0.0.0.0/0" || _ == "::/0")
+      gcp.compute.firewall.sourceRanges.any(_ == /^\d+\.\d+\.\d+\.\d+\/[0-7]$|^[0-9a-fA-F:]+\/[0-6]$/)
     mql: |
+      # A disabled rule allows nothing.
+      gcp.compute.firewall.disabled == true ||
       gcp.compute.firewall.allowedProtocols.keys.none(_ == "all")
       # Only TCP, UDP, and SCTP carry ports, so an entry for a protocol that has none, such as ICMP,
       # ESP, AH, or IPIP, has nothing to enumerate and is not assessed here.
+      gcp.compute.firewall.disabled == true ||
       gcp.compute.firewall.allowedProtocols
         .where(key == /^(tcp|udp|sctp|6|17|132)$/i).values
         .all(_.length > 0)
@@ -8581,7 +8581,7 @@ queries:
       terraform.resources('google_compute_firewall').where(
         arguments.direction == empty || arguments.direction == 'INGRESS'
       ).where(
-        arguments.source_ranges.any(_ == '0.0.0.0/0' || _ == '::/0')
+        arguments.source_ranges.any(_ == /^\d+\.\d+\.\d+\.\d+\/[0-7]$|^[0-9a-fA-F:]+\/[0-6]$/)
       ).all(
         blocks.where(type == 'allow').none(arguments.protocol == 'all') &&
         blocks.where(
@@ -8595,7 +8595,7 @@ queries:
       terraform.plan.resourceChanges.where(type == 'google_compute_firewall').where(
         change.after.direction == empty || change.after.direction == 'INGRESS'
       ).where(
-        change.after.source_ranges.any(_ == '0.0.0.0/0' || _ == '::/0')
+        change.after.source_ranges.any(_ == /^\d+\.\d+\.\d+\.\d+\/[0-7]$|^[0-9a-fA-F:]+\/[0-6]$/)
       ).all(
         change.after.allow.none(_['protocol'] == 'all') &&
         change.after.allow
@@ -8609,7 +8609,7 @@ queries:
       terraform.state.resources.where(type == 'google_compute_firewall').where(
         values.direction == empty || values.direction == 'INGRESS'
       ).where(
-        values.source_ranges.any(_ == '0.0.0.0/0' || _ == '::/0')
+        values.source_ranges.any(_ == /^\d+\.\d+\.\d+\.\d+\/[0-7]$|^[0-9a-fA-F:]+\/[0-6]$/)
       ).all(
         values.allow.none(_['protocol'] == 'all') &&
         values.allow
@@ -10422,7 +10422,9 @@ queries:
       - url: https://docs.cloud.google.com/vpc/docs/vpc
         title: Google Cloud VPC Documentation
   - uid: mondoo-gcp-security-compute-subnetwork-flow-logs-enabled-gcp
-    filters: asset.platform == "gcp-compute-subnetwork"
+    filters: |
+      asset.platform == "gcp-compute-subnetwork"
+      gcp.compute.subnetwork.purpose == "PRIVATE" || gcp.compute.subnetwork.purpose == ""
     mql: gcp.compute.subnetwork.enableFlowLogs == true
   - uid: mondoo-gcp-security-compute-subnetwork-flow-logs-enabled-terraform-hcl
     filters: |
@@ -10552,7 +10554,9 @@ queries:
       - url: https://docs.cloud.google.com/vpc/docs/vpc
         title: Google Cloud VPC Documentation
   - uid: mondoo-gcp-security-compute-subnetwork-private-google-access-enabled-gcp
-    filters: asset.platform == "gcp-compute-subnetwork"
+    filters: |
+      asset.platform == "gcp-compute-subnetwork"
+      gcp.compute.subnetwork.purpose == "PRIVATE" || gcp.compute.subnetwork.purpose == ""
     mql: gcp.compute.subnetwork.privateIpGoogleAccess == true
   - uid: mondoo-gcp-security-compute-subnetwork-private-google-access-enabled-terraform-hcl
     filters: |
@@ -15939,7 +15943,7 @@ queries:
 
         Many threat intelligence feeds are DNS-based, and matching indicators of compromise against them requires a query log stream to match. Route the logs to a security information and event management platform for correlation, and alert on lookups of known malicious domains, unusually high query rates, and long subdomain strings that suggest tunneling.
 
-        A project with no DNS server policy at all fails this check, since absent logging is the default state.
+        Every VPC network in the project must be attached to a server policy that has logging enabled. A logging policy on one network does not cover the others, and a project with no DNS server policy at all fails, since absent logging is the default state.
       audit: |
         ### Audit via Console
 
@@ -15957,7 +15961,7 @@ queries:
         gcloud dns policies list --format="table(name,enableLogging,networks.networkUrl.list())"
         ```
 
-        A passing project returns at least one policy with `enableLogging: True` that covers all relevant VPC networks. A failing project returns no policies, or all policies show `enableLogging: False`.
+        A passing project returns policies with `enableLogging: True` whose networks together include every VPC network listed by `gcloud compute networks list`. A failing project returns no policies, only policies with `enableLogging: False`, or leaves at least one network out.
       remediation:
         - id: terraform
           desc: |
@@ -15998,8 +16002,10 @@ queries:
   - uid: mondoo-gcp-security-compute-network-dns-logging-enabled-gcp
     filters: asset.platform == 'gcp-project'
     mql: |
-      gcp.project.dnsService.policies().length > 0
-      gcp.project.dnsService.policies().all(enableLogging == true)
+      # Every network needs a logging-enabled DNS server policy attached. A logging policy on one
+      # network says nothing about the others.
+      loggedNetworks = gcp.project.dnsService.policies.where(enableLogging == true).map(networkNames).flat
+      gcp.project.computeService.networks.all(name.in(loggedNetworks))
   - uid: mondoo-gcp-security-compute-network-dns-logging-enabled-terraform-hcl
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_dns_policy')
@@ -17357,7 +17363,7 @@ queries:
 
         Where interactive troubleshooting is genuinely needed, route it through OS Login, Identity-Aware Proxy tunneling, or a documented breakglass procedure that leaves an audit trail.
 
-        The check treats `true` and `1` as enabled, matching how Compute Engine reads the key; an absent key, `false`, or `0` all pass. To close the option organization-wide, apply the `constraints/compute.disableSerialPortAccess` organization policy.
+        The check treats `true` in any letter case and `1` as enabled. An instance that does not set the key inherits the value from the project's common instance metadata, so `serial-port-enable=TRUE` set project-wide opens the console on every instance that does not override it. An absent key at both levels, `false`, or `0` all pass. To close the option organization-wide, apply the `constraints/compute.disableSerialPortAccess` organization policy.
       audit: |
         ### Audit via Console
 
@@ -17377,7 +17383,7 @@ queries:
           --format='get(metadata.items)'
         ```
 
-        A passing instance returns metadata where `serial-port-enable` is absent, set to `false`, or set to `0`. A failing instance returns `serial-port-enable=true` or `serial-port-enable=1`.
+        A passing instance returns metadata where `serial-port-enable` is set to `false` or `0`, or is absent and also absent or false in the project metadata shown by `gcloud compute project-info describe --format='get(commonInstanceMetadata.items)'`. A failing instance returns `serial-port-enable=true`, `TRUE`, or `1`, or inherits one of those values from the project.
       remediation:
         - id: terraform
           desc: |
@@ -17429,18 +17435,15 @@ queries:
   - uid: mondoo-gcp-security-compute-instances-serial-port-disabled-gcp
     filters: asset.platform == 'gcp-compute-instance'
     mql: |
-      gcp.compute.instance.metadata['serial-port-enable'] != "true" &&
-      gcp.compute.instance.metadata['serial-port-enable'] != "1"
+      gcp.compute.instance.serialPortEnabled == false
   - uid: mondoo-gcp-security-compute-instances-serial-port-disabled-terraform-hcl
     filters: |
       asset.platform == 'terraform-hcl' &&
         terraform.resources('google_compute_instance') != empty
     mql: |
+      # Compute Engine reads the value case-insensitively, so TRUE enables the serial port as well.
       terraform.resources('google_compute_instance').all(
-        arguments['metadata'] == empty || arguments['metadata']['serial-port-enable'] != "true"
-      )
-      terraform.resources('google_compute_instance').all(
-        arguments['metadata'] == empty || arguments['metadata']['serial-port-enable'] != "1"
+        arguments['metadata'] == empty || arguments['metadata']['serial-port-enable'] != /^(true|1)$/i
       )
   - uid: mondoo-gcp-security-compute-instances-serial-port-disabled-terraform-plan
     filters: |
@@ -17448,11 +17451,7 @@ queries:
     mql: |
       terraform.plan.resourceChanges.where(type == 'google_compute_instance').all(
         change.after['metadata'] == empty ||
-        change.after['metadata']['serial-port-enable'] != "true"
-      )
-      terraform.plan.resourceChanges.where(type == 'google_compute_instance').all(
-        change.after['metadata'] == empty ||
-        change.after['metadata']['serial-port-enable'] != "1"
+        change.after['metadata']['serial-port-enable'] != /^(true|1)$/i
       )
   - uid: mondoo-gcp-security-compute-instances-serial-port-disabled-terraform-state
     filters: |
@@ -17460,11 +17459,7 @@ queries:
     mql: |
       terraform.state.resources.where(type == 'google_compute_instance').all(
         values['metadata'] == empty ||
-        values['metadata']['serial-port-enable'] != "true"
-      )
-      terraform.state.resources.where(type == 'google_compute_instance').all(
-        values['metadata'] == empty ||
-        values['metadata']['serial-port-enable'] != "1"
+        values['metadata']['serial-port-enable'] != /^(true|1)$/i
       )
   - uid: mondoo-gcp-security-compute-disk-cmek-encryption
     title: Ensure Compute Engine disks are encrypted with CMEK
@@ -17646,7 +17641,7 @@ queries:
       desc: |
         This check verifies that an internet-facing load balancer frontend forwards only the ports it is meant to serve.
 
-        A forwarding rule configured with `allPorts` enabled passes traffic on every port through to the backend instances. This check applies to rules whose load balancing scheme is `EXTERNAL` or `EXTERNAL_MANAGED`. The `Ports` configuration is edited on the frontend under `Network services` then `Load balancing`, where a compliant rule names a specific port or a port range such as `80-443`.
+        A forwarding rule configured with `allPorts` enabled, or with the port range `1-65535`, passes traffic on every port through to the backend instances. This check applies to rules whose load balancing scheme is `EXTERNAL` or `EXTERNAL_MANAGED`. The `Ports` configuration is edited on the frontend under `Network services` then `Load balancing`, where a compliant rule names a specific port or a port range such as `80-443`.
 
         **Why this matters**
 
@@ -17666,7 +17661,7 @@ queries:
         2. Click the **Frontends** tab or navigate to each forwarding rule.
         3. For each external forwarding rule (load balancing scheme of EXTERNAL or EXTERNAL_MANAGED), review the **Ports** configuration.
 
-        A passing forwarding rule shows a specific port or port range (for example, 80, 443, or 8080-8090). A failing forwarding rule shows **All ports** enabled.
+        A passing forwarding rule shows a specific port or port range (for example, 80, 443, or 8080-8090). A failing forwarding rule shows **All ports** enabled or the range `1-65535`.
 
         ### Audit via CLI
 
@@ -17678,7 +17673,7 @@ queries:
           --format="table(name,region,loadBalancingScheme,allPorts,portRange)"
         ```
 
-        A passing forwarding rule returns `False` or empty for `allPorts`. A failing forwarding rule returns `True` for `allPorts`.
+        A passing forwarding rule returns `False` or empty for `allPorts` and a `portRange` other than `1-65535`. A failing forwarding rule returns `True` for `allPorts` or `1-65535` for `portRange`.
       remediation:
         - id: terraform
           desc: |
@@ -17733,7 +17728,7 @@ queries:
     mql: |
       gcp.project.computeService.forwardingRules.where(
         loadBalancingScheme == "EXTERNAL" || loadBalancingScheme == "EXTERNAL_MANAGED"
-      ).all(allPorts != true)
+      ).all(allPorts != true && portRange != "1-65535")
   - uid: mondoo-gcp-security-forwarding-rule-not-all-ports-terraform-hcl
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_compute_forwarding_rule')
@@ -17742,7 +17737,8 @@ queries:
         arguments.load_balancing_scheme == "EXTERNAL" ||
         arguments.load_balancing_scheme == "EXTERNAL_MANAGED"
       ).all(
-        arguments.all_ports != true
+        arguments.all_ports != true &&
+        arguments.port_range != "1-65535"
       )
   - uid: mondoo-gcp-security-forwarding-rule-not-all-ports-terraform-plan
     filters: |
@@ -17752,7 +17748,8 @@ queries:
         change.after.load_balancing_scheme == "EXTERNAL" ||
         change.after.load_balancing_scheme == "EXTERNAL_MANAGED"
       ).all(
-        change.after.all_ports != true
+        change.after.all_ports != true &&
+        change.after.port_range != "1-65535"
       )
   - uid: mondoo-gcp-security-forwarding-rule-not-all-ports-terraform-state
     filters: |
@@ -17761,7 +17758,8 @@ queries:
       terraform.state.resources.where(type == 'google_compute_forwarding_rule').where(
         values.load_balancing_scheme == "EXTERNAL" || values.load_balancing_scheme == "EXTERNAL_MANAGED"
       ).all(
-        values.all_ports != true
+        values.all_ports != true &&
+        values.port_range != "1-65535"
       )
   - uid: mondoo-gcp-security-cloud-sql-no-overly-permissive-authorized-networks
     title: Ensure Cloud SQL authorized networks are not overly permissive
@@ -19250,7 +19248,7 @@ queries:
       desc: |
         This check verifies that load balancer SSL policies refuse to negotiate protocol versions that standards bodies have withdrawn.
 
-        An SSL policy governs which TLS versions and cipher suites a Google Cloud load balancer will accept. On the **Network Security > SSL Policies** page, the **Minimum TLS version** field must read **TLS 1.2**; the same value appears as `TLS_1_2` in the `MIN_TLS_VERSION` column of `gcloud compute ssl-policies list`, it is the `min_tls_version` field when the policy is declared in Terraform, and `gcloud compute ssl-policies update SSL_POLICY_NAME --min-tls-version=1.2` sets it.
+        An SSL policy governs which TLS versions and cipher suites a Google Cloud load balancer will accept. On the **Network Security > SSL Policies** page, the **Minimum TLS version** field must read **TLS 1.2** or **TLS 1.3**; the same value appears as `TLS_1_2` or `TLS_1_3` in the `MIN_TLS_VERSION` column of `gcloud compute ssl-policies list`, it is the `min_tls_version` field when the policy is declared in Terraform, and `gcloud compute ssl-policies update SSL_POLICY_NAME --min-tls-version=1.2` sets it.
 
         **Why this matters**
 
@@ -19267,7 +19265,7 @@ queries:
         1. Go to the **Network Security > SSL Policies** page in the Google Cloud Console.
         2. For each SSL policy listed, select the policy and review the **Minimum TLS version** field.
 
-        A passing SSL policy shows a minimum TLS version of **TLS 1.2**. A failing SSL policy shows **TLS 1.0** or **TLS 1.1**.
+        A passing SSL policy shows a minimum TLS version of **TLS 1.2** or **TLS 1.3**. A failing SSL policy shows **TLS 1.0** or **TLS 1.1**.
 
         ### Audit via CLI
 
@@ -19277,7 +19275,7 @@ queries:
         gcloud compute ssl-policies list --format="table(name,minTlsVersion,profile)"
         ```
 
-        A passing SSL policy returns `TLS_1_2` in the `MIN_TLS_VERSION` column. A failing SSL policy returns `TLS_1_0` or `TLS_1_1`.
+        A passing SSL policy returns `TLS_1_2` or `TLS_1_3` in the `MIN_TLS_VERSION` column. A failing SSL policy returns `TLS_1_0` or `TLS_1_1`.
       remediation:
         - id: terraform
           desc: |
@@ -19316,28 +19314,28 @@ queries:
     filters: asset.platform == 'gcp-project'
     mql: |
       gcp.project.computeService.sslPolicies.all(
-        minTlsVersion == "TLS_1_2"
+        minTlsVersion == "TLS_1_2" || minTlsVersion == "TLS_1_3"
       )
   - uid: mondoo-gcp-security-ssl-policy-min-tls-1-2-terraform-hcl
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_compute_ssl_policy')
     mql: |
       terraform.resources('google_compute_ssl_policy').all(
-        arguments.min_tls_version == "TLS_1_2"
+        arguments.min_tls_version == "TLS_1_2" || arguments.min_tls_version == "TLS_1_3"
       )
   - uid: mondoo-gcp-security-ssl-policy-min-tls-1-2-terraform-plan
     filters: |
       asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_compute_ssl_policy')
     mql: |
       terraform.plan.resourceChanges.where(type == 'google_compute_ssl_policy').all(
-        change.after['min_tls_version'] == "TLS_1_2"
+        change.after['min_tls_version'] == "TLS_1_2" || change.after['min_tls_version'] == "TLS_1_3"
       )
   - uid: mondoo-gcp-security-ssl-policy-min-tls-1-2-terraform-state
     filters: |
       asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_compute_ssl_policy')
     mql: |
       terraform.state.resources.where(type == 'google_compute_ssl_policy').all(
-        values['min_tls_version'] == "TLS_1_2"
+        values['min_tls_version'] == "TLS_1_2" || values['min_tls_version'] == "TLS_1_3"
       )
   - uid: mondoo-gcp-security-server-tls-policy-disallow-plaintext
     title: Ensure Network Security server TLS policies do not allow plaintext
@@ -23203,7 +23201,7 @@ queries:
       desc: |
         This check verifies that outbound traffic to arbitrary destinations is not permitted on every protocol.
 
-        The failing shape is an egress rule whose allow entry names protocol `all` and whose destination ranges include `0.0.0.0/0` or `::/0`. Google Cloud already carries an implied allow-all egress rule, so an explicit rule of this form adds nothing operationally while maximizing the channels available after a compromise. Egress rules are reviewed under `VPC Network` then `Firewall`, or listed with `gcloud compute firewall-rules list --filter="direction=EGRESS"`.
+        The failing shape is an egress rule whose allow entry names protocol `all` and whose destination ranges include `0.0.0.0/0`, `::/0`, or another range of /7 or wider. Google Cloud already carries an implied allow-all egress rule, so an explicit rule of this form adds nothing operationally while maximizing the channels available after a compromise. Egress rules are reviewed under `VPC Network` then `Firewall`, or listed with `gcloud compute firewall-rules list --filter="direction=EGRESS"`.
 
         **Why this matters**
 
@@ -23222,7 +23220,7 @@ queries:
         3. For each rule with **Direction** set to **Egress**, check the **Destination IP ranges** column.
         4. Identify any rules where **Protocols and ports** is set to **Allow all** and **Destination IP ranges** includes `0.0.0.0/0` or `::/0`.
 
-        A passing firewall rule has egress restricted to specific destination ranges rather than `0.0.0.0/0` or `::/0` when the protocol is `all`. A failing rule allows all protocols to `0.0.0.0/0` or `::/0`.
+        A passing firewall rule has egress restricted to specific destination ranges rather than `0.0.0.0/0`, `::/0`, or another range of /7 or wider when the protocol is `all`. A failing rule allows all protocols to `0.0.0.0/0` or `::/0`.
 
         ### Audit via CLI
 
@@ -23234,7 +23232,7 @@ queries:
           --format="table(name,network,destinationRanges,allowed)"
         ```
 
-        A passing firewall rule returns destination ranges that do not include `0.0.0.0/0` or `::/0`. A failing rule returns `0.0.0.0/0` or `::/0` in the destination ranges.
+        A passing firewall rule returns destination ranges that do not include `0.0.0.0/0`, `::/0`, or another range of /7 or wider. A failing rule returns `0.0.0.0/0` or `::/0` in the destination ranges.
       remediation:
         - id: console
           desc: |
@@ -23286,9 +23284,11 @@ queries:
       asset.platform == 'gcp-compute-firewall'
       gcp.compute.firewall.direction == "EGRESS"
     mql: |
+      # A range of /7 or wider is mostly public address space: 0.0.0.0/0, ::/0, and the same space
+      # split into halves such as 0.0.0.0/1 plus 128.0.0.0/1.
       gcp.compute.firewall.disabled ||
       gcp.compute.firewall.allowedProtocols.keys.none(_ == "all") ||
-      gcp.compute.firewall.destinationRanges.none(_ == "0.0.0.0/0" || _ == "::/0")
+      gcp.compute.firewall.destinationRanges.none(_ == /^\d+\.\d+\.\d+\.\d+\/[0-7]$|^[0-9a-fA-F:]+\/[0-6]$/)
   - uid: mondoo-gcp-security-firewall-no-unrestricted-egress-terraform-hcl
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_compute_firewall')
@@ -23300,8 +23300,7 @@ queries:
         blocks.where(type == 'allow').any(arguments.protocol == "all")
       ).all(
         arguments['destination_ranges'] != empty &&
-        arguments['destination_ranges'].none(_ == "0.0.0.0/0") &&
-        arguments['destination_ranges'].none(_ == "::/0")
+        arguments['destination_ranges'].none(_ == /^\d+\.\d+\.\d+\.\d+\/[0-7]$|^[0-9a-fA-F:]+\/[0-6]$/)
       )
   - uid: mondoo-gcp-security-firewall-no-unrestricted-egress-terraform-plan
     filters: |
@@ -23313,8 +23312,7 @@ queries:
         change.after['allow'].any(_['protocol'] == "all")
       ).all(
         change.after['destination_ranges'] != empty &&
-        change.after['destination_ranges'].none(_ == "0.0.0.0/0") &&
-        change.after['destination_ranges'].none(_ == "::/0")
+        change.after['destination_ranges'].none(_ == /^\d+\.\d+\.\d+\.\d+\/[0-7]$|^[0-9a-fA-F:]+\/[0-6]$/)
       )
   - uid: mondoo-gcp-security-firewall-no-unrestricted-egress-terraform-state
     filters: |
@@ -23326,8 +23324,7 @@ queries:
         values['allow'].any(_['protocol'] == "all")
       ).all(
         values['destination_ranges'] != empty &&
-        values['destination_ranges'].none(_ == "0.0.0.0/0") &&
-        values['destination_ranges'].none(_ == "::/0")
+        values['destination_ranges'].none(_ == /^\d+\.\d+\.\d+\.\d+\/[0-7]$|^[0-9a-fA-F:]+\/[0-6]$/)
       )
   - uid: mondoo-gcp-security-firewall-no-egress-all-ports
     title: Ensure egress firewall rules do not allow all ports
@@ -23387,7 +23384,7 @@ queries:
         3. For each rule with **Direction** set to **Egress**, check the **Destination IP ranges** and **Protocols and ports** columns.
         4. Identify any egress rules where **Destination IP ranges** includes `0.0.0.0/0` or `::/0` and **Protocols and ports** allows traffic without explicit port restrictions.
 
-        A passing egress firewall rule targeting `0.0.0.0/0` specifies explicit protocols and ports, such as `tcp:443`. A failing rule allows every port of TCP, UDP, or SCTP, or uses protocol `all`, to `0.0.0.0/0` or `::/0`. An entry for a protocol that carries no ports, such as `esp`, is not assessed.
+        A passing egress firewall rule targeting `0.0.0.0/0` specifies explicit protocols and ports, such as `tcp:443`. A failing rule allows every port of TCP, UDP, or SCTP, or uses protocol `all`, to `0.0.0.0/0`, `::/0`, or another range of /7 or wider. An entry for a protocol that carries no ports, such as `esp`, is not assessed.
 
         ### Audit via CLI
 
@@ -23456,11 +23453,14 @@ queries:
     filters: |
       asset.platform == 'gcp-compute-firewall'
       gcp.compute.firewall.direction == "EGRESS"
-      gcp.compute.firewall.destinationRanges.any(_ == "0.0.0.0/0" || _ == "::/0")
+      gcp.compute.firewall.destinationRanges.any(_ == /^\d+\.\d+\.\d+\.\d+\/[0-7]$|^[0-9a-fA-F:]+\/[0-6]$/)
     mql: |
+      # A disabled rule allows nothing.
+      gcp.compute.firewall.disabled == true ||
       gcp.compute.firewall.allowedProtocols.keys.none(_ == "all")
       # Only TCP, UDP, and SCTP carry ports, so an entry for a protocol that has none, such as ICMP,
       # ESP, AH, or IPIP, has nothing to enumerate and is not assessed here.
+      gcp.compute.firewall.disabled == true ||
       gcp.compute.firewall.allowedProtocols
         .where(key == /^(tcp|udp|sctp|6|17|132)$/i).values
         .all(_.length > 0)
@@ -23473,7 +23473,7 @@ queries:
       terraform.resources('google_compute_firewall').where(
         arguments.direction == "EGRESS" && arguments['destination_ranges'] == empty ||
         arguments.direction == "EGRESS" &&
-        arguments['destination_ranges'].any(_ == "0.0.0.0/0" || _ == "::/0")
+        arguments['destination_ranges'].any(_ == /^\d+\.\d+\.\d+\.\d+\/[0-7]$|^[0-9a-fA-F:]+\/[0-6]$/)
       ).all(
         blocks.where(type == 'allow').none(arguments.protocol == "all") &&
         blocks.where(
@@ -23490,7 +23490,7 @@ queries:
         change.after['destination_ranges'] == empty ||
         type == 'google_compute_firewall' &&
         change.after['direction'] == "EGRESS" &&
-        change.after['destination_ranges'].any(_ == "0.0.0.0/0" || _ == "::/0")
+        change.after['destination_ranges'].any(_ == /^\d+\.\d+\.\d+\.\d+\/[0-7]$|^[0-9a-fA-F:]+\/[0-6]$/)
       ).all(
         change.after['allow'].none(_['protocol'] == "all") &&
         change.after['allow']
@@ -23507,7 +23507,7 @@ queries:
         values['destination_ranges'] == empty ||
         type == 'google_compute_firewall' &&
         values['direction'] == "EGRESS" &&
-        values['destination_ranges'].any(_ == "0.0.0.0/0" || _ == "::/0")
+        values['destination_ranges'].any(_ == /^\d+\.\d+\.\d+\.\d+\/[0-7]$|^[0-9a-fA-F:]+\/[0-6]$/)
       ).all(
         values['allow'].none(_['protocol'] == "all") &&
         values['allow']
@@ -25138,8 +25138,10 @@ queries:
     filters: |
       asset.platform == 'gcp-compute-firewall'
       gcp.compute.firewall.direction == "INGRESS"
-      gcp.compute.firewall.sourceRanges.any(_ == "0.0.0.0/0" || _ == "::/0")
+      gcp.compute.firewall.sourceRanges.any(_ == /^\d+\.\d+\.\d+\.\d+\/[0-7]$|^[0-9a-fA-F:]+\/[0-6]$/)
     mql: |
+      # A disabled rule allows nothing.
+      gcp.compute.firewall.disabled == true ||
       gcp.compute.firewall.allowedProtocols.values.flat.none(_ == /^\d{1,4}-6553[0-5]$/)
 
   - uid: mondoo-gcp-security-firewall-no-large-port-range-terraform-hcl
@@ -25149,7 +25151,7 @@ queries:
       terraform.resources('google_compute_firewall').where(
         arguments.direction != "EGRESS" &&
         arguments['source_ranges'] != empty &&
-        arguments['source_ranges'].any(_ == "0.0.0.0/0" || _ == "::/0")
+        arguments['source_ranges'].any(_ == /^\d+\.\d+\.\d+\.\d+\/[0-7]$|^[0-9a-fA-F:]+\/[0-6]$/)
       ).all(
         blocks.where(type == 'allow').all(
           arguments['ports'] == empty || arguments['ports'].none(_ == /^\d{1,4}-6553[0-5]$/)
@@ -25163,7 +25165,7 @@ queries:
         type == 'google_compute_firewall' &&
         change.after['direction'] != "EGRESS" &&
         change.after['source_ranges'] != empty &&
-        change.after['source_ranges'].any(_ == "0.0.0.0/0" || _ == "::/0")
+        change.after['source_ranges'].any(_ == /^\d+\.\d+\.\d+\.\d+\/[0-7]$|^[0-9a-fA-F:]+\/[0-6]$/)
       ).all(
         change.after['allow'].all(
           _['ports'] == empty || _['ports'].none(_ == /^\d{1,4}-6553[0-5]$/)
@@ -25177,7 +25179,7 @@ queries:
         type == 'google_compute_firewall' &&
         values['direction'] != "EGRESS" &&
         values['source_ranges'] != empty &&
-        values['source_ranges'].any(_ == "0.0.0.0/0" || _ == "::/0")
+        values['source_ranges'].any(_ == /^\d+\.\d+\.\d+\.\d+\/[0-7]$|^[0-9a-fA-F:]+\/[0-6]$/)
       ).all(
         values['allow'].all(
           _['ports'] == empty || _['ports'].none(_ == /^\d{1,4}-6553[0-5]$/)
@@ -25236,7 +25238,7 @@ queries:
         4. Review its rules for any rule whose action is **Allow**, direction is **Ingress**, and source IP range is `0.0.0.0/0` or `::/0`.
         5. Confirm the policy is associated with a node; an unassociated policy has no effect.
 
-        A passing configuration shows no associated hierarchical policy with an allow ingress rule open to `0.0.0.0/0` or `::/0`. A failing configuration shows one or more such rules.
+        A passing configuration shows no associated hierarchical policy with an allow ingress rule open to `0.0.0.0/0`, `::/0`, or another range of /7 or wider. A failing configuration shows one or more such rules.
 
         ### Audit via CLI
 
@@ -25254,7 +25256,7 @@ queries:
           --organization=ORGANIZATION_ID
         ```
 
-        A passing policy has no allow ingress rule with a source range of `0.0.0.0/0` or `::/0`. A failing policy has one or more.
+        A passing policy has no allow ingress rule with a source range of `0.0.0.0/0`, `::/0`, or another range of /7 or wider. A failing policy has one or more.
       remediation:
         - id: console
           desc: |
@@ -25303,9 +25305,11 @@ queries:
   - uid: mondoo-gcp-security-hierarchical-firewall-policy-no-unrestricted-ingress-gcp
     filters: asset.platform == 'gcp-org'
     mql: |
+      # A range of /7 or wider is mostly public address space: 0.0.0.0/0, ::/0, and the same space
+      # split into halves such as 0.0.0.0/1 plus 128.0.0.0/1.
       gcp.organization.firewallPolicies.where(associations != empty).all(
-        rules.where(action == "allow" && direction == "INGRESS").all(
-          srcIpRanges == empty || srcIpRanges.none(_ == "0.0.0.0/0" || _ == "::/0")
+        rules.where(action == "allow" && direction == "INGRESS" && disabled != true).all(
+          srcIpRanges == empty || srcIpRanges.none(_ == /^\d+\.\d+\.\d+\.\d+\/[0-7]$|^[0-9a-fA-F:]+\/[0-6]$/)
         )
       )
   - uid: mondoo-gcp-security-firewall-default-rules-restricted
@@ -25467,153 +25471,6 @@ queries:
         values['name'] == /^default-allow-/
       ).all(
         values['disabled'] == true
-      )
-  - uid: mondoo-gcp-security-compute-disk-csek-encryption
-    title: Ensure Compute Engine disks are encrypted with CSEK
-    impact: 30
-    tags:
-      compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
-      compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-a-2-iv-access-control-encryption-and-decryption
-      compliance/iso-27001-2022: iso-27001-2022-a-8-24
-      compliance/nis-2: nis-2-21-2-h
-      compliance/nist-csf-1: nist-csf-1-pr-ds-1
-      compliance/nist-csf-2: nist-csf-2-pr-ds-01
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-28
-      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
-      compliance/owasp-top-10-2025: owasp-top-10-2025-a04
-      compliance/pci-dss-4: pcidss-requirement-3-5-1
-      compliance/soc2-2017: soc2-control-cc6-1-10
-      compliance/vda-isa-5: vda-isa-5-5-1-1
-    variants:
-      - uid: mondoo-gcp-security-compute-disk-csek-encryption-gcp
-        tags:
-          mondoo.com/filter-title: GCP Project
-          mondoo.com/filter-icon: gcp
-      - uid: mondoo-gcp-security-compute-disk-csek-encryption-terraform-hcl
-        tags:
-          mondoo.com/filter-title: Terraform HCL
-          mondoo.com/filter-icon: terraform
-      - uid: mondoo-gcp-security-compute-disk-csek-encryption-terraform-plan
-        tags:
-          mondoo.com/filter-title: Terraform Plan
-          mondoo.com/filter-icon: terraform
-      - uid: mondoo-gcp-security-compute-disk-csek-encryption-terraform-state
-        tags:
-          mondoo.com/filter-title: Terraform State
-          mondoo.com/filter-icon: terraform
-    docs:
-      desc: |
-        This check verifies that the key material protecting a persistent disk is held entirely outside Google's infrastructure.
-
-        With a Customer-Supplied Encryption Key (CSEK), the customer provides the raw key on every disk operation and Google uses it in memory only, never retaining it at rest. This is a stronger custody model than the customer-managed keys stored in Cloud KMS. A disk's `Encryption type` field under `Compute Engine` then `Disks` reads `Customer-supplied`, and a disk is created with `gcloud compute disks create <disk-name> --csek-key-file=<key-file.json> --zone=<zone>`, where the key file holds a base64-encoded 256-bit AES key.
-
-        **Why this matters**
-
-        Because the key never resides in Google's infrastructure at rest, Google personnel have no standing access to it, and data encrypted with it is inaccessible to Google even under a lawful government request unless the key is obtained separately from the customer.
-
-        That satisfies regulatory and contractual regimes that specifically prohibit the cloud provider from storing encryption key material, which customer-managed keys held in Cloud KMS do not address.
-
-        Key destruction is absolute. Losing or destroying the CSEK immediately renders the disk data unreadable to every party including Google, and revokes the ability to decrypt existing snapshots or images derived from that disk, which is a hard data-destruction guarantee without deleting anything.
-
-        Holding the key outside Google Cloud also decouples disk contents from project compromise: an attacker who fully takes over the project still does not obtain the key material needed to read the data.
-
-        CSEK is specified at disk creation and cannot be added to an existing disk. The trade is operational: the customer bears full responsibility for key storage and availability, and a lost key means permanently lost data. A companion check in this policy covers the Cloud KMS customer-managed alternative.
-      audit: |
-        ### Audit via Console
-
-        1. Navigate to **Compute Engine** > **Disks**.
-        2. Select a disk to view its details.
-        3. In the **Encryption** section, check the **Encryption type** field.
-
-        A passing disk shows **Encryption type: Customer-supplied**. A failing disk shows **Encryption type: Google-managed** or **Customer-managed**.
-
-        ### Audit via CLI
-
-        1. Describe the disk and inspect the encryption key field:
-
-        ```bash
-        gcloud compute disks describe <disk-name> \
-          --zone=<zone> \
-          --format="value(diskEncryptionKey)"
-        ```
-
-        A passing disk returns a `diskEncryptionKey` object containing a `sha256` hash (indicating a customer-supplied key was used). A failing disk returns an empty value or a `kmsKeyName` (indicating Google-managed or CMEK encryption).
-      remediation:
-        - id: console
-          desc: |
-            To ensure Compute Engine disks are encrypted with CSEK using the Google Cloud Console, CSEK must be specified at disk creation time and cannot be added to existing disks.
-
-            1. Navigate to **Compute Engine** > **Disks** > **Create disk**.
-            2. Under **Encryption**, select **Customer-supplied key**.
-            3. Provide the 256-bit encryption key (base64-encoded).
-            4. Select **Create**.
-        - id: cli
-          desc: |
-            To ensure Compute Engine disks are encrypted with CSEK using the gcloud CLI, create a disk with a customer-supplied encryption key:
-
-            ```bash
-            gcloud compute disks create <disk-name> \
-              --csek-key-file=<key-file.json> \
-              --zone=<zone>
-            ```
-
-            The key file is a JSON file containing the base64-encoded 256-bit AES key.
-        - id: terraform
-          desc: |
-            To ensure Compute Engine disks are encrypted with CSEK in Terraform, specify a customer-supplied encryption key when creating a disk:
-
-            ```hcl
-            resource "google_compute_disk" "example" {
-              name = "example-disk"
-              type = "pd-standard"
-              zone = "us-central1-a"
-
-              disk_encryption_key {
-                raw_key = var.disk_encryption_key
-              }
-            }
-            ```
-    refs:
-      - url: https://docs.cloud.google.com/compute/docs/disks/customer-supplied-encryption
-        title: Google Cloud Documentation - Customer-supplied encryption keys
-  - uid: mondoo-gcp-security-compute-disk-csek-encryption-gcp
-    filters: asset.platform == 'gcp-project'
-    mql: |
-      gcp.project.computeService.disks.all(
-        diskEncryption != empty &&
-        diskEncryption.sha256 != empty
-      )
-  - uid: mondoo-gcp-security-compute-disk-csek-encryption-terraform-hcl
-    filters: |
-      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_compute_disk')
-    mql: |
-      terraform.resources('google_compute_disk').all(
-        blocks.where(type == 'disk_encryption_key') != empty &&
-        blocks.where(type == 'disk_encryption_key').all(
-          arguments.raw_key != empty || arguments.sha256 != empty
-        )
-      )
-  - uid: mondoo-gcp-security-compute-disk-csek-encryption-terraform-plan
-    filters: |
-      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_compute_disk')
-    mql: |
-      terraform.plan.resourceChanges.where(type == 'google_compute_disk').all(
-        change.after['disk_encryption_key'] != empty &&
-        change.after['disk_encryption_key'].any(
-          _['raw_key'] != empty || _['sha256'] != empty
-        )
-      )
-  - uid: mondoo-gcp-security-compute-disk-csek-encryption-terraform-state
-    filters: |
-      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_compute_disk')
-    mql: |
-      terraform.state.resources.where(type == 'google_compute_disk').all(
-        values['disk_encryption_key'] != empty &&
-        values['disk_encryption_key'].any(
-          _['raw_key'] != empty || _['sha256'] != empty
-        )
       )
   - uid: mondoo-gcp-security-gke-metadata-concealment-enabled
     title: Ensure GKE workload metadata concealment is enabled
@@ -26197,7 +26054,7 @@ queries:
       desc: |
         This check verifies that VPC Service Controls perimeters actively block unauthorized access rather than only observing it.
 
-        A service perimeter can run in either of two modes. When `useExplicitDryRunSpec` is enabled, the perimeter evaluates requests and writes policy violations to the audit log without denying anything. When the dry-run configuration is promoted, the same rules are enforced and violating requests are refused. In the Google Cloud console the mode is visible under **Security** > **VPC Service Controls** as an active **Dry Run Configuration** section on the perimeter, and `gcloud access-context-manager perimeters list` reports the same state in the `useExplicitDryRunSpec` field. The check requires that field to be `False` or absent.
+        A service perimeter carries two configurations. The enforced configuration, `status`, denies requests that violate it. The dry-run configuration, `spec`, only writes the violations it would cause to the audit log. A perimeter created in dry-run mode has a `spec` and no `status`, so nothing is enforced until the dry-run configuration is promoted. In the Google Cloud console the enforced configuration is under **Security** > **VPC Service Controls** on the perimeter, and `gcloud access-context-manager perimeters list` reports it as `status`. The check requires every regular perimeter to have an enforced configuration that restricts at least one service; bridge perimeters, which restrict no services themselves, are not assessed. `useExplicitDryRunSpec` is not a signal on its own: it is also true for an enforced perimeter that has pending dry-run changes.
 
         **Why this matters**
 
@@ -26215,19 +26072,19 @@ queries:
         2. Select the access policy.
         3. For each service perimeter, open it and check whether a **Dry Run Configuration** section is present and active.
 
-        A passing perimeter has no active dry-run configuration (or the dry-run configuration has been promoted to the enforced status). A failing perimeter shows a **Dry Run Configuration** section that is still active, meaning `useExplicitDryRunSpec` is enabled.
+        A passing perimeter shows an enforced configuration with at least one restricted service. A failing perimeter has only a **Dry Run Configuration**, or an enforced configuration that restricts no services.
 
         ### Audit via CLI
 
-        1. List all perimeters and inspect each for the `useExplicitDryRunSpec` field:
+        1. List all perimeters with their type and enforced restricted services:
 
         ```bash
         gcloud access-context-manager perimeters list \
           --policy=POLICY_ID \
-          --format="table(name,status.resources,useExplicitDryRunSpec)"
+          --format="table(name,perimeterType,status.restrictedServices.list())"
         ```
 
-        A passing perimeter shows `useExplicitDryRunSpec` as `False` or absent. A failing perimeter shows `useExplicitDryRunSpec` as `True`.
+        A passing regular perimeter lists at least one restricted service. A failing regular perimeter shows an empty value.
       remediation:
         - id: console
           desc: |
@@ -26278,7 +26135,16 @@ queries:
   - uid: mondoo-gcp-security-vpc-sc-perimeter-enforced-gcp
     filters: asset.platform == 'gcp-org'
     mql: |
-      gcp.organization.accessPolicies.all(servicePerimeters.all(useExplicitDryRunSpec == false))
+      # A perimeter is enforced when its status configuration restricts services. A perimeter
+      # that exists only as a dry-run spec has no status configuration. useExplicitDryRunSpec is
+      # also true for an enforced perimeter with pending dry-run changes, so it does not say
+      # whether anything is enforced.
+      gcp.organization.accessPolicies.all(
+        servicePerimeters.all(
+          perimeterType == "PERIMETER_TYPE_BRIDGE" ||
+          statusConfig.restrictedServices != empty
+        )
+      )
   - uid: mondoo-gcp-security-vpc-sc-perimeter-enforced-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "google_access_context_manager_service_perimeter")
     mql: |
@@ -26857,10 +26723,10 @@ queries:
         ```bash
         gcloud compute routes list \
           --filter="destRange=0.0.0.0/0" \
-          --format="table(name,destRange,nextHopGateway,nextHopIp)"
+          --format="table(name,destRange,nextHopGateway,description)"
         ```
 
-        A passing project returns no routes, or returns only routes where `nextHopGateway` is empty. A failing project returns one or more routes where `nextHopGateway` is set to the default internet gateway URL.
+        A passing project returns, among routes whose `nextHopGateway` is the default internet gateway, only the system-generated ones: one per network, named `default-route-` followed by 16 hexadecimal digits, with the description `Default route to the Internet.`. A failing project returns any other route whose `nextHopGateway` is set to the default internet gateway URL.
       remediation:
         - id: terraform
           desc: |
@@ -26919,8 +26785,13 @@ queries:
   - uid: mondoo-gcp-security-compute-route-no-internet-gateway-to-sensitive-subnets-gcp
     filters: asset.platform == 'gcp-project'
     mql: |
-      gcp.project.computeService.routes.where(destRange == "0.0.0.0/0").all(
-        nextHopGateway == "" || nextHopGateway == null
+      # Each VPC network is created with one system-generated default route to the internet
+      # gateway, named default-route-<16 hex digits> with this fixed description. The API has no
+      # other field that tells it apart from a route an administrator added.
+      gcp.project.computeService.routes.where(
+        destRange == "0.0.0.0/0" && nextHopGateway != empty
+      ).all(
+        name == /^default-route-[0-9a-f]{16}$/ && description == "Default route to the Internet."
       )
   - uid: mondoo-gcp-security-compute-route-no-internet-gateway-to-sensitive-subnets-terraform-hcl
     filters: |
@@ -27970,7 +27841,7 @@ queries:
   - uid: mondoo-gcp-security-iap-tunnel-dest-group-no-broad-cidr-gcp
     filters: asset.platform == 'gcp-project'
     mql: |
-      gcp.project.iapService.tunnelDestGroups.all(
+      gcp.project.iap.tunnelDestGroups.all(
         cidrs.none(_ == /\/([0-9]|1[0-5])$/)
       )
   - uid: mondoo-gcp-security-iap-tunnel-dest-group-no-broad-cidr-terraform-hcl
@@ -32862,168 +32733,6 @@ queries:
       terraform.state.resources.where(type == 'google_memcache_instance').all(
         values['memcache_version'] != "MEMCACHE_1_5"
       )
-  - uid: mondoo-gcp-security-compute-snapshot-iam-no-public-principals
-    title: Ensure Compute Engine snapshot IAM has no public principals
-    impact: 100
-    tags:
-      compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
-      compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
-      compliance/iso-27001-2022: iso-27001-2022-a-5-15
-      compliance/nis-2: nis-2-21-2-i
-      compliance/nist-csf-1: nist-csf-1-pr-ac-4
-      compliance/nist-csf-2: nist-csf-2-pr-aa-05
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
-      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
-      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
-      compliance/pci-dss-4: pcidss-requirement-7-2-1
-      compliance/soc2-2017: soc2-control-cc6-1-3
-      compliance/vda-isa-5: vda-isa-5-4-2-1
-    variants:
-      - uid: mondoo-gcp-security-compute-snapshot-iam-no-public-principals-gcp
-        tags:
-          mondoo.com/filter-title: GCP Project
-          mondoo.com/filter-icon: gcp
-      - uid: mondoo-gcp-security-compute-snapshot-iam-no-public-principals-terraform-hcl
-        tags:
-          mondoo.com/filter-title: Terraform HCL
-          mondoo.com/filter-icon: terraform
-      - uid: mondoo-gcp-security-compute-snapshot-iam-no-public-principals-terraform-plan
-        tags:
-          mondoo.com/filter-title: Terraform Plan
-          mondoo.com/filter-icon: terraform
-      - uid: mondoo-gcp-security-compute-snapshot-iam-no-public-principals-terraform-state
-        tags:
-          mondoo.com/filter-title: Terraform State
-          mondoo.com/filter-icon: terraform
-    docs:
-      desc: |
-        This check verifies that no disk snapshot has been shared with the public or with every Google account holder.
-
-        The failing condition is an IAM binding on a snapshot naming `allUsers`, which is unauthenticated public access, or `allAuthenticatedUsers`, which is any Google account holder anywhere. Snapshots start private, but resource-level IAM lets an operator grant access directly on one snapshot. Bindings are reviewed in the `Permissions` panel under `Compute Engine` then `Snapshots`, or with `gcloud compute snapshots get-iam-policy SNAPSHOT_NAME --format="json"`.
-
-        **Why this matters**
-
-        A snapshot is a point-in-time copy of an entire disk. Anyone who can create a disk from it obtains every file it holds, including SSH keys, service account credentials, application secrets, and customer data.
-
-        No intrusion is required to collect any of it. The attacker never touches a running VM: they create a disk from the snapshot inside a project they control and mount it locally, at their own pace and with no signal in the source environment.
-
-        Because the binding lives on the resource, project-level hardening does not catch it. Project deny policies and organization constraints do not automatically prevent a snapshot-specific public grant, so a project that looks locked down at the top can still be leaking a full disk image.
-
-        These grants also outlive their purpose. A snapshot shared publicly for a one-off restore and never revoked stays exposed indefinitely, which is a pattern cited repeatedly in real Google Cloud breach reports.
-
-        Bind only named users, groups, or service accounts, using the narrowest role that fits the workflow such as `roles/compute.storageAdmin`. Enumerate snapshot IAM policies on a schedule and alert on public principals. Treat any public binding as an incident: revoke it with `gcloud compute snapshots remove-iam-policy-binding`, then investigate whether the data was accessed.
-      audit: |
-        ### Audit via Console
-
-        1. Go to **Compute Engine > Snapshots** in the Google Cloud Console.
-        2. Select each snapshot.
-        3. Open the **Permissions** panel.
-        4. Review all IAM bindings and confirm that no principal listed is `allUsers` or `allAuthenticatedUsers`.
-
-        A passing snapshot shows no bindings to `allUsers` or `allAuthenticatedUsers` in its IAM policy. A failing snapshot shows at least one binding granting access to `allUsers` or `allAuthenticatedUsers`.
-
-        ### Audit via CLI
-
-        1. List all snapshots in the project, then retrieve the IAM policy for each:
-
-        ```bash
-        gcloud compute snapshots list \
-          --format="table(name,creationTimestamp,status)"
-
-        gcloud compute snapshots get-iam-policy SNAPSHOT_NAME \
-          --format="json"
-        ```
-
-        A passing snapshot returns an IAM policy with no binding whose `members` array contains `allUsers` or `allAuthenticatedUsers`. A failing snapshot returns a binding that includes `allUsers` or `allAuthenticatedUsers` in the `members` array.
-      remediation:
-        - id: terraform
-          desc: |
-            Manage snapshot IAM only via `google_compute_snapshot_iam_member` (or `_binding`) with explicit principals — never with `allUsers` or `allAuthenticatedUsers`:
-
-            ```hcl
-            resource "google_compute_snapshot_iam_member" "restorer" {
-              project = var.project_id
-              name    = google_compute_snapshot.app_disk.name
-              role    = "roles/compute.storageAdmin"
-              member  = "group:platform-restore@example.com" # never allUsers / allAuthenticatedUsers
-            }
-            ```
-
-            Audit existing bindings: import the snapshot's IAM policy with `terraform import google_compute_snapshot_iam_policy.snapshot projects/PROJECT/global/snapshots/SNAPSHOT`, then remove any public-principal members in the source HCL and re-apply.
-        - id: console
-          desc: |
-            Remove any public principal from the snapshot IAM policy:
-
-            1. Open **Compute Engine** → **Snapshots**.
-            2. Select the flagged snapshot.
-            3. Open the **Permissions** panel (or the info pane → **Permissions**).
-            4. Locate any binding whose principal is `allUsers` or `allAuthenticatedUsers` and remove it.
-            5. Add specific principals (users, groups, service accounts) that need restore access, using the narrowest appropriate role.
-            6. Save and verify the policy no longer lists the public principals.
-        - id: cli
-          desc: |
-            Remove public bindings from the snapshot:
-
-            ```bash
-            gcloud compute snapshots remove-iam-policy-binding SNAPSHOT_NAME \
-              --member=allUsers \
-              --role=ROLE_NAME
-
-            gcloud compute snapshots remove-iam-policy-binding SNAPSHOT_NAME \
-              --member=allAuthenticatedUsers \
-              --role=ROLE_NAME
-            ```
-    refs:
-      - url: https://docs.cloud.google.com/compute/docs/access/iam
-        title: Compute Engine - IAM roles and permissions
-      - url: https://docs.cloud.google.com/iam/docs/overview#principals
-        title: IAM - Public principals (allUsers, allAuthenticatedUsers)
-  - uid: mondoo-gcp-security-compute-snapshot-iam-no-public-principals-gcp
-    filters: asset.platform == 'gcp-project'
-    mql: |
-      gcp.project.computeService.snapshots.all(
-        iamPolicy.all(
-          members.none(_ == "allUsers" || _ == "allAuthenticatedUsers")
-        )
-      )
-  - uid: mondoo-gcp-security-compute-snapshot-iam-no-public-principals-terraform-hcl
-    filters: |
-      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_compute_snapshot_iam_member') ||
-      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_compute_snapshot_iam_binding')
-    mql: |
-      terraform.resources('google_compute_snapshot_iam_member').all(
-        arguments['member'] != "allUsers" &&
-        arguments['member'] != "allAuthenticatedUsers"
-      )
-      terraform.resources('google_compute_snapshot_iam_binding').all(
-        arguments['members'].none(_ == "allUsers" || _ == "allAuthenticatedUsers")
-      )
-  - uid: mondoo-gcp-security-compute-snapshot-iam-no-public-principals-terraform-plan
-    filters: |
-      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_compute_snapshot_iam_member') ||
-      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_compute_snapshot_iam_binding')
-    mql: |
-      terraform.plan.resourceChanges.where(type == 'google_compute_snapshot_iam_member').all(
-        change.after['member'] != "allUsers" &&
-        change.after['member'] != "allAuthenticatedUsers"
-      )
-      terraform.plan.resourceChanges.where(type == 'google_compute_snapshot_iam_binding').all(
-        change.after['members'].none(_ == "allUsers" || _ == "allAuthenticatedUsers")
-      )
-  - uid: mondoo-gcp-security-compute-snapshot-iam-no-public-principals-terraform-state
-    filters: |
-      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_compute_snapshot_iam_member') ||
-      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_compute_snapshot_iam_binding')
-    mql: |
-      terraform.state.resources.where(type == 'google_compute_snapshot_iam_member').all(
-        values['member'] != "allUsers" &&
-        values['member'] != "allAuthenticatedUsers"
-      )
-      terraform.state.resources.where(type == 'google_compute_snapshot_iam_binding').all(
-        values['members'].none(_ == "allUsers" || _ == "allAuthenticatedUsers")
-      )
   - uid: mondoo-gcp-security-compute-snapshot-iam-no-primitive-roles
     title: Ensure Compute Engine snapshot IAM grants no primitive roles
     impact: 80
@@ -35703,7 +35412,7 @@ queries:
       desc: |
         This check verifies that content served from Cloud CDN edge caches is bound to a short-lived access token rather than reachable by URL alone.
 
-        Enabling Cloud CDN on a backend service adds caching, not authentication. Under **Network services > Cloud CDN**, a CDN-enabled backend should carry at least one signing key and a non-zero **Signed URL cache max age**; this check requires the `cdn_policy.signed_url_cache_max_age_sec` value on each CDN-enabled backend service to be greater than zero, and it examines only backends that actually have CDN turned on.
+        Enabling Cloud CDN on a backend service adds caching, not authentication. Under **Network services > Cloud CDN**, a CDN-enabled backend should carry at least one signing key. This check requires every CDN-enabled backend service to list at least one key in `cdnPolicy.signedUrlKeyNames`, and it examines only backends that actually have CDN turned on. The **Signed URL cache max age** does not count on its own: it can be set on a backend that has no key, and then nothing is signed.
 
         **Why this matters**
 
@@ -35713,15 +35422,15 @@ queries:
 
         Signed URLs and signed cookies close this by binding each response to a cryptographically verifiable token with a short lifetime, so possession of the URL is no longer sufficient to fetch the content.
 
-        Set `cdn_policy.signed_url_cache_max_age_sec` to a value matched to the content's sensitivity and access pattern on every CDN-enabled backend that fronts private content, and provision signing keys with the `google_compute_backend_service_signed_url_key` resource or `gcloud compute backend-services add-signed-url-key`, rotating them on a schedule to bound the exposure of a leaked key. Note that the max-age value alone does not prove a signing key exists. Where a backend genuinely serves public content, confirm the cache holds nothing sensitive and record the exception in the environment's security documentation.
+        Set `cdn_policy.signed_url_cache_max_age_sec` to a value matched to the content's sensitivity and access pattern on every CDN-enabled backend that fronts private content, and provision signing keys with the `google_compute_backend_service_signed_url_key` resource or `gcloud compute backend-services add-signed-url-key`, rotating them on a schedule to bound the exposure of a leaked key. Cloud CDN does not reject an unsigned request by itself: on a cache miss it forwards the request to the origin, so the origin must also refuse requests that carry no valid signature. Where a backend genuinely serves public content, confirm the cache holds nothing sensitive and record the exception in the environment's security documentation.
       audit: |
         ### Audit via Console
 
         1. In the Google Cloud Console, go to **Network services > Cloud CDN**.
         2. For each backend service with CDN enabled, select the backend and open the **CDN configuration** details.
-        3. Under **Signed URLs**, verify that at least one signing key is configured and that a non-zero **Signed URL cache max age** is set.
+        3. Under **Signed URLs**, verify that at least one signing key is configured.
 
-        A passing CDN-enabled backend service shows at least one signing key and a signed URL cache max age greater than zero. A failing backend service shows no signing keys or a signed URL cache max age of zero.
+        A passing CDN-enabled backend service shows at least one signing key. A failing backend service shows no signing keys.
 
         ### Audit via CLI
 
@@ -35738,10 +35447,10 @@ queries:
         ```bash
         gcloud compute backend-services describe BACKEND_SERVICE_NAME \
           --global \
-          --format='value(cdnPolicy.signedUrlCacheMaxAgeSec,cdnPolicy.signedUrlKeyNames)'
+          --format='value(cdnPolicy.signedUrlKeyNames)'
         ```
 
-        A passing backend service returns a `signedUrlCacheMaxAgeSec` value greater than zero and at least one entry in `signedUrlKeyNames`. A failing backend service returns a `signedUrlCacheMaxAgeSec` of zero or null, or an empty `signedUrlKeyNames` list.
+        A passing backend service returns at least one entry in `signedUrlKeyNames`. A failing backend service returns an empty value.
       remediation:
         - id: terraform
           desc: |
@@ -35796,47 +35505,51 @@ queries:
   - uid: mondoo-gcp-security-cloud-cdn-backend-signed-urls-required-gcp
     filters: asset.platform == 'gcp-project'
     mql: |
+      # Signed requests are possible only once a signing key exists. The cache max age is set
+      # independently of any key, so a non-zero value alone signs nothing.
       gcp.project.computeService.backendServices.where(enableCDN == true).all(
-        cdnPolicy.signedUrlCacheMaxAgeSec > 0
+        cdnPolicy.signedUrlKeyNames != empty
       )
   - uid: mondoo-gcp-security-cloud-cdn-backend-signed-urls-required-terraform-hcl
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_compute_backend_service')
     mql: |
+      # Signing keys are separate google_compute_backend_service_signed_url_key resources that
+      # reference the backend, and signed requests are possible only once one exists. The cache
+      # max age is set independently of any key.
+      signedUrlKeyRefs = terraform.resources('google_compute_backend_service_signed_url_key').map(arguments.backend_service).join(" ")
       terraform.resources('google_compute_backend_service').where(
         arguments.enable_cdn == true
       ).all(
-        blocks.where(type == 'cdn_policy') != empty &&
-        blocks.where(type == 'cdn_policy').all(
-          arguments.signed_url_cache_max_age_sec != null &&
-          arguments.signed_url_cache_max_age_sec != 0
-        )
+        signedUrlKeyRefs.contains("google_compute_backend_service." + labels[1] + ".")
       )
   - uid: mondoo-gcp-security-cloud-cdn-backend-signed-urls-required-terraform-plan
     filters: |
       asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_compute_backend_service')
     mql: |
+      # Signing keys are separate google_compute_backend_service_signed_url_key resources that
+      # name the backend, and signed requests are possible only once one exists. MQL cannot
+      # concatenate a variable, so a backend whose name is part of a signed backend's name
+      # also matches.
+      signedUrlKeyBackends = terraform.plan.resourceChanges.where(type == 'google_compute_backend_service_signed_url_key').map(change.after['backend_service']).join(",")
       terraform.plan.resourceChanges.where(type == 'google_compute_backend_service').where(
         change.after['enable_cdn'] == true
       ).all(
-        change.after['cdn_policy'] != empty &&
-        change.after['cdn_policy'].all(
-          _['signed_url_cache_max_age_sec'] != null &&
-          _['signed_url_cache_max_age_sec'] != 0
-        )
+        signedUrlKeyBackends.contains(change.after['name'])
       )
   - uid: mondoo-gcp-security-cloud-cdn-backend-signed-urls-required-terraform-state
     filters: |
       asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_compute_backend_service')
     mql: |
+      # Signing keys are separate google_compute_backend_service_signed_url_key resources that
+      # name the backend, and signed requests are possible only once one exists. MQL cannot
+      # concatenate a variable, so a backend whose name is part of a signed backend's name
+      # also matches.
+      signedUrlKeyBackends = terraform.state.resources.where(type == 'google_compute_backend_service_signed_url_key').map(values['backend_service']).join(",")
       terraform.state.resources.where(type == 'google_compute_backend_service').where(
         values['enable_cdn'] == true
       ).all(
-        values['cdn_policy'] != empty &&
-        values['cdn_policy'].all(
-          _['signed_url_cache_max_age_sec'] != null &&
-          _['signed_url_cache_max_age_sec'] != 0
-        )
+        signedUrlKeyBackends.contains(values['name'])
       )
   # No runtime variant: the cnquery gcp provider does not expose Cloud Workstations resources.
   - uid: mondoo-gcp-security-workstations-cluster-private-cluster
