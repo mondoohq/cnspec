@@ -531,6 +531,10 @@ def validate_aws() -> tuple[int, int]:
                 {} if from_prose else required_db,
             )
             key = f"{service} {subcommand}"
+            # boolean_db holds every botocore operation, and those take no
+            # positional arguments, so a bare word after a boolean flag can only
+            # be a stray value. CLI customizations such as `aws s3 cp` are not in
+            # it and do take positionals, so they are left out on purpose.
             if key in boolean_db:
                 bool_errors = boolean_flag_value_errors(
                     cmd, set(boolean_db[key]) | AWS_GLOBAL_BOOLEAN_FLAGS
