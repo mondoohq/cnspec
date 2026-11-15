@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-proxmox-security
     name: Mondoo Proxmox VE Security
-    version: 1.1.7
+    version: 1.1.8
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -635,11 +635,17 @@ queries:
       sshd.config.params["PermitRootLogin"].in(
         ["prohibit-password", "without-password", "forced-commands-only"]
       )
+      sshd.config.blocks.all(
+        params["PermitRootLogin"] == empty ||
+        params["PermitRootLogin"].in(["no", "prohibit-password", "without-password", "forced-commands-only"])
+      )
     docs:
       desc: |
         This check verifies that root can log in over SSH with a key but never with a password.
 
         Proxmox VE uses root SSH between nodes for cluster operations and live migration, so the Linux baseline value of `PermitRootLogin no` would break the cluster. The Proxmox-adapted requirement is `PermitRootLogin prohibit-password` in `/etc/ssh/sshd_config`, and the check also accepts the older synonym `without-password` and the stricter `forced-commands-only`. Set the value, validate with `sshd -t`, and reload the service; confirm a working root key first or you will lock yourself out.
+
+        Every `Match` block that sets `PermitRootLogin` must also use one of these values or `no`. A `Match` block that sets `no` is stricter than the global requirement, for example to refuse root from addresses outside the cluster network, and passes. A `Match` block overrides the global value for the connections it matches, so `Match Address 10.0.0.0/8` followed by `PermitRootLogin yes` allows root password logins from that range whatever the global setting is.
 
         **Why this matters**
 
@@ -651,13 +657,17 @@ queries:
       audit: |
         ### Audit via CLI
 
-        Run the command on a cluster node:
+        1. Run the command on a cluster node to print every `Match` and `PermitRootLogin` line of `/etc/ssh/sshd_config` and its drop-in files:
 
-        ```bash
-        sshd -T | grep -i permitrootlogin
-        ```
+           ```bash
+           grep -rniE '^[[:space:]]*(Match|PermitRootLogin)[[:space:]]' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/
+           ```
 
-        A passing result shows permitrootlogin set to prohibit-password, without-password, or forced-commands-only; a failing result shows yes, which allows password-based root login.
+        2. A `PermitRootLogin` line that follows a `Match` line in the same file belongs to that `Match` block. It counts too, and `PermitRootLogin yes` there allows root password logins for the connections the block matches.
+
+        A passing node shows `prohibit-password`, `without-password`, or `forced-commands-only` on every `PermitRootLogin` line above the first `Match` line of each file, with at least one such line present. Inside a `Match` block those values pass, and so does `no`. A failing node shows `yes` on any line, `no` on a line outside a `Match` block, or no `PermitRootLogin` line outside a `Match` block.
+
+        Do not audit this with `sshd -T`. It prints the OpenSSH built-in default `prohibit-password` when the directive is absent from the files, and the check requires the directive to be written.
       remediation:
         - id: cli
           desc: |
@@ -667,21 +677,27 @@ queries:
 
             **Confirm a working SSH key for root before reloading.** Once the reload applies, root can no longer log in with a password, and a node without an authorized key for root is reachable only from its console.
 
-            sshd uses the first value it reads for a directive, and the `Include /etc/ssh/sshd_config.d/*.conf` line at the top of the Debian `sshd_config` is read before the rest of the file. A drop-in file there that sets `PermitRootLogin` overrides the main file, so the commands change the directive in both places:
+            sshd uses the first value it reads for a directive, and the `Include /etc/ssh/sshd_config.d/*.conf` line at the top of the Debian `sshd_config` is read before the rest of the file. A drop-in file there that sets `PermitRootLogin` overrides the main file, so change the directive in both places:
 
-            ```bash
-            grep -riE '^[[:space:]]*PermitRootLogin' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/
-            find /etc/ssh/sshd_config.d -name '*.conf' -exec sed -i -E 's|^[[:space:]]*PermitRootLogin[[:space:]].*|PermitRootLogin prohibit-password|' {} +
-            sed -i -E 's|^[#[:space:]]*PermitRootLogin[[:space:]].*|PermitRootLogin prohibit-password|' /etc/ssh/sshd_config
-            grep -q '^PermitRootLogin' /etc/ssh/sshd_config || echo 'PermitRootLogin prohibit-password' >> /etc/ssh/sshd_config
-            sshd -t
-            systemctl reload ssh
-            ```
+            1. List every `Match` and `PermitRootLogin` line with its file and line number:
+
+               ```bash
+               grep -rniE '^[[:space:]]*(Match|PermitRootLogin)[[:space:]]' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/
+               ```
+
+            2. In each file under `/etc/ssh/sshd_config.d/`, change every `PermitRootLogin` line above the first `Match` line whose value is `yes` or `no` to `PermitRootLogin prohibit-password`.
+            3. In `/etc/ssh/sshd_config`, set `PermitRootLogin prohibit-password` above the first `Match` line. Every line after a `Match` line belongs to that `Match` block.
+            4. A `Match` block overrides the global value for the connections it matches. In every file, change each `PermitRootLogin yes` that comes after a `Match` line to `PermitRootLogin prohibit-password`. Leave `PermitRootLogin no` inside a `Match` block as it is, because it refuses root for those connections.
+            5. Validate the configuration and reload sshd:
+
+               ```bash
+               sshd -t && systemctl reload ssh
+               ```
         - id: bash
           desc: |
             **Using a Bash Script**
 
-            Enforce `PermitRootLogin prohibit-password` in `sshd_config` and in any drop-in under `/etc/ssh/sshd_config.d/` that sets it, since sshd uses the first value it reads and the drop-ins are included first. The script validates the result before reloading sshd.
+            Enforce `PermitRootLogin prohibit-password` in `sshd_config` and in any drop-in under `/etc/ssh/sshd_config.d/` that sets it, since sshd uses the first value it reads and the drop-ins are included first. The script also changes every `Match` block that permits root password logins, and validates the result before reloading sshd.
 
             **Confirm a working SSH key for root before running it.** After the reload, root can no longer log in with a password.
 
@@ -689,16 +705,49 @@ queries:
             #!/bin/bash
             set -e
 
-            config=/etc/ssh/sshd_config
-            if [ -d /etc/ssh/sshd_config.d ]; then
-              find /etc/ssh/sshd_config.d -name '*.conf' -exec sed -i -E 's|^[[:space:]]*PermitRootLogin[[:space:]].*|PermitRootLogin prohibit-password|' {} +
-            fi
+            # fix_root_login FILE MAIN
+            # Lines after a Match line belong to that Match block. Above the first Match line,
+            # any PermitRootLogin that allows password logins, or that is "no" and would break
+            # cluster operations, becomes "prohibit-password". Inside a Match block only values
+            # that allow password logins change, and "no" stays. In the main file (MAIN=1) the
+            # function writes the global value in place of the first line above the first Match
+            # line, drops later global duplicates, and adds the line above the first Match line
+            # when it is missing.
+            fix_root_login() {
+              tmp=$(mktemp)
+              awk -v main="$2" '
+                {
+                  split($0, w, /[ \t=]+/)
+                  i = (w[1] == "") ? 2 : 1
+                  key = tolower(w[i])
+                }
+                main && key == "match" && !done { print "PermitRootLogin prohibit-password"; done = 1 }
+                key == "match" { in_match = 1 }
+                main && !in_match && key == "permitrootlogin" {
+                  if (!done) { print "PermitRootLogin prohibit-password"; done = 1 }
+                  next
+                }
+                !in_match && key == "permitrootlogin" && w[i + 1] !~ /^(prohibit-password|without-password|forced-commands-only)$/ {
+                  sub(/[^ \t].*/, "PermitRootLogin prohibit-password")
+                }
+                in_match && key == "permitrootlogin" && w[i + 1] !~ /^(no|prohibit-password|without-password|forced-commands-only)$/ {
+                  sub(/[^ \t].*/, "PermitRootLogin prohibit-password")
+                }
+                { print }
+                END { if (main && !done) print "PermitRootLogin prohibit-password" }
+              ' "$1" > "$tmp"
+              if ! cmp -s "$tmp" "$1"; then
+                cat "$tmp" > "$1"
+              fi
+              rm -f "$tmp"
+            }
 
-            if grep -qE '^[#[:space:]]*PermitRootLogin' "$config"; then
-              sed -i -E 's|^[#[:space:]]*PermitRootLogin[[:space:]].*|PermitRootLogin prohibit-password|' "$config"
-            else
-              echo 'PermitRootLogin prohibit-password' >> "$config"
-            fi
+            for f in /etc/ssh/sshd_config.d/*.conf; do
+              if [ -f "$f" ]; then
+                fix_root_login "$f" 0
+              fi
+            done
+            fix_root_login /etc/ssh/sshd_config 1
 
             sshd -t
             systemctl reload ssh
@@ -707,7 +756,7 @@ queries:
           desc: |
             **Using Ansible**
 
-            Use this Ansible playbook to set `PermitRootLogin prohibit-password` in `sshd_config` and in any drop-in under `/etc/ssh/sshd_config.d/` that sets it, then reload sshd. The drop-ins are included before the rest of `sshd_config`, and sshd uses the first value it reads.
+            Use this Ansible playbook to set `PermitRootLogin prohibit-password` in `sshd_config`, in any drop-in under `/etc/ssh/sshd_config.d/` that sets it, and in every `Match` block that permits root password logins, then reload sshd. The drop-ins are included before the rest of `sshd_config`, and sshd uses the first value it reads.
 
             **Confirm a working SSH key for root before running it.** After the reload, root can no longer log in with a password.
 
@@ -722,23 +771,60 @@ queries:
                   ansible.builtin.find:
                     paths: /etc/ssh/sshd_config.d
                     patterns: "*.conf"
-                    contains: '^\s*PermitRootLogin\s'
+                    contains: '(?i)^\s*PermitRootLogin[\s=]'
                   register: sshd_dropins
 
-                - name: Set PermitRootLogin to prohibit-password in drop-in files
+                # The first global line of a drop-in that is not prohibit-password,
+                # without-password, or forced-commands-only. Lines inside Match blocks are
+                # handled further down, where "no" is kept.
+                - name: Set the global PermitRootLogin to prohibit-password in drop-in files
                   ansible.builtin.replace:
                     path: "{{ item.path }}"
-                    regexp: '^\s*PermitRootLogin\s+.*$'
-                    replace: 'PermitRootLogin prohibit-password'
+                    regexp: '\A((?:(?![ \t]*(?i:Match)[ \t]).*\n)*?[ \t]*)(?i:PermitRootLogin)[ \t=]+(?!(?:(?:prohibit|without)-password|forced-commands-only)[ \t]*$).*$'
+                    replace: '\g<1>PermitRootLogin prohibit-password'
+                    validate: '/usr/sbin/sshd -t -f %s'
                   loop: "{{ sshd_dropins.files }}"
+                  loop_control:
+                    label: "{{ item.path }}"
+                  notify: Reload sshd
+
+                # A line after a Match line belongs to that Match block, so the global
+                # directive has to sit above the first Match line. This adds it at the top
+                # of the file when no PermitRootLogin line comes before the first Match line.
+                - name: Add a global PermitRootLogin when none exists
+                  ansible.builtin.replace:
+                    path: /etc/ssh/sshd_config
+                    regexp: '(?i)\A(?!(?:(?![ \t]*Match[ \t]).*\n)*[ \t]*PermitRootLogin[ \t=])'
+                    replace: 'PermitRootLogin prohibit-password\n'
+                    validate: '/usr/sbin/sshd -t -f %s'
                   notify: Reload sshd
 
                 - name: Set PermitRootLogin to prohibit-password
                   ansible.builtin.lineinfile:
                     path: /etc/ssh/sshd_config
-                    regexp: '^[#\s]*PermitRootLogin\s+'
+                    regexp: '(?i)^[ \t]*PermitRootLogin[ \t=]'
                     line: 'PermitRootLogin prohibit-password'
+                    firstmatch: true
                     validate: '/usr/sbin/sshd -t -f %s'
+                  notify: Reload sshd
+
+                - name: Find the drop-in configuration files
+                  ansible.builtin.find:
+                    paths: /etc/ssh/sshd_config.d
+                    patterns: "*.conf"
+                  register: sshd_dropin_files
+
+                # A Match block overrides the global value for the connections it matches.
+                # Values that allow password logins become prohibit-password. "no" refuses
+                # root for the matched connections and is kept.
+                - name: Set PermitRootLogin to prohibit-password inside Match blocks
+                  ansible.builtin.replace:
+                    path: "{{ item }}"
+                    after: '(?im)^[ \t]*Match[ \t]'
+                    regexp: '^([ \t]*)(?i:PermitRootLogin)[ \t=]+(?!(?:no|prohibit-password|without-password|forced-commands-only)[ \t]*$).*$'
+                    replace: '\g<1>PermitRootLogin prohibit-password'
+                    validate: '/usr/sbin/sshd -t -f %s'
+                  loop: "{{ ['/etc/ssh/sshd_config'] + (sshd_dropin_files.files | map(attribute='path') | list) }}"
                   notify: Reload sshd
 
               handlers:

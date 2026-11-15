@@ -3,7 +3,7 @@
 policies:
   - uid: phoenix-plcnext
     name: Phoenix PLCnext Security Policy
-    version: 1.2.3
+    version: 1.2.4
     license: BUSL-1.1
     tags:
       benchmark: Mondoo Phoenix PLCnext
@@ -904,11 +904,17 @@ queries:
     mql: |
       sshd.config.params["PermitRootLogin"] == "no" ||
       sshd.config.params["PermitRootLogin"] == "prohibit-password"
+      sshd.config.blocks.all(
+        params["PermitRootLogin"] == empty ||
+        params["PermitRootLogin"].in(["no", "prohibit-password"])
+      )
     docs:
       desc: |
         This check verifies that the controller does not allow the root account to log in over SSH with a password.
 
         The check reads `PermitRootLogin` in the SSH configuration, which must be `no` or `prohibit-password`. The directive must be present; an absent `PermitRootLogin` fails even though `prohibit-password` is the OpenSSH default on current versions.
+
+        Every `Match` block that sets `PermitRootLogin` must also use `no` or `prohibit-password`. A `Match` block overrides the global value for the connections it matches, so `Match Address 10.0.0.0/8` followed by `PermitRootLogin yes` allows root password logins from that range whatever the global setting is.
 
         **Why this matters**
 
@@ -920,9 +926,11 @@ queries:
 
         Before applying `no`, confirm a named administrative account exists on the controller, can reach it, and can escalate. Losing administrative access to a PLC in a running plant is not a recoverable mistake during production.
       audit: |
-        Run `grep -riE '^\s*PermitRootLogin' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/ 2>/dev/null`.
+        Run `grep -rniE '^\s*(PermitRootLogin|Match)\b' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/ 2>/dev/null`.
 
-        A passing controller sets `PermitRootLogin` to `no` or to `prohibit-password`, so root cannot log in with a password. A failing controller sets `yes` or `forced-commands-only`, or leaves the directive unset. The check reads the configured value rather than the effective one, so a directive that is absent from the configuration fails even though `sshd -T` reports the secure default.
+        A passing controller sets every `PermitRootLogin` line to `no` or to `prohibit-password`, so root cannot log in with a password. A failing controller sets `yes` or `forced-commands-only` on any line, or leaves the global directive unset.
+
+        A `PermitRootLogin` line that follows a `Match` line in the same file belongs to that `Match` block, and it counts too. `PermitRootLogin yes` inside a `Match` block fails the check even when the global value passes. The check reads the configured value rather than the effective one, so a directive that is absent from the configuration fails even though `sshd -T` reports the secure default.
       remediation: |-
         Disabling direct root SSH login forces administrators to log in as a named user and then elevate, which both adds a barrier for attackers and creates an audit trail of who did what. Setting `prohibit-password` is a middle ground that still allows root login by SSH key while blocking password-based root login.
 
@@ -941,7 +949,15 @@ queries:
            PermitRootLogin prohibit-password
            ```
 
-        3. Validate the configuration with `sshd -t`, then restart the SSH service to apply the change. Restarting SSH ends active shell sessions but does not affect the running PLC program.
+           Put the line above the first `Match` line, because every line after a `Match` line belongs to that `Match` block.
+
+        3. Find every `PermitRootLogin` line inside a `Match` block in `/etc/ssh/sshd_config` and in the files under `/etc/ssh/sshd_config.d/`. A `Match` block overrides the global value for the connections it matches, so change each `PermitRootLogin yes` or `PermitRootLogin forced-commands-only` that comes after a `Match` line to `PermitRootLogin no`, or delete it:
+
+           ```bash
+           grep -rniE '^\s*(Match|PermitRootLogin)\b' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/
+           ```
+
+        4. Validate the configuration with `sshd -t`, then restart the SSH service to apply the change. Restarting SSH ends active shell sessions but does not affect the running PLC program.
 
         > **Warning:** Keep your current session open until you confirm that the non-root administrative account can log in and elevate. Closing your only working session before verifying the replacement login can leave you locked out of the controller.
     refs:

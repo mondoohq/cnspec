@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-freebsd-security
     name: Mondoo FreeBSD Security
-    version: 1.2.6
+    version: 1.2.7
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -3724,6 +3724,10 @@ queries:
       compliance/vda-isa-5: vda-isa-5-4-1-3
     mql: |
       sshd.config.params["PermitRootLogin"].in(["no", "prohibit-password", "without-password"])
+      sshd.config.blocks.all(
+        params["PermitRootLogin"] == empty ||
+        params["PermitRootLogin"].in(["no", "prohibit-password", "without-password"])
+      )
     docs:
       refs:
         - url: https://man.openbsd.org/sshd_config
@@ -3732,6 +3736,8 @@ queries:
         This check verifies that the SSH server does not allow the root account to log in with a password.
 
         The check reads `PermitRootLogin` in `/etc/ssh/sshd_config`, which must be `no`, `prohibit-password`, or the older synonym `without-password`.
+
+        Every `Match` block that sets `PermitRootLogin` must also use one of these values. A `Match` block overrides the global value for the connections it matches, so `Match Address 10.0.0.0/8` followed by `PermitRootLogin yes` allows root password logins from that range whatever the global setting is.
 
         **Why this matters**
 
@@ -3746,10 +3752,12 @@ queries:
         To verify the SSH root login setting, inspect the SSH server configuration file:
 
         ```bash
-        grep -i '^[[:space:]]*PermitRootLogin' /etc/ssh/sshd_config
+        grep -n -i -E '^[[:space:]]*(PermitRootLogin|Match)[[:space:]]' /etc/ssh/sshd_config
         ```
 
-        If the value is `no`, `prohibit-password`, or `without-password`, the check passes. If the value is `yes`, or no line is returned, the check fails.
+        If every `PermitRootLogin` line is `no`, `prohibit-password`, or `without-password`, the check passes. If any line is `yes` or `forced-commands-only`, or no `PermitRootLogin` line comes before the first `Match` line, the check fails.
+
+        A `PermitRootLogin` line after a `Match` line belongs to that `Match` block, and it counts too. `PermitRootLogin yes` inside a `Match` block fails the check even when the global value passes.
 
         Do not audit this with `sshd -T`. The check reads the configuration file, so a missing `PermitRootLogin` line fails even though `sshd -T` prints the secure built-in default.
       remediation:
@@ -3766,6 +3774,12 @@ queries:
             ```
 
             `no` blocks every root login over SSH. `prohibit-password` also satisfies the check and keeps key-based root login for automation that needs it, while refusing passwords. The older synonym `without-password` is accepted too. The check reads the configuration file, so write the line even though OpenSSH applies a default when it is absent.
+
+            Put the line above the first `Match` line, because every line after a `Match` line belongs to that `Match` block. A `Match` block overrides the global value for the connections it matches, so also change every `PermitRootLogin yes` or `PermitRootLogin forced-commands-only` that comes after a `Match` line to `PermitRootLogin no`, or delete it. List both kinds of line with their line numbers:
+
+            ```bash
+            grep -n -i -E '^[[:space:]]*(PermitRootLogin|Match)[[:space:]]' /etc/ssh/sshd_config
+            ```
 
             Validate the configuration before restarting. A malformed directive can stop `sshd` from starting and lock out future logins, so test it first:
 
@@ -3786,15 +3800,37 @@ queries:
 
             SSHD_CONFIG="/etc/ssh/sshd_config"
 
+            # Lines after the first Match line belong to Match blocks, which override the
+            # global value for the connections they match. The script writes the global
+            # "PermitRootLogin no" in place of the first global line, drops later global
+            # duplicates, adds the line above the first Match line when it is missing, and
+            # sets every PermitRootLogin inside a Match block that permits passwords to "no".
+            TMP=$(mktemp)
+            trap 'rm -f "$TMP"' EXIT
+
             echo "Disabling SSH root login..."
             cp -p "$SSHD_CONFIG" "${SSHD_CONFIG}.bak"
-            if grep -q '^PermitRootLogin' "$SSHD_CONFIG" 2>/dev/null; then
-              sed -i '' 's/^PermitRootLogin.*/PermitRootLogin no/' "$SSHD_CONFIG"
-            elif grep -q '^#PermitRootLogin' "$SSHD_CONFIG" 2>/dev/null; then
-              sed -i '' 's/^#PermitRootLogin.*/PermitRootLogin no/' "$SSHD_CONFIG"
-            else
-              echo 'PermitRootLogin no' >> "$SSHD_CONFIG"
-            fi
+            awk '
+              {
+                split($0, w, /[ \t=]+/)
+                i = (w[1] == "") ? 2 : 1
+                key = tolower(w[i])
+              }
+              key == "match" && !in_match {
+                in_match = 1
+                if (!done) { print "PermitRootLogin no"; done = 1 }
+              }
+              !in_match && key == "permitrootlogin" {
+                if (!done) { print "PermitRootLogin no"; done = 1 }
+                next
+              }
+              in_match && key == "permitrootlogin" && w[i + 1] !~ /^(no|prohibit-password|without-password)$/ {
+                sub(/[^ \t].*/, "PermitRootLogin no")
+              }
+              { print }
+              END { if (!done) print "PermitRootLogin no" }
+            ' "$SSHD_CONFIG" > "$TMP"
+            cat "$TMP" > "$SSHD_CONFIG"
 
             # Validate the edited file before restarting. If sshd rejects it,
             # put the original back so a later restart or reboot still starts
@@ -3825,11 +3861,33 @@ queries:
               become: true
 
               tasks:
+                # A line after a Match line belongs to that Match block, so the global
+                # directive has to sit above the first Match line. This adds it at the top
+                # of the file when no PermitRootLogin line comes before the first Match line.
+                - name: Add a global PermitRootLogin when none exists
+                  ansible.builtin.replace:
+                    path: /etc/ssh/sshd_config
+                    regexp: '(?i)\A(?!(?:(?![ \t]*Match[ \t]).*\n)*[ \t]*PermitRootLogin[ \t=])'
+                    replace: 'PermitRootLogin no\n'
+                    validate: /usr/sbin/sshd -t -f %s
+                  notify: Restart sshd
+
                 - name: Disable SSH root login
                   ansible.builtin.lineinfile:
                     path: /etc/ssh/sshd_config
-                    regexp: '^#?PermitRootLogin'
+                    regexp: '(?i)^[ \t]*PermitRootLogin[ \t=]'
                     line: 'PermitRootLogin no'
+                    firstmatch: true
+                    validate: /usr/sbin/sshd -t -f %s
+                  notify: Restart sshd
+
+                # A Match block overrides the global value for the connections it matches.
+                - name: Set PermitRootLogin to no inside Match blocks
+                  ansible.builtin.replace:
+                    path: /etc/ssh/sshd_config
+                    after: '(?im)^[ \t]*Match[ \t]'
+                    regexp: '^([ \t]*)(?i:PermitRootLogin)[ \t=]+(?!(?:no|prohibit-password|without-password)[ \t]*$).*$'
+                    replace: '\g<1>PermitRootLogin no'
                     validate: /usr/sbin/sshd -t -f %s
                   notify: Restart sshd
 
@@ -3857,22 +3915,28 @@ queries:
               only_if '/usr/sbin/sshd -t'
             end
 
-            { 'PermitRootLogin' => 'no' }.each do |keyword, value|
-              file "set #{keyword} in sshd_config" do
-                path sshd_config
-                content(lazy do
-                  body = ::File.read(sshd_config)
-                  directive = "#{keyword} #{value}"
-                  if body.match?(/^\s*#?\s*#{keyword}\b/i)
-                    body.gsub(/^\s*#?\s*#{keyword}\b.*$/i, directive)
-                  else
-                    "#{body.chomp}\n#{directive}\n"
-                  end
-                end)
-                verify '/usr/sbin/sshd -t -f %{path}'
-                not_if { ::File.read(sshd_config).match?(/^#{keyword}\s+#{Regexp.escape(value)}\s*$/i) }
-                notifies :restart, 'service[sshd]', :delayed
-              end
+            # Lines after the first Match line belong to Match blocks, which override the global
+            # value for the connections they match, so the global value has to sit above the
+            # first Match line and any PermitRootLogin inside a Match block that permits
+            # password logins becomes "no".
+            file 'set PermitRootLogin in sshd_config' do
+              path sshd_config
+              content(lazy do
+                head, match, tail = ::File.read(sshd_config).partition(/^[ \t]*Match[ \t]/i)
+                if head.match?(/^[ \t]*#?[ \t]*PermitRootLogin\b/i)
+                  head = head.gsub(/^[ \t]*#?[ \t]*PermitRootLogin\b.*$/i, 'PermitRootLogin no')
+                else
+                  head += "\n" unless head.empty? || head.end_with?("\n")
+                  head += "PermitRootLogin no\n"
+                end
+                tail = tail.gsub(
+                  /^([ \t]*)(?i:PermitRootLogin)[ \t=]+(?!(?:no|prohibit-password|without-password)[ \t]*$).*$/,
+                  '\\1PermitRootLogin no'
+                )
+                "#{head}#{match}#{tail}"
+              end)
+              verify '/usr/sbin/sshd -t -f %{path}'
+              notifies :restart, 'service[sshd]', :delayed
             end
             ```
   - uid: mondoo-freebsd-security-ssh-permitemptypasswords-is-disabled

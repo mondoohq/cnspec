@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-solaris-security
     name: Mondoo Oracle Solaris Security
-    version: 1.0.0
+    version: 1.0.1
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -3465,6 +3465,10 @@ queries:
       compliance/vda-isa-5: vda-isa-5-4-1-3
     mql: |
       sshd.config.params["PermitRootLogin"] == "no"
+      sshd.config.blocks.all(
+        params["PermitRootLogin"] == empty ||
+        params["PermitRootLogin"] == "no"
+      )
     docs:
       refs:
         - url: https://docs.oracle.com/cd/E88353_01/html/E37852/sshd-config-5.html
@@ -3475,6 +3479,8 @@ queries:
         This check verifies that the SSH server refuses logins as root.
 
         `PermitRootLogin` decides whether `sshd` accepts a login as root and with which authentication methods. The check requires `PermitRootLogin no`. The OpenSSH default is `prohibit-password`, which still accepts root logins with a public key, so the directive has to be written in the file. Oracle Cloud images of Solaris 11.4 set it through the SMF property `config/PermitRootLogin` of `svc:/network/ssh:default`.
+
+        Every `Match` block that sets `PermitRootLogin` must also use `no`. A `Match` block overrides the global value for the connections it matches, so `Match Address 10.0.0.0/8` followed by `PermitRootLogin prohibit-password` accepts root key logins from that range while the global `PermitRootLogin no` refuses them everywhere else.
 
         **Why this matters**
 
@@ -3496,7 +3502,7 @@ queries:
 
         3. OpenSSH uses the first value it reads, and a line after a `Match` line applies only to that `Match` block. On Solaris 11.4 the `Include` line sits at the end of `/etc/ssh/sshd_config`, so a line in the main file above any `Match` line takes precedence over the drop-in files.
 
-        The check passes when the first applicable line reads `PermitRootLogin no`. It fails when that line has any other value, or when no line is printed.
+        The check passes when the first applicable line reads `PermitRootLogin no` and every `PermitRootLogin` line after a `Match` line, in the main file and in the drop-in files, also reads `no`. A `Match` block overrides the global value for the connections it matches, so a `Match` block that sets any other value fails the check even when the global value passes. The check also fails when the first applicable line has any other value, or when no line is printed.
 
         Do not audit this with `sshd -T`. It prints the OpenSSH built-in default for a directive that is absent from the file, while the check requires the directive to be written in the file.
       remediation:
@@ -3512,7 +3518,8 @@ queries:
                PermitRootLogin no
                ```
 
-            4. Validate the file with `sshd -t`, then refresh the service. Keep the current session open until a new login succeeds.
+            4. A `Match` block overrides the global value for the connections it matches. In `/etc/ssh/sshd_config`, unless SMF generates it, and in every file under `/etc/ssh/sshd_config.d/`, change each `PermitRootLogin` line that comes after a `Match` line and has a value other than `no` to `PermitRootLogin no`, or delete it.
+            5. Validate the file with `sshd -t`, then refresh the service. Keep the current session open until a new login succeeds.
 
             ```bash
             svcprop -p sshd_stencil/disabled svc:/network/ssh:default
@@ -3523,6 +3530,9 @@ queries:
 
             # When it prints true or reports no such property:
             vi /etc/ssh/sshd_config
+
+            # In every case, list the Match blocks and the PermitRootLogin lines they contain:
+            /usr/xpg4/bin/grep -n -i -E '^[[:space:]]*(Match|PermitRootLogin)[[:space:]=]' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/*.conf 2>/dev/null
             /usr/lib/ssh/sshd -t && svcadm refresh svc:/network/ssh:default
             ```
         - id: sh
@@ -3531,7 +3541,8 @@ queries:
 
             1. Save the script and run it as root.
             2. On hosts where SMF generates the file, the script sets the SMF property and refreshes the service. Elsewhere it moves the directive to the top of `/etc/ssh/sshd_config`, drops other global lines for the same keyword, validates the result with `sshd -t`, and writes it back without changing the file's owner or mode.
-            3. Running it again makes no further change.
+            3. On every host it sets each `PermitRootLogin` line inside a `Match` block to `no`, in `/etc/ssh/sshd_config` unless SMF generates it, and in the files under `/etc/ssh/sshd_config.d/`.
+            4. Running it again makes no further change.
 
             ```sh
             #!/bin/sh
@@ -3548,20 +3559,46 @@ queries:
               fi
             }
 
+            WORK=$(mktemp /tmp/sshd_config.XXXXXX)
+            NEXT=$(mktemp /tmp/sshd_config.XXXXXX)
+            trap 'rm -f "$WORK" "$NEXT"' EXIT
+
+            # A line after a Match line applies only to that Match block, and the
+            # block overrides the global value for the connections it matches.
+            # Every PermitRootLogin there with a value other than "no" becomes "no".
+            fix_match() {
+              nawk '
+                { split($1, f, "="); kw = tolower(f[1]); val = (f[2] != "") ? f[2] : $2 }
+                kw == "match" { in_match = 1 }
+                in_match && kw == "permitrootlogin" && val != "no" { sub(/[^ \t].*/, "PermitRootLogin no") }
+                { print }
+              ' "$WORK" > "$NEXT"
+              cat "$NEXT" > "$WORK"
+            }
+
+            # SMF never generates the drop-in files, so they are edited on every host.
+            for f in /etc/ssh/sshd_config.d/*.conf; do
+              [ -f "$f" ] || continue
+              cp "$f" "$WORK"
+              fix_match
+              if ! cmp -s "$WORK" "$f"; then
+                cat "$WORK" > "$f"
+                changed=1
+              fi
+            done
+
             # When SMF generates sshd_config, the file is rewritten from the config
             # property group on every refresh, so the value has to be set in SMF.
             if [ "$(svcprop -p sshd_stencil/disabled "$FMRI" 2>/dev/null || true)" = "false" ]; then
               set_smf PermitRootLogin astring no
               if [ "$changed" -eq 1 ]; then
+                /usr/lib/ssh/sshd -t
                 svcadm refresh "$FMRI"
               fi
               echo "SSH root login disabled."
               exit 0
             fi
 
-            WORK=$(mktemp /tmp/sshd_config.XXXXXX)
-            NEXT=$(mktemp /tmp/sshd_config.XXXXXX)
-            trap 'rm -f "$WORK" "$NEXT"' EXIT
             cp "$SSHD_CONFIG" "$WORK"
 
             # Print the directive as the first line and drop any other line for the
@@ -3579,15 +3616,18 @@ queries:
             }
 
             set_file "PermitRootLogin no"
+            fix_match
 
-            if cmp -s "$WORK" "$SSHD_CONFIG"; then
-              echo "SSH root login disabled."
-              exit 0
+            if ! cmp -s "$WORK" "$SSHD_CONFIG"; then
+              /usr/lib/ssh/sshd -t -f "$WORK"
+              cat "$WORK" > "$SSHD_CONFIG"
+              changed=1
             fi
 
-            /usr/lib/ssh/sshd -t -f "$WORK"
-            cat "$WORK" > "$SSHD_CONFIG"
-            svcadm refresh "$FMRI"
+            if [ "$changed" -eq 1 ]; then
+              /usr/lib/ssh/sshd -t
+              svcadm refresh "$FMRI"
+            fi
             echo "SSH root login disabled."
             ```
         - id: ansible
@@ -3595,7 +3635,7 @@ queries:
             To disable SSH root login using Ansible:
 
             1. Save the playbook and run it against the Solaris hosts.
-            2. The playbook sets the SMF property where SMF generates `/etc/ssh/sshd_config`, and edits the file everywhere else. The `validate` option runs `sshd -t` against the edited copy, and Ansible writes the file only if that copy passes.
+            2. The playbook sets the SMF property where SMF generates `/etc/ssh/sshd_config`, and edits the file everywhere else. It also sets every `PermitRootLogin` line inside a `Match` block to `no`, in `/etc/ssh/sshd_config` unless SMF generates it, and in the files under `/etc/ssh/sshd_config.d/`. The `validate` option runs `sshd -t` against the edited copy, and Ansible writes the file only if that copy passes.
             3. The handler refreshes `svc:/network/ssh:default`, which rewrites a generated file and signals `sshd` to reread its configuration.
 
             ```yaml
@@ -3644,6 +3684,19 @@ queries:
                   changed_when: true
                   notify: Refresh the SSH service
 
+                # A line after a Match line belongs to that Match block, so the global
+                # directive has to sit above the first Match line. This adds it at the top
+                # of the file when no line for the keyword comes before the first Match line.
+                - name: Add the global directives that are missing
+                  ansible.builtin.replace:
+                    path: /etc/ssh/sshd_config
+                    regexp: '(?i)\A(?!(?:(?![ \t]*Match[ \t]).*\n)*[ \t]*{{ item.key }}[ \t=])'
+                    replace: '{{ item.key }} {{ item.file_value }}\n'
+                    validate: /usr/lib/ssh/sshd -t -f %s
+                  loop: "{{ sshd_settings }}"
+                  when: sshd_stencil.stdout != 'false'
+                  notify: Refresh the SSH service
+
                 - name: Set the directives at the top of sshd_config
                   ansible.builtin.lineinfile:
                     path: /etc/ssh/sshd_config
@@ -3654,6 +3707,24 @@ queries:
                     validate: /usr/lib/ssh/sshd -t -f %s
                   loop: "{{ sshd_settings }}"
                   when: sshd_stencil.stdout != 'false'
+                  notify: Refresh the SSH service
+
+                - name: Find the drop-in configuration files
+                  ansible.builtin.find:
+                    paths: /etc/ssh/sshd_config.d
+                    patterns: '*.conf'
+                  register: sshd_dropin_files
+
+                # A Match block overrides the global value for the connections it matches.
+                # SMF never generates the drop-in files, so they are edited on every host.
+                - name: Set PermitRootLogin to no inside Match blocks
+                  ansible.builtin.replace:
+                    path: "{{ item }}"
+                    after: '(?im)^[ \t]*Match[ \t]'
+                    regexp: '^([ \t]*)(?i:PermitRootLogin)[ \t=]+(?!no[ \t]*$).*$'
+                    replace: '\g<1>PermitRootLogin no'
+                    validate: /usr/lib/ssh/sshd -t -f %s
+                  loop: "{{ (['/etc/ssh/sshd_config'] if sshd_stencil.stdout != 'false' else []) + (sshd_dropin_files.files | map(attribute='path') | list) }}"
                   notify: Refresh the SSH service
 
               handlers:
