@@ -16592,8 +16592,7 @@ queries:
   - uid: mondoo-aws-security-eks-cluster-logging-enabled-aws
     filters: asset.platform == "aws-eks-cluster"
     mql: |
-      aws.eks.cluster.logging['ClusterLogging'] != null
-      aws.eks.cluster.logging['ClusterLogging'].any(_['Enabled'] == true)
+      aws.eks.cluster.controlPlaneLogging.values.any(_ == true)
   - uid: mondoo-aws-security-eks-cluster-logging-enabled-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_eks_cluster") || asset.platform == "terraform-hcl" && terraform.blocks.contains(type == "module" && arguments["source"] != null && arguments["source"] == /terraform-aws-eks|terraform-aws-modules\/eks\/aws/)
     mql: |
@@ -18628,7 +18627,7 @@ queries:
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::ECS::TaskDefinition")
     mql: |
       cloudformation.template.resources.where(type == "AWS::ECS::TaskDefinition").all(
-        properties['ContainerDefinitions'].all(_['privileged'] != true)
+        properties['ContainerDefinitions'].all(_['Privileged'] != true)
       )
   - uid: mondoo-aws-security-ecs-readonly-root-filesystem
     title: Ensure ECS task definitions use read-only root filesystems
@@ -19653,7 +19652,7 @@ queries:
           mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
-        This check verifies that Amazon EKS clusters with a public API server endpoint restrict which CIDR ranges may reach it, by requiring that `publicAccessCidrs` does not contain `0.0.0.0/0`. It also confirms the endpoint is not internet-reachable once the public endpoint setting and the cluster security groups are evaluated together, so a cluster left open through its security groups is caught even when the CIDR allow list looks scoped. With public endpoint access enabled and no restriction, the API server is reachable from `0.0.0.0/0`.
+        This check verifies that Amazon EKS clusters with a public API server endpoint restrict which CIDR ranges may reach it, by requiring that `publicAccessCidrs` does not contain `0.0.0.0/0`. It also requires the endpoint not to be internet-reachable, which catches a list whose entries together cover every address, such as `0.0.0.0/1` and `128.0.0.0/1`. A cluster with the public endpoint disabled passes. Security groups do not apply to the public endpoint, so the CIDR list is the only network restriction on it, and with public endpoint access enabled and no restriction the API server is reachable from `0.0.0.0/0`.
 
         The list is edited through **Manage networking** on the **Networking** tab, or with `aws eks update-cluster-config --resources-vpc-config publicAccessCidrs=<cidr-list>`.
 
@@ -19675,7 +19674,7 @@ queries:
         4. Under **Cluster endpoint access**, locate the **Public access CIDR** list.
         5. Verify that `0.0.0.0/0` is not present in the list.
 
-        A passing cluster shows public access CIDRs that do not include `0.0.0.0/0`. A failing cluster shows `0.0.0.0/0` in the public access CIDR list.
+        A passing cluster has public access disabled or shows public access CIDRs that do not include `0.0.0.0/0`. A failing cluster has public access enabled and shows `0.0.0.0/0` in the public access CIDR list.
 
         ### Audit via CLI
 
@@ -19685,10 +19684,10 @@ queries:
         aws eks list-clusters --query "clusters" --output text | \
           tr '\t' '\n' | \
           xargs -I {} aws eks describe-cluster --name {} \
-          --query "cluster.{Name:name,PublicAccessCidrs:resourcesVpcConfig.publicAccessCidrs}"
+          --query "cluster.{Name:name,PublicAccess:resourcesVpcConfig.endpointPublicAccess,PublicAccessCidrs:resourcesVpcConfig.publicAccessCidrs}"
         ```
 
-        A passing cluster returns a `PublicAccessCidrs` list that does not contain `"0.0.0.0/0"`. A failing cluster returns `["0.0.0.0/0"]` or includes `"0.0.0.0/0"` in the list.
+        A passing cluster has the public endpoint disabled, or returns a `PublicAccessCidrs` list that does not contain `"0.0.0.0/0"`. A failing cluster has the public endpoint enabled and returns `["0.0.0.0/0"]` or includes `"0.0.0.0/0"` in the list.
 
       remediation:
         - id: console
@@ -19701,16 +19700,15 @@ queries:
             4. Enable Private access so nodes and Fargate Pods keep reaching the API server from inside the VPC.
             5. Either disable Public access, or keep it enabled and under Advanced settings replace 0.0.0.0/0 with only the public CIDR blocks that need access, such as your corporate egress addresses. Private and other reserved ranges are rejected here.
             6. Select Update.
-            7. If Public access stays enabled, open each cluster security group listed on the Networking tab and remove inbound rules whose source is 0.0.0.0/0 or ::/0, because the cluster is still treated as internet reachable while such a rule exists.
         - id: cli
           desc: |
             To ensure Amazon EKS public endpoint is not accessible to 0.0.0.0/0 using the AWS CLI:
 
-            1. Check the current endpoint settings, public access CIDRs, and cluster security groups:
+            1. Check the current endpoint settings and public access CIDRs:
 
             ```bash
             aws eks describe-cluster --name <cluster_name> \
-              --query "cluster.resourcesVpcConfig.{Public:endpointPublicAccess,Private:endpointPrivateAccess,Cidrs:publicAccessCidrs,SecurityGroups:securityGroupIds,ClusterSecurityGroup:clusterSecurityGroupId}"
+              --query "cluster.resourcesVpcConfig.{Public:endpointPublicAccess,Private:endpointPrivateAccess,Cidrs:publicAccessCidrs}"
             ```
 
             2. Restrict the public endpoint to the public CIDR blocks that need it and enable private access, so nodes and Fargate Pods keep reaching the API server from inside the VPC.
@@ -19730,17 +19728,6 @@ queries:
             ```bash
             aws eks update-cluster-config --name <cluster_name> \
               --resources-vpc-config endpointPublicAccess=false,endpointPrivateAccess=true
-            ```
-
-            3. While the public endpoint stays enabled, the cluster is still treated as internet reachable if any cluster security group allows ingress from anywhere. Remove each such rule, using the group IDs from step 1 and the rule IDs returned by `describe-security-group-rules`:
-
-            ```bash
-            aws ec2 describe-security-group-rules \
-              --filters Name=group-id,Values=<security-group-id> \
-              --query 'SecurityGroupRules[?IsEgress==`false` && (CidrIpv4==`"0.0.0.0/0"` || CidrIpv6==`"::/0"`)].SecurityGroupRuleId'
-            aws ec2 revoke-security-group-ingress \
-              --group-id <security-group-id> \
-              --security-group-rule-ids <security-group-rule-id>
             ```
         - id: terraform
           desc: |
@@ -19792,6 +19779,7 @@ queries:
   - uid: mondoo-aws-security-eks-cluster-restrict-public-access-aws
     filters: asset.platform == "aws-eks-cluster"
     mql: |
+      aws.eks.cluster.endpointPublicAccess == false ||
       aws.eks.cluster.publicAccessCidrs.none(_ == "0.0.0.0/0")
       aws.eks.cluster.exposure.internetReachable == false
   - uid: mondoo-aws-security-eks-cluster-restrict-public-access-terraform-hcl
@@ -19831,6 +19819,8 @@ queries:
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::EKS::Cluster")
     mql: |
       cloudformation.template.resources.where(type == "AWS::EKS::Cluster").all(
+        properties['ResourcesVpcConfig'] != empty &&
+        properties['ResourcesVpcConfig']['EndpointPublicAccess'] == false ||
         properties['ResourcesVpcConfig'] != empty &&
         properties['ResourcesVpcConfig']['PublicAccessCidrs'] != empty &&
         properties['ResourcesVpcConfig']['PublicAccessCidrs'].none(_ == "0.0.0.0/0")
@@ -24976,13 +24966,13 @@ queries:
   - uid: mondoo-aws-security-ecs-container-non-root-user-aws
     filters: asset.platform == "aws-ecs-taskdefinition"
     mql: |
-      aws.ecs.taskDefinition.containerDefinitions.all(user != empty && user != "root" && user != "0")
+      aws.ecs.taskDefinition.containerDefinitions.all(user != empty && user != /^(root|0)(:|$)/)
   - uid: mondoo-aws-security-ecs-container-non-root-user-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_ecs_task_definition")
     mql: |
       terraform.resources("aws_ecs_task_definition").all(
         arguments.container_definitions.all(
-          _['user'] != empty && _['user'] != "root" && _['user'] != "0"
+          _['user'] != empty && _['user'] != /^(root|0)(:|$)/
         )
       )
   - uid: mondoo-aws-security-ecs-container-non-root-user-terraform-plan
@@ -24990,7 +24980,7 @@ queries:
     mql: |
       terraform.plan.resourceChanges.where(type == "aws_ecs_task_definition").all(
         change.after.container_definitions.all(
-          _['user'] != empty && _['user'] != "root" && _['user'] != "0"
+          _['user'] != empty && _['user'] != /^(root|0)(:|$)/
         )
       )
   - uid: mondoo-aws-security-ecs-container-non-root-user-terraform-state
@@ -24998,7 +24988,7 @@ queries:
     mql: |
       terraform.state.resources.where(type == "aws_ecs_task_definition").all(
         values.container_definitions.all(
-          _['user'] != empty && _['user'] != "root" && _['user'] != "0"
+          _['user'] != empty && _['user'] != /^(root|0)(:|$)/
         )
       )
   - uid: mondoo-aws-security-ecs-container-non-root-user-cloudformation
@@ -25006,7 +24996,7 @@ queries:
     mql: |
       cloudformation.template.resources.where(type == "AWS::ECS::TaskDefinition").all(
         properties['ContainerDefinitions'].all(
-          _['User'] != empty && _['User'] != "root" && _['User'] != "0"
+          _['User'] != empty && _['User'] != /^(root|0)(:|$)/
         )
       )
   - uid: mondoo-aws-security-ecs-efs-volume-transit-encryption
@@ -29551,7 +29541,7 @@ queries:
           mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
-        This check verifies that EKS managed node group EBS volumes are encrypted, by requiring EBS encryption by default to be enabled in each region where node groups run. AWS does not enable EBS encryption by default, so volumes provisioned through node auto-scaling are created unencrypted unless something else configures them.
+        This check verifies that EKS managed node group EBS volumes are encrypted, by requiring EBS encryption by default to be enabled in every Region, since a node group can be created in any of them. AWS does not enable EBS encryption by default, so volumes provisioned through node auto-scaling are created unencrypted unless something else configures them.
 
         The setting is under **EBS encryption** in **Account attributes** in the EC2 console, or applied with `aws ec2 enable-ebs-encryption-by-default --region <region>`.
 
@@ -29569,14 +29559,14 @@ queries:
 
         1. Sign in to the AWS Management Console and open the **EC2** console.
         2. In the left navigation pane, under **Account attributes**, choose **EBS encryption**.
-        3. Verify that **Always encrypt new EBS volumes** is enabled for each region where EKS clusters are deployed.
+        3. Verify that **Always encrypt new EBS volumes** is enabled in every Region.
         4. To check individual node group volumes, open the **EKS** console, select a cluster, go to the **Compute** tab, select a node group, and review the **Launch template** to confirm EBS volumes have encryption enabled.
 
         A passing configuration shows **Enabled** for EBS encryption by default. A failing configuration shows **Disabled** or shows a launch template with `Encrypted: false` for the root volume.
 
         ### Audit via CLI
 
-        1. Check EBS encryption by default status in each relevant region:
+        1. Check EBS encryption by default status in each Region:
 
         ```bash
         aws ec2 get-ebs-encryption-by-default \
@@ -29591,7 +29581,7 @@ queries:
             To ensure EBS encryption by default is enabled for EKS node group volumes using the AWS Console:
 
             1. Navigate to **EC2** > **EBS Encryption** (under Account attributes).
-            2. Enable **Always encrypt new EBS volumes** in all regions where EKS clusters are deployed.
+            2. Enable **Always encrypt new EBS volumes** in every Region.
             3. Optionally set a default KMS key for EBS encryption.
         - id: cli
           desc: |
@@ -30645,7 +30635,7 @@ queries:
           --query 'clusters[*].settings'
         ```
 
-        A passing cluster returns a settings entry with `"name": "containerInsights"` and `"value": "enabled"`. A failing cluster returns `"value": "disabled"` or no `containerInsights` entry.
+        A passing cluster returns a settings entry with `"name": "containerInsights"` and `"value": "enabled"` or `"value": "enhanced"`. A failing cluster returns `"value": "disabled"` or no `containerInsights` entry.
       remediation:
         - id: console
           desc: |
@@ -30696,7 +30686,7 @@ queries:
     filters: asset.platform == "aws"
     mql: |
       aws.ecs.clusters.all(
-        configuration["containerInsights"] == "enabled"
+        settings["containerInsights"] == /^(enabled|enhanced)$/
       )
   - uid: mondoo-aws-security-ecs-cluster-container-insights-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_ecs_cluster")
@@ -30712,20 +30702,23 @@ queries:
     mql: |
       terraform.plan.resourceChanges.where(type == "aws_ecs_cluster").all(
         change.after.setting != empty &&
-        change.after.setting.any(name == "containerInsights" && value == "enabled")
+        change.after.setting.any(name == "containerInsights" && value == /^(enabled|enhanced)$/)
       )
   - uid: mondoo-aws-security-ecs-cluster-container-insights-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_ecs_cluster")
     mql: |
       terraform.state.resources.where(type == "aws_ecs_cluster").all(
         values.setting != empty &&
-        values.setting.any(name == "containerInsights" && value == "enabled")
+        values.setting.any(name == "containerInsights" && value == /^(enabled|enhanced)$/)
       )
   - uid: mondoo-aws-security-ecs-cluster-container-insights-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::ECS::Cluster")
     mql: |
       cloudformation.template.resources.where(type == "AWS::ECS::Cluster").all(
-        properties['ClusterSettings'] != empty
+        properties['ClusterSettings'] != empty &&
+        properties['ClusterSettings'].any(
+          _['Name'] == "containerInsights" && _['Value'] == /^(enabled|enhanced)$/
+        )
       )
   - uid: mondoo-aws-security-ecs-cluster-fargate-encryption
     title: Ensure ECS clusters use KMS encryption for Fargate ephemeral storage
@@ -60071,9 +60064,9 @@ queries:
           mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
-        This check verifies that Amazon EMR clusters use a customer managed KMS key to encrypt log data, by requiring a log encryption key to be present. In the Terraform form, the check verifies that any cluster with a log URI set names a log encryption key in `log_encryption_kms_key_id`, which is available from EMR release 5.30.0 (except 6.0.0).
+        This check verifies that Amazon EMR clusters that publish logs to Amazon S3 encrypt them with a customer managed KMS key, by requiring every cluster with a log URI to name a log encryption key. A cluster without a log URI passes here, and the logging check in this policy fails it instead. Log encryption is available from EMR release 5.30.0, except 6.0.0.
 
-        The key is configured in a security configuration with `aws emr create-security-configuration` and the configuration is attached when the cluster is launched.
+        The key is named with `--log-encryption-kms-key-id` when the cluster is launched and cannot be added to a running cluster.
 
         **Why this matters**
 
@@ -60089,31 +60082,21 @@ queries:
 
         1. Sign in to the AWS Management Console and open the **EMR** console.
         2. In the left navigation pane, choose **Clusters**.
-        3. Select a cluster and review the **Summary** tab. Check that **Log URI** is set.
-        4. Under **Security and access**, review the **Security configuration** field. If logging is enabled, a security configuration should be attached.
-        5. Open the **EMR** console, choose **Security configurations**, select the referenced configuration, and verify that **S3 encryption** is configured with a **SSE-KMS** mode using a CMK.
+        3. Select a cluster and review the **Cluster logs** section of its configuration.
 
-        A passing cluster shows a security configuration attached that includes CMK-based S3 encryption for logs. A failing cluster with logging enabled shows no security configuration or one with no CMK-based S3 encryption.
+        A passing cluster either publishes no logs to Amazon S3 or lists a KMS key for log encryption next to the S3 log location. A failing cluster publishes logs to Amazon S3 with no log encryption key.
 
         ### Audit via CLI
 
-        1. Retrieve the cluster's log URI and security configuration:
+        1. Retrieve the cluster's log URI and log encryption key:
 
         ```bash
         aws emr describe-cluster \
           --cluster-id <cluster-id> \
-          --query "Cluster.{LogUri:LogUri,SecurityConfiguration:SecurityConfiguration}"
+          --query "Cluster.{LogUri:LogUri,LogEncryptionKmsKeyId:LogEncryptionKmsKeyId}"
         ```
 
-        2. If a security configuration is attached, inspect its encryption settings:
-
-        ```bash
-        aws emr describe-security-configuration \
-          --name <security-configuration-name> \
-          --query "SecurityConfiguration"
-        ```
-
-        A passing cluster with logging enabled returns a security configuration name and the configuration's `S3EncryptionConfiguration.EncryptionMode` is `SSE-KMS` with an `AwsKmsKey` set to a CMK ARN. A failing cluster returns no security configuration or one without CMK-based S3 encryption.
+        A passing cluster returns `"LogUri": null`, or a `LogEncryptionKmsKeyId` holding a KMS key ARN. A failing cluster returns a `LogUri` with `"LogEncryptionKmsKeyId": null`.
 
       remediation:
         - id: console
@@ -60223,8 +60206,9 @@ queries:
       - url: https://docs.aws.amazon.com/emr/latest/ManagementGuide/emr-plan-debugging.html
         title: AWS Documentation - Configure logging and debugging
   - uid: mondoo-aws-security-emr-log-cmk-encryption-aws
-    filters: asset.platform == "aws-emr-cluster" && aws.emr.cluster.logUri != empty
+    filters: asset.platform == "aws-emr-cluster"
     mql: |
+      aws.emr.cluster.logUri == empty ||
       aws.emr.cluster.logEncryptionKmsKey != empty
   - uid: mondoo-aws-security-emr-log-cmk-encryption-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_emr_cluster")
@@ -60248,11 +60232,11 @@ queries:
         values['log_encryption_kms_key_id'] != empty
       )
   - uid: mondoo-aws-security-emr-log-cmk-encryption-cloudformation
-    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::EMR::SecurityConfiguration")
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::EMR::Cluster")
     mql: |
-      cloudformation.template.resources.where(type == "AWS::EMR::SecurityConfiguration").all(
-        properties['SecurityConfiguration']['EncryptionConfiguration'] != empty &&
-        properties['SecurityConfiguration']['EncryptionConfiguration']['EnableAtRestEncryption'] == true
+      cloudformation.template.resources.where(type == "AWS::EMR::Cluster").all(
+        properties['LogUri'] == empty ||
+        properties['LogEncryptionKmsKeyId'] != empty
       )
   - uid: mondoo-aws-security-neptune-no-default-security-groups
     title: Ensure Neptune clusters do not use default security groups
@@ -61859,7 +61843,7 @@ queries:
     impact: 60
     filters: asset.platform == "aws"
     mql: |
-      aws.ecs.containers.all(image != /:latest$/ && image == /[:@]/)
+      aws.ecs.containers.all(image != /:latest$/ && image == /[:@][^\/]*$/)
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ccc-06
@@ -63682,7 +63666,7 @@ queries:
           --query "Stacks[*].{Name:Name,HostToClientEnabled:ContentRedirection.HostToClient.Enabled}"
         ```
 
-        A passing stack returns `"HostToClientEnabled": false`. A failing stack returns `"HostToClientEnabled": true`, or `null` when content redirection has never been saved on the stack.
+        A passing stack returns `"HostToClientEnabled": false`, or `null` when content redirection has never been configured on the stack, which leaves redirection off. A failing stack returns `"HostToClientEnabled": true`.
 
       remediation:
         - id: console
@@ -63698,7 +63682,7 @@ queries:
             The change applies to streaming sessions started after the update. Sessions that are already running keep redirecting URLs until they end.
         - id: cli
           desc: |
-            To ensure AppStream 2.0 stacks have URL redirection disabled using the AWS CLI, set `HostToClient.Enabled` to `false` in the stack's content redirection settings. Saving the value explicitly also covers stacks where redirection was never configured. Existing streaming sessions are not affected, so the change reaches users as they start new sessions:
+            To ensure AppStream 2.0 stacks have URL redirection disabled using the AWS CLI, set `HostToClient.Enabled` to `false` in the stack's content redirection settings. Existing streaming sessions are not affected, so the change reaches users as they start new sessions:
 
             ```bash
             aws appstream update-stack \
@@ -63713,6 +63697,7 @@ queries:
     filters: asset.platform == "aws"
     mql: |
       aws.appstream.stacks.all(
+        contentRedirection == empty ||
         contentRedirection.hostToClientEnabled == false
       )
   - uid: mondoo-aws-security-vpc-dhcp-custom-dns
@@ -82972,10 +82957,10 @@ queries:
       aws.appmesh.meshes.all(
         virtualNodes.all(
           listeners.all(
-            _['tls'] != null &&
-            _['tls']['mode'] == "STRICT" ||
-            _['tls'] != null &&
-            _['tls']['mode'] == "PERMISSIVE"
+            _['Tls'] != null &&
+            _['Tls']['Mode'] == "STRICT" ||
+            _['Tls'] != null &&
+            _['Tls']['Mode'] == "PERMISSIVE"
           )
         )
       )
