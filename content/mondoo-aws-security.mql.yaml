@@ -11419,7 +11419,7 @@ queries:
           mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
-        This check verifies that domains managed through the legacy Amazon Elasticsearch Service resource have encryption at rest enabled. Amazon OpenSearch Service does not encrypt stored data unless encryption is enabled at domain creation, and an existing unencrypted domain cannot be converted; it has to be replaced.
+        This check verifies that domains managed through the legacy Amazon Elasticsearch Service resource have encryption at rest enabled. Amazon OpenSearch Service does not encrypt stored data unless encryption is enabled. It can be enabled on an existing domain running Elasticsearch 6.7 or later, and once enabled it cannot be turned off.
 
         The setting appears under **Encryption at rest** on the **Security** tab of a domain in the console, and is read with `aws es describe-elasticsearch-domain --query "DomainStatus.EncryptionAtRestOptions"`. Domains declared through the `aws_elasticsearch_domain` Terraform resource use an `encrypt_at_rest` block.
 
@@ -22877,7 +22877,7 @@ queries:
       - url: https://docs.aws.amazon.com/AmazonElastiCache/latest/dg/at-rest-encryption.html
         title: AWS Documentation - ElastiCache at-rest encryption
   - uid: mondoo-aws-security-elasticache-encryption-at-rest-cluster
-    filters: asset.platform == "aws-elasticache-cluster" && aws.elasticache.cluster.engine == "redis"
+    filters: asset.platform == "aws-elasticache-cluster" && aws.elasticache.cluster.engine.in(["redis", "valkey"])
     mql: aws.elasticache.cluster.atRestEncryptionEnabled == true
   - uid: mondoo-aws-security-elasticache-encryption-at-rest-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_elasticache_replication_group")
@@ -23054,7 +23054,7 @@ queries:
       - url: https://docs.aws.amazon.com/AmazonElastiCache/latest/dg/in-transit-encryption.html
         title: AWS Documentation - ElastiCache in-transit encryption
   - uid: mondoo-aws-security-elasticache-encryption-in-transit-cluster
-    filters: asset.platform == "aws-elasticache-cluster" && aws.elasticache.cluster.engine == "redis"
+    filters: asset.platform == "aws-elasticache-cluster" && aws.elasticache.cluster.engine.in(["redis", "valkey"])
     mql: aws.elasticache.cluster.transitEncryptionEnabled == true
   - uid: mondoo-aws-security-elasticache-encryption-in-transit-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_elasticache_replication_group")
@@ -23121,7 +23121,7 @@ queries:
           mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
-        This check verifies that ElastiCache Redis clusters have an AUTH token enabled, so clients must authenticate before executing commands.
+        This check verifies that ElastiCache Redis OSS and Valkey clusters require clients to authenticate before executing commands, either with an AUTH token or with a role-based access control user group attached to the replication group.
 
         An AUTH token is set when creating a replication group with `aws elasticache create-replication-group --transit-encryption-enabled --auth-token <token>`, and application connection strings have to be updated to include it.
 
@@ -23141,22 +23141,22 @@ queries:
         2. In the left navigation pane, select **Redis caches**.
         3. Select a cluster to inspect.
         4. In the cluster details, locate the **Security** section.
-        5. Verify that **Auth token** shows **Enabled** or that a token is configured.
-        6. Repeat for each Redis cluster in the account.
+        5. Verify that **Auth token** shows **Enabled**, or that a user group is selected under **Access control**.
+        6. Repeat for each Redis OSS and Valkey cluster in the account.
 
-        A passing cluster shows an AUTH token as enabled. A failing cluster shows no AUTH token configured.
+        A passing cluster has an AUTH token enabled or a user group attached. A failing cluster has neither.
 
         ### Audit via CLI
 
-        1. List replication groups and check the authentication token setting:
+        1. List replication groups with their AUTH token setting and user groups:
 
         ```bash
         aws elasticache describe-replication-groups \
-          --query 'ReplicationGroups[*].{Id:ReplicationGroupId,AuthTokenEnabled:AuthTokenEnabled}' \
+          --query 'ReplicationGroups[*].{Id:ReplicationGroupId,AuthTokenEnabled:AuthTokenEnabled,UserGroupIds:UserGroupIds}' \
           --output table
         ```
 
-        A passing cluster returns `AuthTokenEnabled: true`. A failing cluster returns `AuthTokenEnabled: false` or `None`.
+        A passing cluster returns `AuthTokenEnabled: true` or a non-empty `UserGroupIds`. A failing cluster returns `AuthTokenEnabled: false` and no user groups.
 
       remediation:
         - id: console
@@ -23237,8 +23237,9 @@ queries:
       - url: https://docs.aws.amazon.com/AmazonElastiCache/latest/dg/auth.html
         title: AWS Documentation - Authenticating with the Redis AUTH command
   - uid: mondoo-aws-security-elasticache-redis-auth-enabled-cluster
-    filters: asset.platform == "aws-elasticache-cluster" && aws.elasticache.cluster.engine == "redis"
-    mql: aws.elasticache.cluster.authTokenEnabled == true
+    filters: asset.platform == "aws-elasticache-cluster" && aws.elasticache.cluster.engine.in(["redis", "valkey"])
+    mql: |
+      aws.elasticache.cluster.authTokenEnabled == true || aws.elasticache.cluster.replicationGroup.userGroupIds != empty
   - uid: mondoo-aws-security-elasticache-redis-auth-enabled-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_elasticache_replication_group")
     mql: |
@@ -23597,7 +23598,7 @@ queries:
           mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
-        This check verifies that Amazon Redshift clusters are encrypted at rest. An unencrypted cluster stores data warehouse contents in plaintext on the underlying storage, where the database's own access controls do not apply.
+        This check verifies that Amazon Redshift clusters are encrypted at rest. An unencrypted cluster stores data warehouse contents in plaintext on the underlying storage, where the database's own access controls do not apply. Redshift rejects creating an unencrypted cluster, so a failing cluster is an older one that was never encrypted.
 
         Encryption is enabled under **Database configurations** when modifying the cluster in the Redshift console, or with `aws redshift modify-cluster --encrypted --kms-key-id <kms-key-id>`.
 
@@ -23897,7 +23898,7 @@ queries:
         title: AWS Documentation - Database audit logging for Amazon Redshift
   - uid: mondoo-aws-security-redshift-cluster-audit-logging-aws
     filters: asset.platform == "aws-redshift-cluster"
-    mql: aws.redshift.cluster.logging["LoggingEnabled"] == true
+    mql: aws.redshift.cluster.auditLogging.enabled == true
   - uid: mondoo-aws-security-redshift-cluster-audit-logging-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_redshift_cluster")
     mql: |
@@ -25420,7 +25421,7 @@ queries:
           mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
-        This check verifies that Amazon Redshift clusters require TLS for client connections, by asserting that the `require_ssl` parameter in the cluster parameter group is `true`. Redshift does not enforce TLS by default, so clients can connect over unencrypted channels and expose queries and results to network interception.
+        This check verifies that Amazon Redshift clusters require TLS for client connections, by asserting that the `require_ssl` parameter in the cluster parameter group is `true`. The default parameter group sets it to `true`, but a custom parameter group can set it to `false`, which lets clients connect over unencrypted channels and exposes queries and results to network interception.
 
         The parameter is edited under **Configurations**, then **Workload management**, in the Redshift console, or with `aws redshift modify-cluster-parameter-group` after checking the current value using `aws redshift describe-cluster-parameters`.
 
@@ -25441,7 +25442,7 @@ queries:
         3. Select the parameter group associated with the cluster to review.
         4. Locate the `require_ssl` parameter and check its value.
 
-        A passing parameter group shows `require_ssl` set to `true`. A failing parameter group shows `require_ssl` set to `false` or the default value.
+        A passing parameter group shows `require_ssl` set to `true`. A failing parameter group shows `require_ssl` set to `false`.
 
         ### Audit via CLI
 
@@ -25453,7 +25454,7 @@ queries:
           --query "Parameters[?ParameterName=='require_ssl'].{Name:ParameterName,Value:ParameterValue,Source:Source}"
         ```
 
-        A passing parameter group returns `"ParameterValue": "true"`. A failing parameter group returns `"ParameterValue": "false"` or the default.
+        A passing parameter group returns `"ParameterValue": "true"`. A failing parameter group returns `"ParameterValue": "false"`.
 
       remediation:
         - id: console
@@ -27900,7 +27901,7 @@ queries:
         properties['PubliclyAccessible'] == false
       )
   - uid: mondoo-aws-security-dms-replication-encrypted
-    title: Ensure DMS replication instances use encryption
+    title: Ensure DMS replication instances use a customer managed KMS key
     impact: 80
     tags:
       compliance/bsi-sys-1-5: false
@@ -27940,9 +27941,9 @@ queries:
           mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
-        This check verifies that AWS Database Migration Service replication instances specify a KMS key for storage encryption. DMS replication instances are not encrypted at rest unless a key is supplied at creation, which leaves the migration data staged on the instance unprotected.
+        This check verifies that AWS Database Migration Service replication instances encrypt their storage with a customer managed KMS key. DMS always encrypts replication instance storage, and an instance created without a key uses the AWS managed key `aws/dms`.
 
-        Encryption cannot be enabled on an existing instance, so remediation means creating a new one with `aws dms create-replication-instance --kms-key-id <kms-key-arn>` and migrating the tasks.
+        The key cannot be changed on an existing instance, so remediation means creating a new one with `aws dms create-replication-instance --kms-key-id <kms-key-arn>` and moving the tasks to it.
 
         **Why this matters**
 
@@ -27950,9 +27951,9 @@ queries:
 
         Migration traffic is generally the entire contents of a production database, which makes the staging area a concentrated copy of everything the source system holds rather than a sample of it.
 
-        Because encryption cannot be added later, an unencrypted instance stays unencrypted for the life of the migration, so policy enforcement at creation time is the only control that works.
+        Because the key cannot be changed later, an instance created with the AWS managed key keeps it for the life of the migration, so choosing the key at creation time is the only control that works.
 
-        KMS-encrypted instance storage means data written to disk during replication cannot be read without the key, even by someone with direct access to the underlying infrastructure, and a customer managed key can be rotated or revoked independently of the DMS instance lifecycle.
+        The key policy of the AWS managed key cannot be edited, so any principal in the account allowed to use DMS can use it. A customer managed key has a policy you write, and it can be rotated or revoked independently of the DMS instance lifecycle.
       audit: |
         ### Audit via Console
 
@@ -27961,32 +27962,40 @@ queries:
         3. For each replication instance, open the instance details.
         4. Review the **KMS key** field under **Instance configuration**.
 
-        A passing replication instance shows a KMS key ARN in the **KMS key** field. A failing replication instance shows no KMS key or the default AWS-managed key.
+        A passing replication instance shows a customer managed key in the **KMS key** field. A failing replication instance shows the AWS managed key `aws/dms`.
 
         ### Audit via CLI
 
-        1. List all DMS replication instances and check their KMS key configuration:
+        1. List all DMS replication instances and their KMS keys:
 
         ```bash
         aws dms describe-replication-instances \
           --query "ReplicationInstances[*].{Id:ReplicationInstanceIdentifier,KmsKey:KmsKeyId,Status:ReplicationInstanceStatus}"
         ```
 
-        A passing instance returns a non-empty `KmsKey` value. A failing instance returns `"KmsKey": null` or omits the field.
+        2. Every instance returns a `KmsKey`, so check who manages each key:
+
+        ```bash
+        aws kms describe-key \
+          --key-id <kms-key-id> \
+          --query "KeyMetadata.KeyManager"
+        ```
+
+        A passing instance uses a key whose `KeyManager` is `CUSTOMER`. A failing instance uses a key whose `KeyManager` is `AWS`.
       remediation:
         - id: console
           desc: |
-            To ensure DMS replication instances use encryption using the AWS Console:
+            To ensure DMS replication instances use a customer managed KMS key using the AWS Console:
 
             1. Navigate to the **AWS DMS** console.
             2. Create a new replication instance with **KMS key** specified under encryption settings.
 
-            Note: Encryption cannot be enabled on existing replication instances. You must create a new encrypted instance and migrate tasks to it.
+            Note: The KMS key of an existing replication instance cannot be changed. You must create a new instance with a customer managed key and migrate tasks to it.
         - id: cli
           desc: |
-            To ensure DMS replication instances use encryption using the AWS CLI:
+            To ensure DMS replication instances use a customer managed KMS key using the AWS CLI:
 
-            1. Encryption cannot be added to an existing instance, so create a replacement with a KMS key. `<kms-key-arn>` is the ARN of the customer managed key that encrypts the instance storage, and `<instance-class>` should match the instance being replaced:
+            1. The key of an existing instance cannot be changed, so create a replacement with a customer managed key. `<kms-key-arn>` is the ARN of the customer managed key that encrypts the instance storage, and `<instance-class>` should match the instance being replaced:
 
             ```bash
             aws dms create-replication-instance --replication-instance-identifier <new-instance-id> --replication-instance-class <instance-class> --kms-key-id <kms-key-arn>
@@ -28008,7 +28017,7 @@ queries:
             ```
         - id: terraform
           desc: |
-            To ensure DMS replication instances use encryption in Terraform:
+            To ensure DMS replication instances use a customer managed KMS key in Terraform:
 
             ```hcl
             resource "aws_dms_replication_instance" "example" {
@@ -28019,7 +28028,7 @@ queries:
             ```
         - id: cloudformation
           desc: |
-            To ensure DMS replication instances use encryption in CloudFormation:
+            To ensure DMS replication instances use a customer managed KMS key in CloudFormation:
 
             ```yaml
             Resources:
@@ -28035,7 +28044,9 @@ queries:
   - uid: mondoo-aws-security-dms-replication-encrypted-aws
     filters: asset.platform == "aws"
     mql: |
-      aws.dms.replicationInstances.all(kmsKey != empty)
+      aws.dms.replicationInstances.all(
+        kmsKey != empty && kmsKey.keyManager == "CUSTOMER"
+      )
   - uid: mondoo-aws-security-dms-replication-encrypted-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_dms_replication_instance")
     mql: |
@@ -28264,7 +28275,7 @@ queries:
           mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
-        This check verifies that Amazon Timestream for LiveAnalytics databases name an explicit KMS key. Timestream encrypts all data at rest by default using an AWS-managed key, but specifying a customer managed key gives control over the encryption lifecycle and produces an audit trail.
+        This check verifies that Amazon Timestream for LiveAnalytics databases are encrypted with a customer managed KMS key. Timestream encrypts all data at rest, and a database created without a key uses the AWS managed key `alias/aws/timestream`. Specifying a customer managed key gives control over the encryption lifecycle.
 
         The key is set with `aws timestream-write update-database --database-name <name> --kms-key-id <kms-key-arn>`, and chosen at creation for new databases.
 
@@ -28272,11 +28283,9 @@ queries:
 
         Naming a key makes the encryption configuration intentional and visible in infrastructure-as-code, rather than an opaque default that nobody selected and nobody can point to during a review.
 
-        All KMS key usage events are recorded in CloudTrail, which gives a precise record of when the time-series data was accessed and by whom, and there is no equivalent for the AWS-managed key.
+        The key policy of an AWS managed key cannot be edited, so every principal in the account that is allowed to use Timestream can use the key. A key you own has a policy you write, and it can be rotated on your schedule, disabled, or scheduled for deletion, which is what makes access revocation possible when a workload is retired or a compromise is suspected.
 
-        A key you own can be rotated, disabled, or scheduled for deletion, which is what makes access revocation possible when a workload is retired or a compromise is suspected.
-
-        Using a dedicated key for Timestream databases also limits a key compromise to those databases rather than to everything sharing an account-wide default. Note that the key must be specified at database creation for new databases, so getting it right up front avoids a migration later.
+        Using a dedicated key for Timestream databases also limits a key compromise to those databases rather than to everything sharing an account-wide default. The key of an existing database can be changed in place, so no data migration is needed.
       audit: |
         ### Audit via Console
 
@@ -28285,18 +28294,26 @@ queries:
         3. For each database, open the database details.
         4. Review the **KMS key** field under **Encryption configuration**.
 
-        A passing database shows a customer-managed KMS key ARN in the **KMS key** field. A failing database shows no KMS key or only the AWS-managed default key.
+        A passing database shows a customer managed KMS key in the **KMS key** field. A failing database shows the AWS managed key `aws/timestream`.
 
         ### Audit via CLI
 
-        1. List all Timestream databases and check their KMS key configuration:
+        1. List all Timestream databases and their KMS keys:
 
         ```bash
         aws timestream-write list-databases \
           --query "Databases[*].{DatabaseName:DatabaseName,KmsKeyId:KmsKeyId,Arn:Arn}"
         ```
 
-        A passing database returns a non-empty `KmsKeyId` value. A failing database returns `"KmsKeyId": null` or omits the field.
+        2. Every database returns a `KmsKeyId`, so check who manages each key:
+
+        ```bash
+        aws kms describe-key \
+          --key-id <kms-key-id> \
+          --query "KeyMetadata.KeyManager"
+        ```
+
+        A passing database uses a key whose `KeyManager` is `CUSTOMER`. A failing database uses a key whose `KeyManager` is `AWS`.
       remediation:
         - id: console
           desc: |
@@ -28348,7 +28365,9 @@ queries:
   - uid: mondoo-aws-security-timestream-database-encrypted-aws
     filters: asset.platform == "aws"
     mql: |
-      aws.timestream.liveanalytics.databases.all(kmsKey != null)
+      aws.timestream.liveanalytics.databases.all(
+        kmsKey != empty && kmsKey.keyManager == "CUSTOMER"
+      )
   - uid: mondoo-aws-security-timestream-database-encrypted-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_timestreamwrite_database")
     mql: |
@@ -28439,14 +28458,20 @@ queries:
 
         ### Audit via CLI
 
-        1. List all Timestream InfluxDB instances and check their public accessibility:
+        1. The list commands do not return the public accessibility setting, so read each instance and cluster individually:
 
         ```bash
-        aws timestream-influxdb list-db-instances \
-          --query "items[*].{Name:name,PubliclyAccessible:publiclyAccessible,Status:status}"
+        aws timestream-influxdb list-db-instances --query "items[*].id" --output text | tr '\t' '\n' | while read id; do
+          aws timestream-influxdb get-db-instance --identifier "$id" \
+            --query "{Name:name,PubliclyAccessible:publiclyAccessible,Status:status}"
+        done
+        aws timestream-influxdb list-db-clusters --query "items[*].id" --output text | tr '\t' '\n' | while read id; do
+          aws timestream-influxdb get-db-cluster --db-cluster-id "$id" \
+            --query "{Name:name,PubliclyAccessible:publiclyAccessible,Status:status}"
+        done
         ```
 
-        A passing instance returns `"PubliclyAccessible": false`. A failing instance returns `"PubliclyAccessible": true`.
+        A passing instance or cluster returns `"PubliclyAccessible": false`. A failing one returns `"PubliclyAccessible": true`.
       remediation:
         - id: console
           desc: |
@@ -28621,14 +28646,20 @@ queries:
 
         ### Audit via CLI
 
-        1. List all Timestream InfluxDB instances and check their log delivery configuration:
+        1. The list commands do not return the log delivery configuration, so read each instance and cluster individually:
 
         ```bash
-        aws timestream-influxdb list-db-instances \
-          --query "items[*].{Name:name,LogDelivery:logDeliveryConfiguration}"
+        aws timestream-influxdb list-db-instances --query "items[*].id" --output text | tr '\t' '\n' | while read id; do
+          aws timestream-influxdb get-db-instance --identifier "$id" \
+            --query "{Name:name,LogDelivery:logDeliveryConfiguration}"
+        done
+        aws timestream-influxdb list-db-clusters --query "items[*].id" --output text | tr '\t' '\n' | while read id; do
+          aws timestream-influxdb get-db-cluster --db-cluster-id "$id" \
+            --query "{Name:name,LogDelivery:logDeliveryConfiguration}"
+        done
         ```
 
-        A passing instance returns a `LogDelivery` object with `"enabled": true` and a non-empty `bucketName`. A failing instance returns `null` or a configuration where `"enabled": false`.
+        A passing instance or cluster returns a `LogDelivery` object with `"enabled": true` and a non-empty `bucketName`. A failing one returns `null` or a configuration where `"enabled": false`.
       remediation:
         - id: console
           desc: |
@@ -29408,6 +29439,12 @@ queries:
 
             ```bash
             aws rds modify-db-instance --db-instance-identifier <instance-id> --enable-iam-database-authentication --apply-immediately
+            ```
+
+            An Aurora DB instance takes the setting from its cluster, and RDS rejects this call for it. Enable IAM authentication on the cluster instead:
+
+            ```bash
+            aws rds modify-db-cluster --db-cluster-identifier <cluster-id> --enable-iam-database-authentication --apply-immediately
             ```
         - id: terraform
           desc: |
@@ -36186,7 +36223,7 @@ queries:
       desc: |
         This check verifies that an Amazon DocumentDB instance has `autoMinorVersionUpgrade` enabled, so it receives minor engine version upgrades during the maintenance window. It evaluates each instance directly.
 
-        The setting is enabled under maintenance when modifying an instance, or with `aws docdb modify-db-instance --auto-minor-version-upgrade --apply-immediately`.
+        The setting is chosen when the instance is created, with `aws docdb create-db-instance --auto-minor-version-upgrade`. DocumentDB rejects changing it on an existing instance with `modify-db-instance`, so an instance created without it is replaced.
 
         **Why this matters**
 
@@ -36232,13 +36269,25 @@ queries:
             7. Choose **Modify instance**.
         - id: cli
           desc: |
-            To ensure DocumentDB instances have automatic minor version upgrades enabled using the AWS CLI, enable automatic minor version upgrades for a DocumentDB instance:
+            To ensure DocumentDB instances have automatic minor version upgrades enabled using the AWS CLI:
+
+            DocumentDB rejects `aws docdb modify-db-instance --auto-minor-version-upgrade` with the error that the setting is a cluster setting, and AWS CLI 2.40 offers no such option on `modify-db-cluster`. Replace the instance instead:
+
+            1. Add an instance to the cluster with automatic minor version upgrades enabled:
 
             ```bash
-            aws docdb modify-db-instance \
-              --db-instance-identifier <instance-id> \
-              --auto-minor-version-upgrade \
-              --apply-immediately
+            aws docdb create-db-instance \
+              --db-instance-identifier <new-instance-id> \
+              --db-cluster-identifier <cluster-id> \
+              --db-instance-class <instance-class> \
+              --engine docdb \
+              --auto-minor-version-upgrade
+            ```
+
+            2. Once the new instance is available, delete the old one:
+
+            ```bash
+            aws docdb delete-db-instance --db-instance-identifier <instance-id>
             ```
 
             Verify the setting:
@@ -40642,9 +40691,9 @@ queries:
           mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
-        This check verifies that the KMS key encrypting an Amazon Redshift cluster is customer managed, by requiring its `KeyManager` to be `CUSTOMER`. Redshift supports encryption at rest with AWS-managed keys, but those leave key policy, rotation schedule, and revocation outside the account owner's control.
+        This check verifies that the KMS key encrypting an Amazon Redshift cluster is customer managed, by requiring its `KeyManager` to be `CUSTOMER`. A cluster created without a key is encrypted with an AWS owned key, which leaves key policy, rotation schedule, and revocation outside the account owner's control.
 
-        The key is shown under **Encryption** on the **Database configurations** tab of the cluster, and is changed through **Actions**, then **Modify**, or with `aws redshift modify-cluster --encrypted --kms-key-id arn:aws:kms:region:account-id:key/key-id`.
+        The key is shown under **Encryption** on the **Database configurations** tab of the cluster. Redshift rejects switching a cluster from an AWS owned key to a customer managed key in place, so such a cluster is moved by restoring a snapshot into a new cluster with `aws redshift restore-from-cluster-snapshot --kms-key-id <kms-key-arn>`.
 
         **Why this matters**
 
@@ -40693,22 +40742,33 @@ queries:
             4. Under **Database configurations**, enable encryption and select a customer-managed KMS key.
             5. Select **Modify cluster**.
 
-            Note: Changing the encryption key requires a cluster migration. Redshift will create an encrypted copy with the new key.
+            Note: A cluster encrypted with an AWS owned key cannot be switched in place. Restore a snapshot of it into a new cluster and choose the customer managed key during the restore.
         - id: cli
           desc: |
-            To ensure Redshift clusters are encrypted with a customer-managed KMS key using the AWS CLI, modify a cluster to use a customer-managed KMS key:
+            To ensure Redshift clusters are encrypted with a customer-managed KMS key using the AWS CLI:
+
+            1. A cluster whose `KmsKeyId` is `AWS_OWNED_KMS_KEY` cannot be switched in place, so take a snapshot of it:
 
             ```bash
-            aws redshift modify-cluster \
+            aws redshift create-cluster-snapshot \
               --cluster-identifier <cluster-id> \
-              --encrypted \
-              --kms-key-id arn:aws:kms:region:account-id:key/key-id
+              --snapshot-identifier <snapshot-id>
             ```
 
-            Verify the KMS key:
+            2. Restore the snapshot into a new cluster encrypted with the customer managed key. Add `--manage-master-password` when the source cluster's master password is managed in Secrets Manager, because the restore is rejected without it:
 
             ```bash
-            aws redshift describe-clusters --cluster-identifier <cluster-id> \
+            aws redshift restore-from-cluster-snapshot \
+              --cluster-identifier <new-cluster-id> \
+              --snapshot-identifier <snapshot-id> \
+              --encrypted \
+              --kms-key-id <kms-key-arn>
+            ```
+
+            3. Verify the KMS key of the new cluster, move clients to its endpoint, and delete the old cluster:
+
+            ```bash
+            aws redshift describe-clusters --cluster-identifier <new-cluster-id> \
               --query "Clusters[*].{ClusterId:ClusterIdentifier,KmsKeyId:KmsKeyId}"
             ```
         - id: terraform
@@ -46883,7 +46943,7 @@ queries:
 
         **Why this matters**
 
-        Without a customer managed key there is no way to enforce fine-grained access control over who can decrypt broker storage, and no way to audit key usage through CloudTrail.
+        The key policy of the AWS managed key cannot be edited, so there is no way to enforce fine-grained access control over who can decrypt broker storage.
 
         A key you own supports rotation policies, cross-account sharing controls, and revocation by disabling or deleting it, none of which the AWS-managed key exposes.
 
@@ -46913,7 +46973,15 @@ queries:
         done
         ```
 
-        A passing cluster returns a non-empty `KMSKeyId` value containing a customer-managed key ARN. A failing cluster returns an empty or null `KMSKeyId`.
+        2. Every cluster returns a `KMSKeyId`, because a cluster created without a key uses the AWS managed key `aws/kafka`. Check who manages each key:
+
+        ```bash
+        aws kms describe-key \
+          --key-id <kms-key-id> \
+          --query "KeyMetadata.KeyManager"
+        ```
+
+        A passing cluster uses a key whose `KeyManager` is `CUSTOMER`. A failing cluster uses a key whose `KeyManager` is `AWS`.
       remediation:
         - id: console
           desc: |
@@ -46995,7 +47063,7 @@ queries:
   - uid: mondoo-aws-security-msk-encryption-at-rest-aws
     filters: asset.platform == "aws-msk-cluster"
     mql: |
-      aws.msk.cluster.kmsKey != empty
+      aws.msk.cluster.kmsKey != empty && aws.msk.cluster.kmsKey.keyManager == "CUSTOMER"
   - uid: mondoo-aws-security-msk-encryption-at-rest-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_msk_cluster")
     mql: |
@@ -53525,7 +53593,7 @@ queries:
           mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
-        This check verifies that domains managed through the legacy Amazon Elasticsearch Service resource use a TLS security policy of `Policy-Min-TLS-1-2-2019-07` or `Policy-Min-TLS-1-2-PFS-2023-10`, both of which require TLS 1.2 as a minimum.
+        This check verifies that domains managed through the legacy Amazon Elasticsearch Service resource use a TLS security policy that requires TLS 1.2 as a minimum. Every such policy name starts with `Policy-Min-TLS-1-2-`, for example `Policy-Min-TLS-1-2-2019-07` and `Policy-Min-TLS-1-2-PFS-2023-10`; the only other policy, `Policy-Min-TLS-1-0-2019-07`, accepts TLS 1.0.
 
         The policy is set under **Domain endpoint options** when editing the security configuration, or with `aws es update-elasticsearch-domain-config --domain-endpoint-options EnforceHTTPS=true,TLSSecurityPolicy=Policy-Min-TLS-1-2-2019-07`.
 
@@ -53537,16 +53605,16 @@ queries:
 
         Requiring TLS 1.2 or higher means every connection uses modern cryptographic standards with strong cipher suites, and `Policy-Min-TLS-1-2-PFS-2023-10` additionally restricts negotiation to forward-secret suites.
 
-        Those versions are also what PCI DSS, NIST SP 800-52, and comparable standards require, so the policy name doubles as the compliance evidence. A companion check in this policy asserts the same requirement for domains managed as OpenSearch Service resources, where a wider set of `Policy-Min-TLS-1-2` policies is accepted.
+        Those versions are also what PCI DSS, NIST SP 800-52, and comparable standards require, so the policy name doubles as the compliance evidence. A companion check in this policy asserts the same requirement for domains managed as OpenSearch Service resources.
       audit: |
         ### Audit via Console
 
         1. Sign in to the AWS Management Console and navigate to **Amazon OpenSearch Service**.
         2. Choose **Domains** in the left navigation and select the domain to review.
         3. Choose the **Security configuration** tab, or **Actions** then **Edit security configuration**.
-        4. Under **HTTPS**, verify that the **TLS security policy** is set to **Policy-Min-TLS-1-2-2019-07** or **Policy-Min-TLS-1-2-PFS-2023-10**.
+        4. Under **HTTPS**, verify that the **TLS security policy** name starts with **Policy-Min-TLS-1-2-**.
 
-        A passing domain shows a TLS policy of `Policy-Min-TLS-1-2-2019-07` or stronger. A failing domain shows `Policy-Min-TLS-1-0-2020-07` or a weaker policy.
+        A passing domain shows a policy whose name starts with `Policy-Min-TLS-1-2-`, such as `Policy-Min-TLS-1-2-2019-07` or `Policy-Min-TLS-1-2-PFS-2023-10`. A failing domain shows `Policy-Min-TLS-1-0-2019-07`.
 
         ### Audit via CLI
 
@@ -53558,7 +53626,7 @@ queries:
           --query "DomainStatus.DomainEndpointOptions.TLSSecurityPolicy"
         ```
 
-        A passing domain returns `"Policy-Min-TLS-1-2-2019-07"` or `"Policy-Min-TLS-1-2-PFS-2023-10"`. A failing domain returns `"Policy-Min-TLS-1-0-2020-07"` or any value below TLS 1.2.
+        A passing domain returns a policy whose name starts with `Policy-Min-TLS-1-2-`. A failing domain returns `"Policy-Min-TLS-1-0-2019-07"`.
       remediation:
         - id: console
           desc: |
@@ -53624,16 +53692,14 @@ queries:
   - uid: mondoo-aws-security-elasticsearch-tls-policy-aws
     filters: asset.platform == "aws-es-domain"
     mql: |
-      aws.es.domain.tlsSecurityPolicy == "Policy-Min-TLS-1-2-2019-07" ||
-      aws.es.domain.tlsSecurityPolicy == "Policy-Min-TLS-1-2-PFS-2023-10"
+      aws.es.domain.tlsSecurityPolicy == /^Policy-Min-TLS-1-2-/
   - uid: mondoo-aws-security-elasticsearch-tls-policy-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_elasticsearch_domain")
     mql: |
       terraform.resources("aws_elasticsearch_domain").all(
         blocks.where(type == "domain_endpoint_options") != empty &&
         blocks.where(type == "domain_endpoint_options").all(
-          arguments.tls_security_policy == "Policy-Min-TLS-1-2-2019-07" ||
-          arguments.tls_security_policy == "Policy-Min-TLS-1-2-PFS-2023-10"
+          arguments.tls_security_policy == /^Policy-Min-TLS-1-2-/
         )
       )
   - uid: mondoo-aws-security-elasticsearch-tls-policy-terraform-plan
@@ -53642,8 +53708,7 @@ queries:
       terraform.plan.resourceChanges.where(type == "aws_elasticsearch_domain").all(
         change.after.domain_endpoint_options != empty &&
         change.after.domain_endpoint_options.all(
-          tls_security_policy == "Policy-Min-TLS-1-2-2019-07" ||
-          tls_security_policy == "Policy-Min-TLS-1-2-PFS-2023-10"
+          tls_security_policy == /^Policy-Min-TLS-1-2-/
         )
       )
   - uid: mondoo-aws-security-elasticsearch-tls-policy-terraform-state
@@ -53652,8 +53717,7 @@ queries:
       terraform.state.resources.where(type == "aws_elasticsearch_domain").all(
         values.domain_endpoint_options != empty &&
         values.domain_endpoint_options.all(
-          tls_security_policy == "Policy-Min-TLS-1-2-2019-07" ||
-          tls_security_policy == "Policy-Min-TLS-1-2-PFS-2023-10"
+          tls_security_policy == /^Policy-Min-TLS-1-2-/
         )
       )
   - uid: mondoo-aws-security-elasticsearch-tls-policy-cloudformation
@@ -53661,7 +53725,7 @@ queries:
     mql: |
       cloudformation.template.resources.where(type == "AWS::Elasticsearch::Domain").all(
         properties['DomainEndpointOptions'] != empty &&
-        properties['DomainEndpointOptions']['TLSSecurityPolicy'] == /^Policy-Min-TLS-1-2-(2019-07|PFS-2023-10)$/
+        properties['DomainEndpointOptions']['TLSSecurityPolicy'] == /^Policy-Min-TLS-1-2-/
       )
   - uid: mondoo-aws-security-elasticsearch-audit-logging
     title: Ensure Elasticsearch domains have audit logging enabled
@@ -56003,12 +56067,13 @@ queries:
             7. Save the changes.
         - id: cli
           desc: |
-            To ensure ElastiCache clusters have backup retention using the AWS CLI, set a snapshot retention limit above `0`, which turns on automatic backups. Any value of `1` or more passes the check; `7` keeps a week of daily snapshots. For a cluster that belongs to a replication group:
+            To ensure ElastiCache clusters have backup retention using the AWS CLI, set a snapshot retention limit above `0`, which turns on automatic backups. Any value of `1` or more passes the check; `7` keeps a week of daily snapshots. For a cluster that belongs to a replication group, name the node that takes the snapshots. With cluster mode disabled, ElastiCache rejects turning snapshots on without one:
 
             ```bash
             aws elasticache modify-replication-group \
               --replication-group-id <replication-group-id> \
               --snapshot-retention-limit 7 \
+              --snapshotting-cluster-id <cache-cluster-id> \
               --apply-immediately
             ```
 
@@ -56062,7 +56127,7 @@ queries:
       - url: https://docs.aws.amazon.com/AmazonElastiCache/latest/dg/backups.html
         title: AWS Documentation - Backup and restore for ElastiCache for Redis
   - uid: mondoo-aws-security-elasticache-backup-retention-aws
-    filters: asset.platform == "aws-elasticache-cluster" && aws.elasticache.cluster.engine == "redis"
+    filters: asset.platform == "aws-elasticache-cluster" && aws.elasticache.cluster.engine.in(["redis", "valkey"])
     mql: aws.elasticache.cluster.snapshotRetentionLimit > 0
   - uid: mondoo-aws-security-elasticache-backup-retention-terraform-hcl
     filters: |
@@ -56488,7 +56553,7 @@ queries:
       desc: |
         This check verifies that Amazon RDS DB instances have deletion protection enabled. Instances are created without it, which means any IAM principal holding `rds:DeleteDBInstance` can permanently destroy the instance in a single API call.
 
-        The value appears as **Deletion protection** on the **Configuration** tab, and is set with `aws rds modify-db-instance --deletion-protection --apply-immediately`.
+        The value appears as **Deletion protection** on the **Configuration** tab, and is set with `aws rds modify-db-instance --deletion-protection --apply-immediately`. An instance that belongs to an Aurora or Multi-AZ DB cluster has no deletion protection of its own: RDS rejects the setting on the instance and enforces the cluster's, so such an instance passes when its cluster has deletion protection enabled.
 
         **Why this matters**
 
@@ -56518,7 +56583,7 @@ queries:
           --query "DBInstances[*].{DBInstanceId:DBInstanceIdentifier,DeletionProtection:DeletionProtection}"
         ```
 
-        A passing DB instance returns `"DeletionProtection": true`. A failing DB instance returns `"DeletionProtection": false`.
+        A passing DB instance returns `"DeletionProtection": true`. A failing DB instance returns `"DeletionProtection": false`. An instance that belongs to a cluster always returns `false`; check its cluster with `aws rds describe-db-clusters` instead.
       remediation:
         - id: console
           desc: |
@@ -56538,6 +56603,15 @@ queries:
             ```bash
             aws rds modify-db-instance \
               --db-instance-identifier <db-instance-id> \
+              --deletion-protection \
+              --apply-immediately
+            ```
+
+            For an instance that belongs to an Aurora or Multi-AZ DB cluster, RDS rejects this call. Enable deletion protection on the cluster instead:
+
+            ```bash
+            aws rds modify-db-cluster \
+              --db-cluster-identifier <db-cluster-id> \
               --deletion-protection \
               --apply-immediately
             ```
@@ -56582,7 +56656,8 @@ queries:
         title: AWS Documentation - Deleting a DB instance
   - uid: mondoo-aws-security-rds-deletion-protection-aws
     filters: asset.platform == "aws-rds-dbinstance"
-    mql: aws.rds.dbinstance.deletionProtection == true
+    mql: |
+      aws.rds.dbinstance.deletionProtection == true || aws.rds.dbinstance.dbCluster.deletionProtection == true
   - uid: mondoo-aws-security-rds-deletion-protection-terraform-hcl
     filters: |
       asset.platform == "terraform-hcl"
@@ -56616,7 +56691,7 @@ queries:
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::RDS::DBInstance")
     mql: |
       cloudformation.template.resources.where(type == "AWS::RDS::DBInstance").all(
-        properties['DeletionProtection'] == true
+        properties['DBClusterIdentifier'] != empty || properties['DeletionProtection'] == true
       )
   - uid: mondoo-aws-security-rds-cluster-deletion-protection
     title: Ensure RDS DB clusters have deletion protection enabled
@@ -59377,7 +59452,7 @@ queries:
   - uid: mondoo-aws-security-rds-instance-cmk-encryption-aws
     filters: asset.platform == "aws-rds-dbinstance"
     mql: |
-      aws.rds.dbinstance.kmsKey { metadata["KeyManager"] == "CUSTOMER" }
+      aws.rds.dbinstance.kmsKey != empty && aws.rds.dbinstance.kmsKey.keyManager == "CUSTOMER"
   - uid: mondoo-aws-security-rds-instance-cmk-encryption-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_db_instance")
     mql: |
@@ -59760,7 +59835,7 @@ queries:
   - uid: mondoo-aws-security-rds-snapshot-cmk-encryption-aws
     filters: asset.platform == "aws-rds-snapshot"
     mql: |
-      aws.rds.snapshot.kmsKey { metadata["KeyManager"] == "CUSTOMER" }
+      aws.rds.snapshot.kmsKey != empty && aws.rds.snapshot.kmsKey.keyManager == "CUSTOMER"
   - uid: mondoo-aws-security-emr-not-publicly-accessible
     title: Ensure EMR clusters are not publicly accessible
     impact: 90
@@ -60692,8 +60767,8 @@ queries:
   - uid: mondoo-aws-security-redshift-secrets-manager-cmk-aws
     filters: asset.platform == "aws-redshift-cluster"
     mql: |
-      aws.redshift.cluster.masterPasswordSecretKmsKey != null &&
-      aws.redshift.cluster.masterPasswordSecretKmsKey.keyManager == "CUSTOMER"
+      aws.redshift.cluster.masterPasswordSecret == empty ||
+      aws.redshift.cluster.masterPasswordSecretKmsKey != empty && aws.redshift.cluster.masterPasswordSecretKmsKey.keyManager == "CUSTOMER"
   - uid: mondoo-aws-security-redshift-secrets-manager-cmk-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_redshift_cluster")
     mql: |
@@ -62763,7 +62838,7 @@ queries:
       - url: https://docs.aws.amazon.com/AmazonElastiCache/latest/dg/security.html
         title: AWS Documentation - Security in Amazon ElastiCache
   - uid: mondoo-aws-security-elasticache-cmk-encryption-aws
-    filters: asset.platform == "aws-elasticache-cluster" && aws.elasticache.cluster.engine == "redis"
+    filters: asset.platform == "aws-elasticache-cluster" && aws.elasticache.cluster.engine.in(["redis", "valkey"])
     mql: aws.elasticache.cluster.kmsKey != null && aws.elasticache.cluster.kmsKey.keyManager == "CUSTOMER"
   - uid: mondoo-aws-security-elasticache-cmk-encryption-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_elasticache_replication_group")
@@ -70080,7 +70155,7 @@ queries:
       desc: |
         This check verifies that every Amazon DocumentDB instance belonging to a cluster has `autoMinorVersionUpgrade` set to `true`, evaluating the instances as a set from the cluster rather than one at a time. When disabled, instances stay on their launched engine version and the gap to the current patched release grows with every AWS release cycle.
 
-        The setting is enabled under maintenance on each instance, or with `aws docdb modify-db-instance --auto-minor-version-upgrade --apply-immediately`.
+        The setting is chosen when each instance is created, with `aws docdb create-db-instance --auto-minor-version-upgrade`. DocumentDB rejects changing it on an existing instance with `modify-db-instance`, so an instance created without it is replaced.
 
         **Why this matters**
 
@@ -70124,13 +70199,25 @@ queries:
             4. Apply changes immediately or during the next maintenance window.
         - id: cli
           desc: |
-            Enable auto minor version upgrade on a DocumentDB instance:
+            Enable auto minor version upgrade on every DocumentDB instance in the cluster.
+
+            DocumentDB rejects `aws docdb modify-db-instance --auto-minor-version-upgrade` with the error that the setting is a cluster setting, and AWS CLI 2.40 offers no such option on `modify-db-cluster`. Replace the instance instead:
+
+            1. Add an instance to the cluster with automatic minor version upgrades enabled:
 
             ```bash
-            aws docdb modify-db-instance \
-              --db-instance-identifier <instance-id> \
-              --auto-minor-version-upgrade \
-              --apply-immediately
+            aws docdb create-db-instance \
+              --db-instance-identifier <new-instance-id> \
+              --db-cluster-identifier <cluster-id> \
+              --db-instance-class <instance-class> \
+              --engine docdb \
+              --auto-minor-version-upgrade
+            ```
+
+            2. Once the new instance is available, delete the old one:
+
+            ```bash
+            aws docdb delete-db-instance --db-instance-identifier <instance-id>
             ```
         - id: terraform
           desc: |
@@ -80912,7 +80999,7 @@ queries:
       - url: https://docs.aws.amazon.com/AmazonElastiCache/latest/dg/backups.html
         title: ElastiCache backup and restore
   - uid: mondoo-aws-security-elasticache-snapshot-kms-encryption-aws
-    filters: asset.platform == "aws-elasticache-cluster" && aws.elasticache.cluster.engine == "redis"
+    filters: asset.platform == "aws-elasticache-cluster" && aws.elasticache.cluster.engine.in(["redis", "valkey"])
     mql: |
       aws.elasticache.cluster.snapshotRetentionLimit == 0 ||
       aws.elasticache.cluster.atRestEncryptionEnabled == true &&
@@ -83847,7 +83934,7 @@ queries:
 
         ```bash
         aws neptune-graph get-graph --graph-identifier <graph-id> \
-          --query "PublicConnectivity" --output text
+          --query "publicConnectivity" --output text
         ```
 
         A passing graph returns `False`. A failing graph returns `True`.
@@ -88204,7 +88291,7 @@ queries:
     filters: |
       asset.platform == "aws-mq-broker"
     mql: |
-      aws.mq.broker.useAwsOwnedKey == false
+      aws.mq.broker.useAwsOwnedKey == false && aws.mq.broker.kmsKey.keyManager == "CUSTOMER"
   - uid: mondoo-aws-security-mq-broker-auto-minor-version-upgrade
     title: Ensure MQ brokers enable automatic minor version upgrades
     impact: 60
@@ -88246,15 +88333,13 @@ queries:
           mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
-        This check verifies that Amazon MQ brokers have automatic minor version upgrades enabled, so new minor engine versions are applied during the broker's maintenance window as they are released. The AWS default for this setting is disabled.
+        This check verifies that Amazon MQ brokers have automatic minor version upgrades enabled, so new minor engine versions are applied during the broker's maintenance window as they are released. On ActiveMQ 5.18 and later Amazon MQ rejects a broker with this setting disabled, so a failing broker runs an older engine version.
 
         The setting is toggled under engine settings when editing a broker, or applied with `aws mq update-broker --broker-id <broker-id> --auto-minor-version-upgrade`.
 
         **Why this matters**
 
         Minor engine releases frequently include fixes for published vulnerabilities in ActiveMQ or RabbitMQ, and enabling automatic upgrades is what applies those fixes without anyone scheduling the work.
-
-        Because the default is disabled, a broker created without changing it is opted out of patching from the moment it exists, which is the opposite of what most operators assume.
 
         Tracking and scheduling every minor engine release manually across a fleet of brokers is work that does not get done consistently, and the brokers that fall behind are usually the ones nobody is looking at.
 
@@ -89873,9 +89958,7 @@ queries:
   - uid: mondoo-aws-security-rds-snapshot-not-shared-aws
     filters: asset.platform == "aws-rds-snapshot"
     mql: |
-      aws.rds.snapshot.attributes
-        .where(_["AttributeName"] == "restore")
-        .all(_["AttributeValues"] == empty)
+      aws.rds.snapshot.restoreAttributes.where(key == "restore").values.flat == empty
   # No Terraform variants: RADIUS status is operational telemetry reported by the service, not a configuration value with a Terraform or CloudFormation analog.
   - uid: mondoo-aws-security-rds-instance-auto-minor-version-upgrade
     title: Ensure RDS DB instances have automatic minor version upgrades enabled
@@ -90152,6 +90235,15 @@ queries:
             aws rds modify-db-instance \
               --db-instance-identifier <instance-id> \
               --cloudwatch-logs-export-configuration '{"EnableLogTypes":["postgresql","upgrade"]}' \
+              --apply-immediately
+            ```
+
+            An Aurora DB instance reports the log exports of its cluster, and RDS rejects this call for it. Configure the exports on the cluster instead:
+
+            ```bash
+            aws rds modify-db-cluster \
+              --db-cluster-identifier <cluster-id> \
+              --cloudwatch-logs-export-configuration '{"EnableLogTypes":["postgresql"]}' \
               --apply-immediately
             ```
 
@@ -91981,7 +92073,7 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-4-2-1
       compliance/soc2-2017: soc2-control-cc6-7-2
       compliance/vda-isa-5: vda-isa-5-5-1-2
-    filters: asset.platform == "aws-elasticache-cluster" && aws.elasticache.cluster.engine == "redis"
+    filters: asset.platform == "aws-elasticache-cluster" && aws.elasticache.cluster.engine.in(["redis", "valkey"])
     mql: |
       aws.elasticache.cluster.transitEncryptionMode == "required"
     docs:
