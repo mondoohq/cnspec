@@ -26015,7 +26015,7 @@ queries:
 
         PCI DSS and NIST guidance prohibit these suites outright, and a gateway offering them will fail an external scan however strong the rest of the configuration is.
 
-        Predefined policies such as `AppGwSslPolicy20220101` already exclude them and are usually a better starting point than a hand-written list. The check reads the cipher list of the gateway policy and of every SSL profile, since a profile overrides the gateway policy for the listeners it is attached to. A predefined policy names no suites of its own, and the policies Azure still accepts exclude these families. An unset policy passes only on a `Standard_v2` or `WAF_v2` gateway, where Azure applies its default `AppGwSslPolicy20220101` for API version 2023-02-01 and later; the Terraform and Bicep versions of this check require an explicit policy on any other SKU, and the Bicep version also requires that API version.
+        Predefined policies such as `AppGwSslPolicy20220101` already exclude them and are usually a better starting point than a hand-written list. The check reads the cipher list of the gateway policy and of every SSL profile, since a profile overrides the gateway policy for the listeners it is attached to. A predefined policy names no suites of its own, so the check accepts it by name: `AppGwSslPolicy20170401`, `AppGwSslPolicy20170401S`, `AppGwSslPolicy20220101`, and `AppGwSslPolicy20220101S` exclude these families and pass, while `AppGwSslPolicy20150501` includes two `3DES` suites and fails. A custom policy with TLS 1.3 as its minimum version also lists no suites and passes, because every TLS 1.3 suite is strong. An unset policy passes only on a `Standard_v2` or `WAF_v2` gateway, where Azure applies its default `AppGwSslPolicy20220101` for API version 2023-02-01 and later; the Terraform and Bicep versions of this check require an explicit policy on any other SKU, and the Bicep version also requires that API version.
       audit: |
         ### Audit via Portal
 
@@ -26171,13 +26171,17 @@ queries:
       )
       terraform.resources("azurerm_application_gateway").all(
         blocks.where(type == "ssl_policy").all(
-          arguments['cipher_suites'] == empty ||
-          arguments['cipher_suites'].none(_ == /RC4|3DES|NULL|EXPORT/)
+          arguments['cipher_suites'] != empty && arguments['cipher_suites'].none(_ == /RC4|3DES|NULL|EXPORT/) ||
+          arguments['cipher_suites'] == empty && arguments['min_protocol_version'] == "TLSv1_3" ||
+          arguments['cipher_suites'] == empty && arguments['policy_type'] != "Custom" && arguments['policy_type'] != "CustomV2" &&
+            arguments['policy_name'] == /^AppGwSslPolicy(20170401S?|20220101S?)$/
         ) &&
         blocks.where(type == "ssl_profile").all(
           blocks.where(type == "ssl_policy").all(
-            arguments['cipher_suites'] == empty ||
-            arguments['cipher_suites'].none(_ == /RC4|3DES|NULL|EXPORT/)
+            arguments['cipher_suites'] != empty && arguments['cipher_suites'].none(_ == /RC4|3DES|NULL|EXPORT/) ||
+            arguments['cipher_suites'] == empty && arguments['min_protocol_version'] == "TLSv1_3" ||
+            arguments['cipher_suites'] == empty && arguments['policy_type'] != "Custom" && arguments['policy_type'] != "CustomV2" &&
+              arguments['policy_name'] == /^AppGwSslPolicy(20170401S?|20220101S?)$/
           )
         )
       )
@@ -26190,11 +26194,17 @@ queries:
       )
       terraform.plan.resourceChanges.where(type == "azurerm_application_gateway").all(
         change.after['ssl_policy'].all(
-          _['cipher_suites'] == empty || _['cipher_suites'].none(_ == /RC4|3DES|NULL|EXPORT/)
+          _['cipher_suites'] != empty && _['cipher_suites'].none(_ == /RC4|3DES|NULL|EXPORT/) ||
+          _['cipher_suites'] == empty && _['min_protocol_version'] == "TLSv1_3" ||
+          _['cipher_suites'] == empty && _['policy_type'] != "Custom" && _['policy_type'] != "CustomV2" &&
+            _['policy_name'] == /^AppGwSslPolicy(20170401S?|20220101S?)$/
         ) &&
         change.after['ssl_profile'].all(
           _['ssl_policy'].all(
-            _['cipher_suites'] == empty || _['cipher_suites'].none(_ == /RC4|3DES|NULL|EXPORT/)
+            _['cipher_suites'] != empty && _['cipher_suites'].none(_ == /RC4|3DES|NULL|EXPORT/) ||
+            _['cipher_suites'] == empty && _['min_protocol_version'] == "TLSv1_3" ||
+            _['cipher_suites'] == empty && _['policy_type'] != "Custom" && _['policy_type'] != "CustomV2" &&
+              _['policy_name'] == /^AppGwSslPolicy(20170401S?|20220101S?)$/
           )
         )
       )
@@ -26207,11 +26217,17 @@ queries:
       )
       terraform.state.resources.where(type == "azurerm_application_gateway").all(
         values['ssl_policy'].all(
-          _['cipher_suites'] == empty || _['cipher_suites'].none(_ == /RC4|3DES|NULL|EXPORT/)
+          _['cipher_suites'] != empty && _['cipher_suites'].none(_ == /RC4|3DES|NULL|EXPORT/) ||
+          _['cipher_suites'] == empty && _['min_protocol_version'] == "TLSv1_3" ||
+          _['cipher_suites'] == empty && _['policy_type'] != "Custom" && _['policy_type'] != "CustomV2" &&
+            _['policy_name'] == /^AppGwSslPolicy(20170401S?|20220101S?)$/
         ) &&
         values['ssl_profile'].all(
           _['ssl_policy'].all(
-            _['cipher_suites'] == empty || _['cipher_suites'].none(_ == /RC4|3DES|NULL|EXPORT/)
+            _['cipher_suites'] != empty && _['cipher_suites'].none(_ == /RC4|3DES|NULL|EXPORT/) ||
+            _['cipher_suites'] == empty && _['min_protocol_version'] == "TLSv1_3" ||
+            _['cipher_suites'] == empty && _['policy_type'] != "Custom" && _['policy_type'] != "CustomV2" &&
+              _['policy_name'] == /^AppGwSslPolicy(20170401S?|20220101S?)$/
           )
         )
       )
@@ -26224,24 +26240,39 @@ queries:
         properties["sku"]["name"] == "WAF_v2" && apiVersion >= "2023-02-01"
       )
       bicep.resources.where(type == "Microsoft.Network/applicationGateways").all(
-        properties["sslPolicy"]["cipherSuites"] == empty ||
-        properties["sslPolicy"]["cipherSuites"].none(_ == /RC4|3DES|NULL|EXPORT/)
+        properties["sslPolicy"] == empty ||
+        properties["sslPolicy"]["cipherSuites"] != empty && properties["sslPolicy"]["cipherSuites"].none(_ == /RC4|3DES|NULL|EXPORT/) ||
+        properties["sslPolicy"]["cipherSuites"] == empty && properties["sslPolicy"]["minProtocolVersion"] == "TLSv1_3" ||
+        properties["sslPolicy"]["cipherSuites"] == empty && properties["sslPolicy"]["policyType"] != "Custom" && properties["sslPolicy"]["policyType"] != "CustomV2" &&
+          properties["sslPolicy"]["policyName"] == /^AppGwSslPolicy(20170401S?|20220101S?)$/
       )
       bicep.resources.where(type == "Microsoft.Network/applicationGateways").all(
         properties["sslProfiles"] == empty ||
         properties["sslProfiles"].all(
-          _["properties"]["sslPolicy"]["cipherSuites"] == empty ||
-          _["properties"]["sslPolicy"]["cipherSuites"].none(_ == /RC4|3DES|NULL|EXPORT/)
+          _["properties"]["sslPolicy"] == empty ||
+          _["properties"]["sslPolicy"]["cipherSuites"] != empty && _["properties"]["sslPolicy"]["cipherSuites"].none(_ == /RC4|3DES|NULL|EXPORT/) ||
+          _["properties"]["sslPolicy"]["cipherSuites"] == empty && _["properties"]["sslPolicy"]["minProtocolVersion"] == "TLSv1_3" ||
+          _["properties"]["sslPolicy"]["cipherSuites"] == empty && _["properties"]["sslPolicy"]["policyType"] != "Custom" && _["properties"]["sslPolicy"]["policyType"] != "CustomV2" &&
+            _["properties"]["sslPolicy"]["policyName"] == /^AppGwSslPolicy(20170401S?|20220101S?)$/
         )
       )
   - uid: mondoo-azure-security-appgw-no-weak-ciphers-azure
     filters: asset.platform == "azure-application-gateway"
     mql: |
-      azure.subscription.networkService.applicationGateway.sslCipherSuites.none(
-        _ == /RC4|3DES|NULL|EXPORT/
-      )
-      azure.subscription.networkService.applicationGateway.sslProfiles.all(
+      appGateway = azure.subscription.networkService.applicationGateway
+      appGateway.sslCipherSuites.none(_ == /RC4|3DES|NULL|EXPORT/)
+      appGateway.sslCipherSuites != empty ||
+      appGateway.sslMinProtocolVersion == "TLSv1_3" ||
+      appGateway.properties["sslPolicy"]["policyName"] == /^AppGwSslPolicy(20170401S?|20220101S?)$/ ||
+      appGateway.properties["sslPolicy"] == empty && appGateway.defaultPredefinedSslPolicy == /^AppGwSslPolicy(20170401S?|20220101S?)$/
+      appGateway.sslProfiles.all(
         sslCipherSuites.none(_ == /RC4|3DES|NULL|EXPORT/)
+      )
+      appGateway.sslProfiles.all(
+        sslCipherSuites != empty ||
+        sslMinProtocolVersion == "TLSv1_3" ||
+        sslPolicyName == /^AppGwSslPolicy(20170401S?|20220101S?)$/ ||
+        sslPolicyType == empty && sslPolicyName == empty
       )
   - uid: mondoo-azure-security-public-ip-ddos-protection
     title: Ensure public IP addresses have DDoS protection
