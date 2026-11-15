@@ -6404,7 +6404,7 @@ queries:
       desc: |
         This check verifies that every container running on an OCI Container Instance is pulled from the tenancy's own registry rather than from an arbitrary external one.
 
-        Each container in an instance carries an image URL, and the check requires it to begin with a regional OCI Container Registry (OCIR) hostname matching the `*.ocir.io` pattern, meaning a region key followed by `.ocir.io`, such as `iad.ocir.io` or `phx.ocir.io`. By default Container Instances accept any image URL at all, including references to public registries such as Docker Hub or GitHub Container Registry that the tenancy neither controls nor can audit. Image URLs are set per container when the instance is created under Developer Services > Container Instances, and the Terraform versions additionally require at least one container to be declared, so an instance with no containers block cannot pass by default.
+        Each container in an instance carries an image URL, and the check requires it to name a regional OCI Container Registry (OCIR) hostname, a region key or region identifier followed by `.ocir.io` such as `iad.ocir.io` or `us-ashburn-1.ocir.io`, followed by the tenancy's own Object Storage namespace, so `<region-key>.ocir.io/<namespace>/<repository>`. Matching the hostname alone would accept a public repository in any other tenancy. The Terraform versions check the hostname only, because the tenancy's namespace is not known from a manifest. By default Container Instances accept any image URL at all, including references to public registries such as Docker Hub or GitHub Container Registry that the tenancy neither controls nor can audit. Image URLs are set per container when the instance is created under Developer Services > Container Instances, and the Terraform versions additionally require at least one container to be declared, so an instance with no containers block cannot pass by default.
 
         **Why this matters**
 
@@ -6420,9 +6420,9 @@ queries:
 
         1. Open the OCI Console and navigate to **Developer Services** > **Container Instances**.
         2. For each container instance, select it and view the **Containers** tab.
-        3. For each container listed, note the **Image** field. Verify that the image URL begins with a regional OCIR hostname in the format `<region-key>.ocir.io/<namespace>/...`.
+        3. For each container listed, note the **Image** field. Verify that the image URL begins with a regional OCIR hostname followed by the tenancy's namespace, in the format `<region-key>.ocir.io/<namespace>/...`. The namespace is shown under **Tenancy details** as **Object storage namespace**, or returned by `oci os ns get`.
 
-        A passing container instance shows all container images sourced from `*.ocir.io`. A failing container instance shows at least one container image referencing an external registry such as `docker.io`, `ghcr.io`, or `quay.io`.
+        A passing container instance shows all container images sourced from the tenancy's own namespace on `*.ocir.io`. A failing container instance shows at least one container image referencing an external registry such as `docker.io`, `ghcr.io`, or `quay.io`.
 
         ### Audit via CLI
 
@@ -6444,7 +6444,7 @@ queries:
           --output table
         ```
 
-        A passing container instance returns image URLs that all begin with `<region>.ocir.io/`. A failing container instance returns at least one image URL that does not match that pattern.
+        A passing container instance returns image URLs that all begin with `<region>.ocir.io/<namespace>/`, where `<namespace>` is the value `oci os ns get` returns. A failing container instance returns at least one image URL from another registry or another tenancy's namespace.
       remediation:
         - id: console
           desc: |
@@ -6527,8 +6527,14 @@ queries:
     filters: asset.platform == 'oci'
     mql: |
       # A deleted container instance stays in the list for a while, with the settings it had.
+      # OCIR addresses an image as <region-key or region>.ocir.io/<namespace>/<repository>,
+      # and the namespace is the tenancy's Object Storage namespace. A host match alone
+      # passes a public repository in any other tenancy.
       oci.containerInstances.instances.where(state != "DELETED" && state != "DELETING").all(
-        containers.all(imageUrl == /^[a-z0-9-]+\.ocir\.io\//)
+        containers.all(
+          imageUrl == /^[a-z0-9-]+\.ocir\.io\/[^\/]+\/./ &&
+          imageUrl.split("/")[1] == oci.objectStorage.namespace
+        )
       )
   - uid: mondoo-oci-security-container-instances-approved-registry-terraform-hcl
     filters: |
@@ -11854,7 +11860,7 @@ queries:
       desc: |
         This check verifies that the access control list guarding an Autonomous Database's Data Guard standby contains no entry that admits the internet at large: `0.0.0.0/0`, a bare `0.0.0.0`, the IPv6 equivalent `::/0`, or an IPv4 prefix of `/7` or shorter or an IPv6 prefix of `/6` or shorter, such as the pair `0.0.0.0/1` and `128.0.0.0/1` that together cover every address.
 
-        An Autonomous Data Guard standby keeps an access control list of its own, separate from the primary's and editable independently. The two are configured in different places in the Console, under the primary database's Network section and its Autonomous Data Guard section, so they diverge quietly. An any-address entry on the standby means its endpoint accepts connection attempts from every network on the internet, including the ones the primary's list was written to exclude.
+        An Autonomous Data Guard standby enforces either the primary's access control list or one of its own, separate from the primary's and editable independently, and `arePrimaryWhitelistedIpsUsed` records which. The check evaluates whichever list the standby enforces, and fails a database with Data Guard enabled that reports neither. The two are configured in different places in the Console, under the primary database's Network section and its Autonomous Data Guard section, so they diverge quietly. An any-address entry on the standby means its endpoint accepts connection attempts from every network on the internet, including the ones the primary's list was written to exclude.
 
         **Why this matters**
 
@@ -11876,14 +11882,14 @@ queries:
 
         ### Audit via CLI
 
-        1. Retrieve the database and inspect the standby allowlist:
+        1. Retrieve the database's Data Guard state and both allowlists:
 
         ```bash
         oci db autonomous-database get --autonomous-database-id <adb-ocid> \
-          --query 'data."standby-whitelisted-ips"'
+          --query 'data.{dataGuard:"is-data-guard-enabled",localDataGuard:"is-local-data-guard-enabled",remoteDataGuard:"is-remote-data-guard-enabled",usesPrimaryList:"are-primary-whitelisted-ips-used",primary:"whitelisted-ips",standby:"standby-whitelisted-ips"}'
         ```
 
-        A passing database returns a list of specific networks or an empty list. A failing database returns a list containing `0.0.0.0/0`, `0.0.0.0`, `::/0`, or another internet-wide prefix.
+        With no Data Guard enabled there is no standby and the database passes. Otherwise, when `usesPrimaryList` is `true` the standby enforces `primary`, and when it is `false` it enforces `standby`. A passing database's enforced list holds only specific networks or is empty. A failing database's enforced list contains `0.0.0.0/0`, `0.0.0.0`, `::/0`, or another internet-wide prefix, or `usesPrimaryList` is `null` while Data Guard is enabled.
       remediation:
         - id: console
           desc: |
@@ -11923,8 +11929,14 @@ queries:
     filters: asset.platform == "oci"
     mql: |
       # A terminated database stays in the list for a while, with the settings it had.
+      # arePrimaryWhitelistedIpsUsed decides which list the standby enforces: the
+      # primary's whitelistedIps when true, standbyWhitelistedIps when false. A database
+      # with Data Guard on but neither value reported fails, since neither list can be
+      # shown to govern the standby.
       oci.database.autonomousDatabases.where(state != "TERMINATED" && state != "TERMINATING").all(
-        standbyWhitelistedIps.none(_ == "0.0.0.0" || _ == /^[0-9.]+\/[0-7]$/ || _ == /^[0-9a-fA-F:]+\/[0-6]$/)
+        isDataGuardEnabled != true && isLocalDataGuardEnabled != true && isRemoteDataGuardEnabled != true ||
+        arePrimaryWhitelistedIpsUsed == true && whitelistedIps.none(_ == "0.0.0.0" || _ == /^[0-9.]+\/[0-7]$/ || _ == /^[0-9a-fA-F:]+\/[0-6]$/) ||
+        arePrimaryWhitelistedIpsUsed == false && standbyWhitelistedIps.none(_ == "0.0.0.0" || _ == /^[0-9.]+\/[0-7]$/ || _ == /^[0-9a-fA-F:]+\/[0-6]$/)
       )
   - uid: mondoo-oci-security-adb-standby-acl-not-open-terraform-hcl
     filters: |
