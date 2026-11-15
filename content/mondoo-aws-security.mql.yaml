@@ -11815,7 +11815,7 @@ queries:
       - url: https://docs.aws.amazon.com/kms/latest/developerguide/rotate-keys.html
         title: Rotating AWS KMS Keys
   - uid: mondoo-aws-security-rotation-customer-created-cmks-enabled-aws
-    filters: asset.platform == "aws-kms-key" && aws.kms.key.metadata.KeyState == "Enabled" && aws.kms.key.metadata.KeySpec == "SYMMETRIC_DEFAULT" && aws.kms.key.metadata.KeyManager == "CUSTOMER"
+    filters: asset.platform == "aws-kms-key" && aws.kms.key.keyState == "Enabled" && aws.kms.key.keySpec == "SYMMETRIC_DEFAULT" && aws.kms.key.keyManager == "CUSTOMER"
     mql: |
       aws.kms.key.keyRotationEnabled == true
   - uid: mondoo-aws-security-rotation-customer-created-cmks-enabled-terraform-hcl
@@ -26368,7 +26368,7 @@ queries:
       - url: https://docs.aws.amazon.com/kms/latest/developerguide/grants.html
         title: AWS Documentation - Grants in AWS KMS
   - uid: mondoo-aws-security-kms-grants-no-create-grant-aws
-    filters: asset.platform == "aws-kms-key" && aws.kms.key.metadata.KeyManager == "CUSTOMER"
+    filters: asset.platform == "aws-kms-key" && aws.kms.key.keyManager == "CUSTOMER"
     mql: aws.kms.key.grants.none(operations.contains("CreateGrant"))
   - uid: mondoo-aws-security-kms-grants-no-create-grant-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_kms_grant")
@@ -26518,7 +26518,7 @@ queries:
       - url: https://docs.aws.amazon.com/kms/latest/developerguide/grants.html
         title: AWS Documentation - Grants in AWS KMS
   - uid: mondoo-aws-security-kms-no-wildcard-grant-principals-aws
-    filters: asset.platform == "aws-kms-key" && aws.kms.key.metadata.KeyManager == "CUSTOMER"
+    filters: asset.platform == "aws-kms-key" && aws.kms.key.keyManager == "CUSTOMER"
     mql: aws.kms.key.grants.none(granteePrincipal == "*")
   - uid: mondoo-aws-security-kms-no-wildcard-grant-principals-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_kms_grant")
@@ -26688,8 +26688,8 @@ queries:
       - url: https://docs.aws.amazon.com/kms/latest/developerguide/importing-keys.html
         title: AWS Documentation - Importing key material
   - uid: mondoo-aws-security-kms-key-origin-aws-kms-aws
-    filters: asset.platform == "aws-kms-key" && aws.kms.key.metadata.KeyManager == "CUSTOMER"
-    mql: aws.kms.key.metadata.Origin == "AWS_KMS"
+    filters: asset.platform == "aws-kms-key" && aws.kms.key.keyManager == "CUSTOMER"
+    mql: aws.kms.key.origin == "AWS_KMS"
   - uid: mondoo-aws-security-kms-key-origin-aws-kms-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_kms_key")
     mql: |
@@ -47962,6 +47962,8 @@ queries:
       desc: |
         This check verifies that a CloudWatch log metric filter exists to detect unauthorized API calls, matching CloudTrail events carrying `AccessDenied`, `UnauthorizedAccess`, or `UnauthorizedOperation`. CloudWatch ships no alerting for access-denied events, so the filter and its alarm have to be created deliberately.
 
+        When the check scans an AWS account, a filter counts only when one of its metrics has a CloudWatch alarm that notifies an SNS topic with at least one confirmed subscription. A filter without such an alarm records matches that nobody is told about.
+
         The filter is created on the CloudTrail log group with `aws logs put-metric-filter --filter-name UnauthorizedAPICalls` and a pattern matching those error codes, then attached to an alarm.
 
         **Why this matters**
@@ -48118,7 +48120,7 @@ queries:
     filters: asset.platform == "aws"
     mql: |
       aws.cloudwatch.logGroups.any(
-        metricsFilters.any(
+        metricsFilters.where(hasActiveAlarm == true).any(
           filterPattern.contains("AccessDenied") || filterPattern.contains("UnauthorizedAccess")
         )
       )
@@ -48190,6 +48192,8 @@ queries:
     docs:
       desc: |
         This check verifies that a CloudWatch log metric filter exists to detect AWS Management Console sign-ins that occur without multi-factor authentication, matching CloudTrail `ConsoleLogin` events where `MFAUsed` is not `Yes`. AWS raises no alert when a user authenticates with only a password.
+
+        When the check scans an AWS account, a filter counts only when one of its metrics has a CloudWatch alarm that notifies an SNS topic with at least one confirmed subscription. A filter without such an alarm records matches that nobody is told about.
 
         The filter is created on the CloudTrail log group with `aws logs put-metric-filter --filter-name ConsoleSigninWithoutMFA` and a pattern matching `ConsoleLogin` combined with the `MFAUsed` field, then attached to an alarm.
 
@@ -48347,7 +48351,7 @@ queries:
     filters: asset.platform == "aws"
     mql: |
       aws.cloudwatch.logGroups.any(
-        metricsFilters.any(
+        metricsFilters.where(hasActiveAlarm == true).any(
           filterPattern.contains("ConsoleLogin") && filterPattern.contains("MFAUsed")
         )
       )
@@ -48418,6 +48422,8 @@ queries:
     docs:
       desc: |
         This check verifies that a CloudWatch log metric filter exists to detect any use of the AWS root account, matching CloudTrail events where `userIdentity.type` is `Root`. The root account holds unrestricted access to every resource and service, and AWS recommends using it only for initial setup and the small set of account management tasks that require it.
+
+        When the check scans an AWS account, a filter counts only when one of its metrics has a CloudWatch alarm that notifies an SNS topic with at least one confirmed subscription. A filter without such an alarm records matches that nobody is told about.
 
         The filter is created on the CloudTrail log group with `aws logs put-metric-filter --filter-name RootAccountUsage` and a pattern matching the root user identity, then attached to an alarm.
 
@@ -48576,7 +48582,7 @@ queries:
     filters: asset.platform == "aws"
     mql: |
       aws.cloudwatch.logGroups.any(
-        metricsFilters.any(
+        metricsFilters.where(hasActiveAlarm == true).any(
           filterPattern.contains("Root") && filterPattern.contains("userIdentity")
         )
       )
@@ -48647,6 +48653,8 @@ queries:
     docs:
       desc: |
         This check verifies that a CloudWatch log metric filter exists to detect changes to IAM policies, matching CloudTrail events such as `CreatePolicy`, `DeletePolicy`, `DeleteGroupPolicy`, and `AttachRolePolicy`, covering creation, modification, deletion, and attachment or detachment of managed and inline policies. CloudWatch does not alert on IAM policy activity by default.
+
+        When the check scans an AWS account, a filter counts only when one of its metrics has a CloudWatch alarm that notifies an SNS topic with at least one confirmed subscription. A filter without such an alarm records matches that nobody is told about.
 
         The filter is created on the CloudTrail log group with `aws logs put-metric-filter --filter-name IAMPolicyChanges` and a pattern matching those event names, then attached to an alarm.
 
@@ -48805,7 +48813,7 @@ queries:
     filters: asset.platform == "aws"
     mql: |
       aws.cloudwatch.logGroups.any(
-        metricsFilters.any(
+        metricsFilters.where(hasActiveAlarm == true).any(
           filterPattern.contains("CreatePolicy") ||
           filterPattern.contains("DeletePolicy") ||
           filterPattern.contains("AttachRolePolicy")
@@ -48885,6 +48893,8 @@ queries:
     docs:
       desc: |
         This check verifies that a CloudWatch log metric filter exists to detect changes to AWS CloudTrail configuration, matching events such as `CreateTrail`, `UpdateTrail`, `DeleteTrail`, `StartLogging`, and `StopLogging`. CloudTrail is the primary audit log for all AWS API activity, and those events can impair or eliminate that visibility.
+
+        When the check scans an AWS account, a filter counts only when one of its metrics has a CloudWatch alarm that notifies an SNS topic with at least one confirmed subscription. A filter without such an alarm records matches that nobody is told about.
 
         The filter is created on the CloudTrail log group with `aws logs put-metric-filter --filter-name CloudTrailConfigChanges` and a pattern matching those event names, then attached to an alarm.
 
@@ -49043,7 +49053,7 @@ queries:
     filters: asset.platform == "aws"
     mql: |
       aws.cloudwatch.logGroups.any(
-        metricsFilters.any(
+        metricsFilters.where(hasActiveAlarm == true).any(
           filterPattern.contains("CreateTrail") ||
           filterPattern.contains("UpdateTrail") ||
           filterPattern.contains("DeleteTrail") ||
@@ -49133,6 +49143,8 @@ queries:
     docs:
       desc: |
         This check verifies that a CloudWatch log metric filter exists to detect failed AWS Management Console authentication attempts, matching CloudTrail `ConsoleLogin` events that carry a `Failed` result. CloudWatch does not alert on sign-in failures by default.
+
+        When the check scans an AWS account, a filter counts only when one of its metrics has a CloudWatch alarm that notifies an SNS topic with at least one confirmed subscription. A filter without such an alarm records matches that nobody is told about.
 
         The filter is created on the CloudTrail log group with `aws logs put-metric-filter --filter-name ConsoleAuthenticationFailures` and a pattern matching `ConsoleLogin` combined with a failure result, then attached to an alarm.
 
@@ -49291,7 +49303,7 @@ queries:
     filters: asset.platform == "aws"
     mql: |
       aws.cloudwatch.logGroups.any(
-        metricsFilters.any(
+        metricsFilters.where(hasActiveAlarm == true).any(
           filterPattern.contains("ConsoleLogin") && filterPattern.contains(/Failed|Failure/)
         )
       )
@@ -49362,6 +49374,8 @@ queries:
     docs:
       desc: |
         This check verifies that a CloudWatch log metric filter exists to detect disabling or scheduled deletion of customer managed KMS keys, matching CloudTrail `DisableKey` and `ScheduleKeyDeletion` events from `kms.amazonaws.com`. CloudWatch does not alert on KMS key state changes by default.
+
+        When the check scans an AWS account, a filter counts only when one of its metrics has a CloudWatch alarm that notifies an SNS topic with at least one confirmed subscription. A filter without such an alarm records matches that nobody is told about.
 
         The filter is created on the CloudTrail log group with `aws logs put-metric-filter --filter-name CMKDisableOrDelete` and a pattern matching those event names, then attached to an alarm.
 
@@ -49520,7 +49534,7 @@ queries:
     filters: asset.platform == "aws"
     mql: |
       aws.cloudwatch.logGroups.any(
-        metricsFilters.any(
+        metricsFilters.where(hasActiveAlarm == true).any(
           filterPattern.contains("DisableKey") || filterPattern.contains("ScheduleKeyDeletion")
         )
       )
@@ -49592,6 +49606,8 @@ queries:
     docs:
       desc: |
         This check verifies that a CloudWatch log metric filter exists to detect changes to Amazon S3 bucket policies and ACLs, matching CloudTrail events such as `PutBucketPolicy`, `PutBucketAcl`, and `DeleteBucketPolicy` from `s3.amazonaws.com`. CloudWatch does not alert on S3 permission changes by default.
+
+        When the check scans an AWS account, a filter counts only when one of its metrics has a CloudWatch alarm that notifies an SNS topic with at least one confirmed subscription. A filter without such an alarm records matches that nobody is told about.
 
         The filter is created on the CloudTrail log group with `aws logs put-metric-filter --filter-name S3BucketPolicyChanges` and a pattern matching those event names, then attached to an alarm.
 
@@ -49750,7 +49766,7 @@ queries:
     filters: asset.platform == "aws"
     mql: |
       aws.cloudwatch.logGroups.any(
-        metricsFilters.any(
+        metricsFilters.where(hasActiveAlarm == true).any(
           filterPattern.contains("PutBucketAcl") || filterPattern.contains("PutBucketPolicy")
         )
       )
@@ -49822,6 +49838,8 @@ queries:
     docs:
       desc: |
         This check verifies that a CloudWatch log metric filter exists to detect changes to AWS Config, matching CloudTrail events such as `StopConfigurationRecorder` and `DeleteDeliveryChannel` from `config.amazonaws.com`. CloudWatch does not alert on Config service changes by default.
+
+        When the check scans an AWS account, a filter counts only when one of its metrics has a CloudWatch alarm that notifies an SNS topic with at least one confirmed subscription. A filter without such an alarm records matches that nobody is told about.
 
         The filter is created on the CloudTrail log group with `aws logs put-metric-filter --filter-name AWSConfigChanges` and a pattern matching those event names, then attached to an alarm.
 
@@ -49980,7 +49998,7 @@ queries:
     filters: asset.platform == "aws"
     mql: |
       aws.cloudwatch.logGroups.any(
-        metricsFilters.any(
+        metricsFilters.where(hasActiveAlarm == true).any(
           filterPattern.contains("StopConfigurationRecorder") ||
           filterPattern.contains("DeleteDeliveryChannel")
         )
@@ -50055,6 +50073,8 @@ queries:
     docs:
       desc: |
         This check verifies that a CloudWatch log metric filter exists to detect changes to VPC security groups, matching CloudTrail events such as `AuthorizeSecurityGroupIngress`, `AuthorizeSecurityGroupEgress`, `RevokeSecurityGroupIngress`, `RevokeSecurityGroupEgress`, `CreateSecurityGroup`, and `DeleteSecurityGroup`. CloudWatch does not alert on security group modifications by default.
+
+        When the check scans an AWS account, a filter counts only when one of its metrics has a CloudWatch alarm that notifies an SNS topic with at least one confirmed subscription. A filter without such an alarm records matches that nobody is told about.
 
         The filter is created on the CloudTrail log group with `aws logs put-metric-filter --filter-name SecurityGroupChanges` and a pattern matching those event names, then attached to an alarm.
 
@@ -50213,7 +50233,7 @@ queries:
     filters: asset.platform == "aws"
     mql: |
       aws.cloudwatch.logGroups.any(
-        metricsFilters.any(
+        metricsFilters.where(hasActiveAlarm == true).any(
           filterPattern.contains("AuthorizeSecurityGroupIngress") ||
           filterPattern.contains("AuthorizeSecurityGroupEgress")
         )
@@ -50288,6 +50308,8 @@ queries:
     docs:
       desc: |
         This check verifies that a CloudWatch log metric filter exists to detect changes to network ACLs, matching CloudTrail events such as `CreateNetworkAcl`, `CreateNetworkAclEntry`, `DeleteNetworkAcl`, `DeleteNetworkAclEntry`, `ReplaceNetworkAclEntry`, and `ReplaceNetworkAclAssociation`. CloudWatch does not alert on network ACL modifications by default.
+
+        When the check scans an AWS account, a filter counts only when one of its metrics has a CloudWatch alarm that notifies an SNS topic with at least one confirmed subscription. A filter without such an alarm records matches that nobody is told about.
 
         The filter is created on the CloudTrail log group with `aws logs put-metric-filter --filter-name NetworkACLChanges` and a pattern matching those event names, then attached to an alarm.
 
@@ -50441,7 +50463,7 @@ queries:
     filters: asset.platform == "aws"
     mql: |
       aws.cloudwatch.logGroups.any(
-        metricsFilters.any(
+        metricsFilters.where(hasActiveAlarm == true).any(
           filterPattern.contains("CreateNetworkAcl") || filterPattern.contains("DeleteNetworkAcl")
         )
       )
@@ -50513,6 +50535,8 @@ queries:
     docs:
       desc: |
         This check verifies that a CloudWatch log metric filter exists to detect changes to network gateways, matching CloudTrail events such as `CreateCustomerGateway`, `DeleteCustomerGateway`, `AttachInternetGateway`, `CreateInternetGateway`, `DeleteInternetGateway`, and `DetachInternetGateway`. This covers internet gateways, customer gateways, and virtual private gateways. CloudWatch does not alert on gateway modifications by default.
+
+        When the check scans an AWS account, a filter counts only when one of its metrics has a CloudWatch alarm that notifies an SNS topic with at least one confirmed subscription. A filter without such an alarm records matches that nobody is told about.
 
         The filter is created on the CloudTrail log group with `aws logs put-metric-filter --filter-name NetworkGatewayChanges` and a pattern matching those event names, then attached to an alarm.
 
@@ -50671,7 +50695,7 @@ queries:
     filters: asset.platform == "aws"
     mql: |
       aws.cloudwatch.logGroups.any(
-        metricsFilters.any(
+        metricsFilters.where(hasActiveAlarm == true).any(
           filterPattern.contains("CreateCustomerGateway") ||
           filterPattern.contains("AttachInternetGateway")
         )
@@ -50746,6 +50770,8 @@ queries:
     docs:
       desc: |
         This check verifies that a CloudWatch log metric filter exists to detect changes to VPC route tables, matching CloudTrail events such as `CreateRoute`, `CreateRouteTable`, `ReplaceRoute`, `ReplaceRouteTableAssociation`, `DeleteRouteTable`, `DeleteRoute`, and `DisassociateRouteTable`. CloudWatch does not alert on routing modifications by default.
+
+        When the check scans an AWS account, a filter counts only when one of its metrics has a CloudWatch alarm that notifies an SNS topic with at least one confirmed subscription. A filter without such an alarm records matches that nobody is told about.
 
         The filter is created on the CloudTrail log group with `aws logs put-metric-filter --filter-name RouteTableChanges` and a pattern matching those event names, then attached to an alarm.
 
@@ -50904,7 +50930,7 @@ queries:
     filters: asset.platform == "aws"
     mql: |
       aws.cloudwatch.logGroups.any(
-        metricsFilters.any(
+        metricsFilters.where(hasActiveAlarm == true).any(
           filterPattern.contains("CreateRoute") || filterPattern.contains("CreateRouteTable")
         )
       )
@@ -50975,6 +51001,8 @@ queries:
     docs:
       desc: |
         This check verifies that a CloudWatch log metric filter exists to detect changes to VPCs, matching CloudTrail events such as `CreateVpc`, `DeleteVpc`, `ModifyVpcAttribute`, `AcceptVpcPeeringConnection`, `CreateVpcPeeringConnection`, `DeleteVpcPeeringConnection`, and `RejectVpcPeeringConnection`. CloudWatch does not alert on VPC modifications by default.
+
+        When the check scans an AWS account, a filter counts only when one of its metrics has a CloudWatch alarm that notifies an SNS topic with at least one confirmed subscription. A filter without such an alarm records matches that nobody is told about.
 
         The filter is created on the CloudTrail log group with `aws logs put-metric-filter --filter-name VPCChanges` and a pattern matching those event names, then attached to an alarm.
 
@@ -51128,7 +51156,7 @@ queries:
     filters: asset.platform == "aws"
     mql: |
       aws.cloudwatch.logGroups.any(
-        metricsFilters.any(
+        metricsFilters.where(hasActiveAlarm == true).any(
           filterPattern.contains("CreateVpc") || filterPattern.contains("DeleteVpc")
         )
       )
@@ -51199,6 +51227,8 @@ queries:
     docs:
       desc: |
         This check verifies that a CloudWatch log metric filter exists to detect changes to AWS Organizations, matching CloudTrail activity from `organizations.amazonaws.com`, including events such as `CreateAccount`, `AttachPolicy`, `DeleteOrganization`, `DetachPolicy`, and `UpdatePolicy`. CloudWatch does not alert on organizational events by default.
+
+        When the check scans an AWS account, a filter counts only when one of its metrics has a CloudWatch alarm that notifies an SNS topic with at least one confirmed subscription. A filter without such an alarm records matches that nobody is told about.
 
         The filter is created on the CloudTrail log group in the management account with `aws logs put-metric-filter --filter-name AWSOrganizationsChanges` and a pattern matching that event source, then attached to an alarm.
 
@@ -51357,7 +51387,7 @@ queries:
     filters: asset.platform == "aws"
     mql: |
       aws.cloudwatch.logGroups.any(
-        metricsFilters.any(
+        metricsFilters.where(hasActiveAlarm == true).any(
           filterPattern.contains("organizations.amazonaws.com")
         )
       )
@@ -51665,7 +51695,7 @@ queries:
           mondoo.com/filter-icon: aws
     docs:
       desc: |
-        This check verifies that the AWS account root user is protected by a hardware MFA device rather than a software token. It requires MFA to be active on the root credential report row and additionally requires that no virtual MFA device with a serial number containing `root-account-mfa-device` exists, which is how a virtual device registered to root is identified.
+        This check verifies that the AWS account root user is protected by a hardware MFA device rather than a software token. It requires MFA to be active on the root credential report row and no virtual MFA device to be assigned to root. A virtual device assigned to root is identified by its assignment, not by its name: the console names it `root-account-mfa-device`, but a device created through the API can carry any name.
 
         The device type is shown under **Multi-factor authentication (MFA)** in **Security credentials** when signed in as the root user. Registering a hardware TOTP token or a FIDO security key is done there; any virtual device currently assigned to root should be removed once the hardware device is enrolled.
 
@@ -51697,11 +51727,12 @@ queries:
         aws iam get-credential-report --query "Content" --output text | base64 -d | awk -F',' 'NR==1 || $1=="<root_account>"'
         ```
 
-        2. Check whether a virtual MFA device is associated with the root account:
+        2. Check whether a virtual MFA device is assigned to the root account:
 
         ```bash
         aws iam list-virtual-mfa-devices \
-          --query "VirtualMFADevices[?contains(SerialNumber, 'root-account-mfa-device')]"
+          --assignment-status Assigned \
+          --query "VirtualMFADevices[?ends_with(User.Arn, ':root')]"
         ```
 
         A passing root account shows `mfa_active` as `true` in the credential report and returns an empty list from the virtual MFA devices query. A failing root account either shows `mfa_active` as `false`, or returns a virtual MFA device entry indicating that no hardware device is in use.
@@ -51758,8 +51789,11 @@ queries:
   - uid: mondoo-aws-security-iam-root-hardware-mfa-aws
     filters: asset.platform == "aws"
     mql: |
-      aws.iam.credentialReport.where(properties.user == "<root_account>").all(mfaActive == true) &&
-      aws.iam.virtualMfaDevices.none(serialNumber.contains("root-account-mfa-device"))
+      aws.iam.credentialReport.where(properties.user == "<root_account>").all(mfaActive == true)
+      aws.iam.virtualMfaDevices.none(
+        serialNumber == /:mfa\/root-account-mfa-device$/ ||
+        user == empty && enableDate != empty
+      )
   # No Terraform variants: Expiration of an IAM server certificate is runtime telemetry (`Expiration` timestamp from the IAM API). Terraform does not expose certificate expiration as an attribute on `aws_iam_server_certificate`.
   - uid: mondoo-aws-security-iam-expired-certificates
     title: Ensure expired SSL/TLS certificates are removed from IAM
@@ -51852,7 +51886,7 @@ queries:
         title: AWS Security Hub - IAM controls reference
   - uid: mondoo-aws-security-iam-expired-certificates-aws
     filters: asset.platform == "aws"
-    mql: aws.iam.serverCertificates.none(parse.date(_['Expiration'].string) < time.now)
+    mql: aws.iam.tlsCertificates.none(expiration < time.now)
   # No CloudFormation variant: the only shape available reproduces the design gap tracked in issue #3118. The
   # Terraform sibling filters on the AWSSupportAccess attachment and then re-asserts it, so it can never fail, and
   # the CloudFormation equivalent over `AWS::IAM::Role.ManagedPolicyArns` would inherit that. Broadening the filter
@@ -55668,7 +55702,7 @@ queries:
 
         ```bash
         aws cloudtrail describe-trails \
-          --include-shadow-trails false \
+          --no-include-shadow-trails \
           --query "trailList[?IsMultiRegionTrail==\`true\`].{Name:Name,LogGroup:CloudWatchLogsLogGroupArn}"
         ```
 
@@ -58041,7 +58075,7 @@ queries:
 
         ```bash
         aws cloudtrail describe-trails \
-          --include-shadow-trails false \
+          --no-include-shadow-trails \
           --query "trailList[?IsMultiRegionTrail==\`true\`].{Name:Name,HomeRegion:HomeRegion}"
         ```
 
@@ -65481,7 +65515,7 @@ queries:
           mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
-        This check verifies that CloudWatch Logs cross-account destinations have a non-empty access policy that does not contain a wildcard principal. A destination whose policy allows `*` accepts log data from any AWS account.
+        This check verifies that CloudWatch Logs cross-account destinations do not accept log data from any AWS account. A destination with no access policy accepts subscriptions only from the account that owns it and passes. A wildcard `*` principal passes only when the policy scopes it to an organization with `aws:PrincipalOrgID` or `aws:PrincipalOrgPaths`, the one form of wildcard principal CloudWatch Logs accepts on a destination policy.
 
         Destinations are reviewed under **Logs**, then **Destinations**, in the CloudWatch console, and the policy is replaced with `aws logs put-destination-policy` naming the specific account IDs permitted to send logs.
 
@@ -65502,7 +65536,7 @@ queries:
         3. For each destination listed, select it to view the **Access policy**.
         4. Review the policy document for any `Principal` set to `"*"` (wildcard).
 
-        A passing log destination has an access policy with all principals scoped to specific AWS account IDs or ARNs. A failing log destination has an access policy with `"Principal": "*"` or `"AWS": "*"`.
+        A passing log destination has no access policy, or an access policy whose principals are specific AWS account IDs or ARNs or a `"*"` principal scoped by an `aws:PrincipalOrgID` or `aws:PrincipalOrgPaths` condition. A failing log destination has an access policy with `"Principal": "*"` or `"AWS": "*"` and no organization condition.
 
         ### Audit via CLI
 
@@ -65521,7 +65555,7 @@ queries:
           --query "destinations[?contains(accessPolicy, '\"*\"')].{Name:destinationName,AccessPolicy:accessPolicy}"
         ```
 
-        A passing destination returns an access policy with no wildcard `"*"` principal. A failing destination returns an access policy that contains `"*"` as a principal value.
+        A passing destination returns no access policy, an access policy that names specific accounts, or a wildcard `"*"` principal scoped by `aws:PrincipalOrgID` or `aws:PrincipalOrgPaths`. A failing destination returns an access policy that contains `"*"` as a principal value without an organization condition.
       remediation:
         - id: console
           desc: |
@@ -65600,33 +65634,38 @@ queries:
     filters: asset.platform == "aws"
     mql: |
       aws.cloudwatch.logDestinations.all(
-        accessPolicy != "" &&
-        accessPolicy.contains('"*"') == false
+        accessPolicy == empty ||
+        accessPolicy.contains('"*"') == false ||
+        accessPolicy == /aws:PrincipalOrg(ID|Paths)/
       )
   - uid: mondoo-aws-security-cloudwatch-log-destination-restrict-access-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_cloudwatch_log_destination_policy")
     mql: |
       terraform.resources("aws_cloudwatch_log_destination_policy").all(
-        arguments.access_policy.contains('"*"') == false
+        arguments.access_policy.contains('"*"') == false ||
+        arguments.access_policy == /aws:PrincipalOrg(ID|Paths)/
       )
   - uid: mondoo-aws-security-cloudwatch-log-destination-restrict-access-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_cloudwatch_log_destination_policy")
     mql: |
       terraform.plan.resourceChanges.where(type == "aws_cloudwatch_log_destination_policy").all(
-        change.after.access_policy.contains('"*"') == false
+        change.after.access_policy.contains('"*"') == false ||
+        change.after.access_policy == /aws:PrincipalOrg(ID|Paths)/
       )
   - uid: mondoo-aws-security-cloudwatch-log-destination-restrict-access-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_cloudwatch_log_destination_policy")
     mql: |
       terraform.state.resources.where(type == "aws_cloudwatch_log_destination_policy").all(
-        values.access_policy.contains('"*"') == false
+        values.access_policy.contains('"*"') == false ||
+        values.access_policy == /aws:PrincipalOrg(ID|Paths)/
       )
   - uid: mondoo-aws-security-cloudwatch-log-destination-restrict-access-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::Logs::Destination")
     mql: |
       cloudformation.template.resources.where(type == "AWS::Logs::Destination").all(
         properties['DestinationPolicy'] == null ||
-        properties['DestinationPolicy'].contains('"*"') == false
+        properties['DestinationPolicy'].contains('"*"') == false ||
+        properties['DestinationPolicy'] == /aws:PrincipalOrg(ID|Paths)/
       )
   # No Terraform variants: Allowed principals on a VPC endpoint service are managed through `aws_vpc_endpoint_service_allowed_principal` resources — one per principal — keyed by the service ID. Verifying that at least one principal exists and none equals `*` requires graph traversal across resources that the variant pattern does not express.
   - uid: mondoo-aws-security-vpc-endpoint-service-restrict-principals
@@ -67575,6 +67614,8 @@ queries:
       desc: |
         This check verifies that AWS IAM Identity Center permission sets bound how long a federated session stays valid, requiring a session duration of 12 hours or less. The session duration determines how long the temporary credentials issued through a permission set remain usable before the user must authenticate again.
 
+        The check runs on the account that owns the IAM Identity Center instance, which for an organization instance is the management account. A member account can see the organization instance but cannot read its permission sets or account assignments, so the check does not run there.
+
         The value is set under **Session duration** when editing a permission set in the IAM Identity Center console, or with `aws sso-admin update-permission-set --session-duration PT4H`.
 
         **Why this matters**
@@ -67677,9 +67718,11 @@ queries:
         title: AWS Documentation - Permission sets
   # session_duration is an ISO-8601 duration; AWS Identity Center emits whole-hour values (e.g. PT8H, max PT12H). Compare the hour component numerically — a lexical string compare is wrong ("PT8H" sorts after "PT12H"). Sub-hour edge cases (e.g. "PT720M") are not separately handled.
   - uid: mondoo-aws-security-identitycenter-session-duration-aws
-    filters: asset.platform == "aws"
+    filters: |
+      asset.platform == "aws" &&
+      aws.identitycenter.instances.any(ownerAccountId == aws.account.id)
     mql: |
-      aws.identitycenter.instances.all(
+      aws.identitycenter.instances.where(ownerAccountId == aws.account.id).all(
         permissionSets.all(int(sessionDuration.find(/[0-9]+/).first) <= 12)
       )
   - uid: mondoo-aws-security-identitycenter-session-duration-terraform-hcl
@@ -67759,6 +67802,8 @@ queries:
     docs:
       desc: |
         This check verifies that AWS IAM Identity Center permission sets grant access only through managed policies, with no inline policy attached. Inline policies embedded in a permission set are hiding spots for backdoor permissions that are significantly harder to find during an access review, which lets an attacker with Identity Center administrative access plant persistent, stealthy access across multiple AWS accounts.
+
+        The check runs on the account that owns the IAM Identity Center instance, which for an organization instance is the management account. A member account can see the organization instance but cannot read its permission sets or account assignments, so the check does not run there.
 
         Inline policy content is removed under **Inline policy** on the permission set in the IAM Identity Center console, or with `aws sso-admin delete-inline-policy-from-permission-set` followed by attaching an equivalent managed policy.
 
@@ -67873,9 +67918,11 @@ queries:
       - url: https://docs.aws.amazon.com/singlesignon/latest/userguide/permissionsetsconcept.html
         title: AWS Documentation - Permission sets
   - uid: mondoo-aws-security-identitycenter-no-inline-policy-aws
-    filters: asset.platform == "aws"
+    filters: |
+      asset.platform == "aws" &&
+      aws.identitycenter.instances.any(ownerAccountId == aws.account.id)
     mql: |
-      aws.identitycenter.instances.all(permissionSets.all(inlinePolicy == "" || inlinePolicy == empty))
+      aws.identitycenter.instances.where(ownerAccountId == aws.account.id).all(permissionSets.all(inlinePolicy == "" || inlinePolicy == empty))
   - uid: mondoo-aws-security-identitycenter-no-inline-policy-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.providers.any(nameLabel == "aws")
     mql: terraform.resources("aws_ssoadmin_permission_set_inline_policy") == empty
@@ -67933,6 +67980,8 @@ queries:
     docs:
       desc: |
         This check verifies that AWS IAM Identity Center grants account access through groups rather than to individual users, requiring every account assignment to name a principal type of `GROUP`. Direct user-level assignments are a stealthy persistence mechanism, because an attacker with Identity Center administrative access can grant a compromised user account access that is invisible to group-based reviews and that survives group membership cleanup during incident response.
+
+        The check runs on the account that owns the IAM Identity Center instance, which for an organization instance is the management account. A member account can see the organization instance but cannot read its permission sets or account assignments, so the check does not run there.
 
         Assignments are managed under **AWS accounts** in the IAM Identity Center console, or created with `aws sso-admin create-account-assignment` naming a group as the principal.
 
@@ -68049,9 +68098,11 @@ queries:
       - url: https://docs.aws.amazon.com/singlesignon/latest/userguide/useraccess.html
         title: AWS Documentation - Multi-account permissions
   - uid: mondoo-aws-security-identitycenter-group-assignments-aws
-    filters: asset.platform == "aws"
+    filters: |
+      asset.platform == "aws" &&
+      aws.identitycenter.instances.any(ownerAccountId == aws.account.id)
     mql: |
-      aws.identitycenter.instances.all(accountAssignments.all(principalType == "GROUP"))
+      aws.identitycenter.instances.where(ownerAccountId == aws.account.id).all(accountAssignments.all(principalType == "GROUP"))
   - uid: mondoo-aws-security-identitycenter-group-assignments-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_ssoadmin_account_assignment")
     mql: |
@@ -68117,7 +68168,7 @@ queries:
           mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
-        This check verifies that AWS Secrets Manager secrets have no resource policy granting access to a wildcard principal. A secret with no resource policy passes. An `Allow` statement naming `"*"` or `{"AWS": "*"}` without conditions makes the secret reachable by any AWS account.
+        This check verifies that AWS Secrets Manager secrets have no resource policy granting access to a wildcard principal. A secret with no resource policy passes. An `Allow` statement naming `"*"` or `{"AWS": "*"}` without a condition that scopes it to an account, organization, or source, such as `aws:PrincipalAccount` or `aws:PrincipalOrgID`, makes the secret reachable by any AWS account.
 
         The policy is reviewed under **Resource permissions** on a secret in the Secrets Manager console, read with `aws secretsmanager get-resource-policy`, and replaced with `aws secretsmanager put-resource-policy`.
 
@@ -68242,10 +68293,7 @@ queries:
   - uid: mondoo-aws-security-secretsmanager-no-public-policy-aws
     filters: asset.platform == "aws-secretsmanager-secret"
     mql: |
-      aws.secretsmanager.secret.resourcePolicy == "" ||
-      aws.secretsmanager.secret.resourcePolicy == empty ||
-      aws.secretsmanager.secret.resourcePolicy != /"Effect"\s*:\s*"Allow"[\s\S]*?"Principal"\s*:\s*"\*"/ &&
-      aws.secretsmanager.secret.resourcePolicy != /"Effect"\s*:\s*"Allow"[\s\S]*?"Principal"\s*:\s*\{\s*"AWS"\s*:\s*"\*"\s*\}/
+      aws.secretsmanager.secret.isPublic == false
   - uid: mondoo-aws-security-secretsmanager-no-public-policy-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_secretsmanager_secret_policy")
     mql: |
@@ -82800,7 +82848,7 @@ queries:
           mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
-        This check verifies that the Lambda function attached to each Secrets Manager secret with rotation enabled runs inside a customer VPC, requiring the rotation Lambda to name subnets. The rotation function authenticates to the backing database using the secret it is rotating, so without a VPC configuration it reaches the database over the AWS-managed network rather than through subnets and security groups you control.
+        This check verifies that the Lambda function attached to each Secrets Manager secret with rotation enabled runs inside a customer VPC, requiring the rotation Lambda to name subnets. A secret that another AWS service manages and rotates, such as an Amazon RDS or Amazon Redshift master user secret, has no rotation Lambda and passes. The rotation function authenticates to the backing database using the secret it is rotating, so without a VPC configuration it reaches the database over the AWS-managed network rather than through subnets and security groups you control.
 
         The rotation Lambda ARN is shown under **Rotation configuration** on the secret, and the VPC is set on the function with `aws lambda update-function-configuration --vpc-config SubnetIds=...,SecurityGroupIds=...`.
 
@@ -82930,6 +82978,7 @@ queries:
   - uid: mondoo-aws-security-secretsmanager-rotation-lambda-in-vpc-aws
     filters: asset.platform == "aws-secretsmanager-secret" && aws.secretsmanager.secret.rotationEnabled == true
     mql: |
+      aws.secretsmanager.secret.owningService != empty ||
       aws.secretsmanager.secret.rotationLambda != null &&
       aws.secretsmanager.secret.rotationLambda.subnets != empty
   - uid: mondoo-aws-security-secretsmanager-rotation-lambda-in-vpc-terraform-hcl
@@ -85295,7 +85344,7 @@ queries:
           mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
-        This check verifies that AWS KMS key policies contain no `Allow` statement whose `Principal` is the wildcard `"*"` or `{"AWS": "*"}`. A wildcard principal in a key policy grants cryptographic operations to any AWS principal, which removes the key as an access control boundary.
+        This check verifies that AWS KMS key policies contain no `Allow` statement whose `Principal` is the wildcard `"*"` or `{"AWS": "*"}` without a condition that scopes it to an account, organization, or source, such as `kms:CallerAccount` or `aws:PrincipalOrgID`. The default policies of AWS managed keys use such a wildcard scoped by `kms:CallerAccount` and pass. A wildcard principal in a key policy grants cryptographic operations to any AWS principal, which removes the key as an access control boundary.
 
         The policy is edited on the **Key policy** tab of a key in the KMS console, or replaced with `aws kms put-key-policy --policy-name default --policy file://scoped-key-policy.json`.
 
@@ -85438,7 +85487,7 @@ queries:
   - uid: mondoo-aws-security-kms-key-no-public-access-aws
     filters: asset.platform == "aws-kms-key"
     mql: |
-      aws.kms.key.policyStatements.where(effect == "Allow").none(hasPublicPrincipal)
+      aws.kms.key.isPublic == false
   - uid: mondoo-aws-security-kms-key-no-public-access-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_kms_key")
     mql: |
@@ -92053,7 +92102,7 @@ queries:
       - url: https://docs.aws.amazon.com/kms/latest/developerguide/rotate-keys.html
         title: Rotating AWS KMS keys
   - uid: mondoo-aws-security-kms-cmk-rotation-period-aws
-    filters: asset.platform == "aws-kms-key" && aws.kms.key.metadata.KeyState == "Enabled" && aws.kms.key.metadata.KeySpec == "SYMMETRIC_DEFAULT" && aws.kms.key.metadata.KeyManager == "CUSTOMER"
+    filters: asset.platform == "aws-kms-key" && aws.kms.key.keyState == "Enabled" && aws.kms.key.keySpec == "SYMMETRIC_DEFAULT" && aws.kms.key.keyManager == "CUSTOMER"
     mql: |
       aws.kms.key.keyRotationEnabled == false || aws.kms.key.rotationPeriodInDays <= 365
   - uid: mondoo-aws-security-kms-cmk-rotation-period-terraform-hcl
@@ -92328,7 +92377,7 @@ queries:
       compliance/vda-isa-5: vda-isa-5-4-1-2
     filters: asset.platform == "aws-iam-user"
     mql: |
-      aws.iam.user.loginProfile == empty || aws.iam.user.mfaDevices != empty
+      aws.iam.user.loginProfile == empty || aws.iam.user.assignedMfaDevices != empty
     docs:
       desc: |
         This check verifies that any IAM user who can sign in interactively has a second authentication factor, passing a user that has no login profile and requiring at least one assigned MFA device for every user that does. A password is a single factor: if it is phished, guessed, or exposed in a breach, an attacker gains that user's full console access.
@@ -97268,7 +97317,7 @@ queries:
     filters: |
       asset.platform == "aws-iam-user" &&
       aws.iam.user.loginProfile != empty
-    mql: aws.iam.user.mfaDevices.any(_['SerialNumber'] != /^arn:aws[a-z-]*:iam::[0-9]+:mfa\//)
+    mql: aws.iam.user.assignedMfaDevices.any(serialNumber != /^arn:aws[a-z-]*:iam::[0-9]+:mfa\//)
   - uid: mondoo-aws-security-iam-admin-access-requires-mfa
     title: Ensure IAM users with administrator access have MFA enabled
     impact: 90
@@ -97401,7 +97450,7 @@ queries:
     filters: asset.platform == "aws"
     mql: |
       aws.account.securityContact.exists == true
-      aws.account.securityContact.emailAddress != ""
+      aws.account.securityContact.emailAddress != empty
   - uid: mondoo-aws-security-account-security-contact-registered-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_account_alternate_contact")
     mql: |
