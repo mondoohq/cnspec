@@ -438,7 +438,6 @@ policies:
           - uid: mondoo-aws-security-eks-cluster-iam-auth-mode
           - uid: mondoo-aws-security-eks-addon-healthy
           - uid: mondoo-aws-security-eks-control-plane-egress-customer-routed
-          - uid: mondoo-aws-security-eks-access-entry-no-system-masters
           - uid: mondoo-aws-security-eks-pod-identity-role-no-admin-access
       - title: Amazon GuardDuty
         checks:
@@ -681,8 +680,6 @@ policies:
           - uid: mondoo-aws-security-appstream-fleet-iam-role-attached
           - uid: mondoo-aws-security-appstream-image-builder-no-default-internet-access
           - uid: mondoo-aws-security-appstream-stack-url-redirection-disabled
-          - uid: mondoo-aws-security-appstream-image-no-public-visibility
-          - uid: mondoo-aws-security-appstream-stack-embed-host-domains-no-wildcards
       - title: AWS Directory Service
         checks:
           - uid: mondoo-aws-security-directoryservice-os-version
@@ -704,7 +701,6 @@ policies:
           - uid: mondoo-aws-security-emr-log-cmk-encryption
           - uid: mondoo-aws-security-emr-studio-cmk-encryption
           - uid: mondoo-aws-security-emr-block-public-access-enabled
-          - uid: mondoo-aws-security-emr-cluster-restrict-visibility
       - title: Amazon DynamoDB DAX
         checks:
           - uid: mondoo-aws-security-dax-encryption-at-rest
@@ -737,7 +733,6 @@ policies:
       - title: AWS Resource Access Manager
         checks:
           - uid: mondoo-aws-security-ram-no-external-principals
-          - uid: mondoo-aws-security-ram-no-wildcard-principals
       - title: AWS Transfer Family
         checks:
           - uid: mondoo-aws-security-transfer-no-ftp
@@ -16592,8 +16587,7 @@ queries:
   - uid: mondoo-aws-security-eks-cluster-logging-enabled-aws
     filters: asset.platform == "aws-eks-cluster"
     mql: |
-      aws.eks.cluster.logging['ClusterLogging'] != null
-      aws.eks.cluster.logging['ClusterLogging'].any(_['Enabled'] == true)
+      aws.eks.cluster.controlPlaneLogging.values.any(_ == true)
   - uid: mondoo-aws-security-eks-cluster-logging-enabled-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_eks_cluster") || asset.platform == "terraform-hcl" && terraform.blocks.contains(type == "module" && arguments["source"] != null && arguments["source"] == /terraform-aws-eks|terraform-aws-modules\/eks\/aws/)
     mql: |
@@ -18628,7 +18622,7 @@ queries:
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::ECS::TaskDefinition")
     mql: |
       cloudformation.template.resources.where(type == "AWS::ECS::TaskDefinition").all(
-        properties['ContainerDefinitions'].all(_['privileged'] != true)
+        properties['ContainerDefinitions'].all(_['Privileged'] != true)
       )
   - uid: mondoo-aws-security-ecs-readonly-root-filesystem
     title: Ensure ECS task definitions use read-only root filesystems
@@ -19653,7 +19647,7 @@ queries:
           mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
-        This check verifies that Amazon EKS clusters with a public API server endpoint restrict which CIDR ranges may reach it, by requiring that `publicAccessCidrs` does not contain `0.0.0.0/0`. It also confirms the endpoint is not internet-reachable once the public endpoint setting and the cluster security groups are evaluated together, so a cluster left open through its security groups is caught even when the CIDR allow list looks scoped. With public endpoint access enabled and no restriction, the API server is reachable from `0.0.0.0/0`.
+        This check verifies that Amazon EKS clusters with a public API server endpoint restrict which CIDR ranges may reach it, by requiring that `publicAccessCidrs` does not contain `0.0.0.0/0`. It also requires the endpoint not to be internet-reachable, which catches a list whose entries together cover every address, such as `0.0.0.0/1` and `128.0.0.0/1`. A cluster with the public endpoint disabled passes. Security groups do not apply to the public endpoint, so the CIDR list is the only network restriction on it, and with public endpoint access enabled and no restriction the API server is reachable from `0.0.0.0/0`.
 
         The list is edited through **Manage networking** on the **Networking** tab, or with `aws eks update-cluster-config --resources-vpc-config publicAccessCidrs=<cidr-list>`.
 
@@ -19675,7 +19669,7 @@ queries:
         4. Under **Cluster endpoint access**, locate the **Public access CIDR** list.
         5. Verify that `0.0.0.0/0` is not present in the list.
 
-        A passing cluster shows public access CIDRs that do not include `0.0.0.0/0`. A failing cluster shows `0.0.0.0/0` in the public access CIDR list.
+        A passing cluster has public access disabled or shows public access CIDRs that do not include `0.0.0.0/0`. A failing cluster has public access enabled and shows `0.0.0.0/0` in the public access CIDR list.
 
         ### Audit via CLI
 
@@ -19685,10 +19679,10 @@ queries:
         aws eks list-clusters --query "clusters" --output text | \
           tr '\t' '\n' | \
           xargs -I {} aws eks describe-cluster --name {} \
-          --query "cluster.{Name:name,PublicAccessCidrs:resourcesVpcConfig.publicAccessCidrs}"
+          --query "cluster.{Name:name,PublicAccess:resourcesVpcConfig.endpointPublicAccess,PublicAccessCidrs:resourcesVpcConfig.publicAccessCidrs}"
         ```
 
-        A passing cluster returns a `PublicAccessCidrs` list that does not contain `"0.0.0.0/0"`. A failing cluster returns `["0.0.0.0/0"]` or includes `"0.0.0.0/0"` in the list.
+        A passing cluster has the public endpoint disabled, or returns a `PublicAccessCidrs` list that does not contain `"0.0.0.0/0"`. A failing cluster has the public endpoint enabled and returns `["0.0.0.0/0"]` or includes `"0.0.0.0/0"` in the list.
 
       remediation:
         - id: console
@@ -19701,16 +19695,15 @@ queries:
             4. Enable Private access so nodes and Fargate Pods keep reaching the API server from inside the VPC.
             5. Either disable Public access, or keep it enabled and under Advanced settings replace 0.0.0.0/0 with only the public CIDR blocks that need access, such as your corporate egress addresses. Private and other reserved ranges are rejected here.
             6. Select Update.
-            7. If Public access stays enabled, open each cluster security group listed on the Networking tab and remove inbound rules whose source is 0.0.0.0/0 or ::/0, because the cluster is still treated as internet reachable while such a rule exists.
         - id: cli
           desc: |
             To ensure Amazon EKS public endpoint is not accessible to 0.0.0.0/0 using the AWS CLI:
 
-            1. Check the current endpoint settings, public access CIDRs, and cluster security groups:
+            1. Check the current endpoint settings and public access CIDRs:
 
             ```bash
             aws eks describe-cluster --name <cluster_name> \
-              --query "cluster.resourcesVpcConfig.{Public:endpointPublicAccess,Private:endpointPrivateAccess,Cidrs:publicAccessCidrs,SecurityGroups:securityGroupIds,ClusterSecurityGroup:clusterSecurityGroupId}"
+              --query "cluster.resourcesVpcConfig.{Public:endpointPublicAccess,Private:endpointPrivateAccess,Cidrs:publicAccessCidrs}"
             ```
 
             2. Restrict the public endpoint to the public CIDR blocks that need it and enable private access, so nodes and Fargate Pods keep reaching the API server from inside the VPC.
@@ -19730,17 +19723,6 @@ queries:
             ```bash
             aws eks update-cluster-config --name <cluster_name> \
               --resources-vpc-config endpointPublicAccess=false,endpointPrivateAccess=true
-            ```
-
-            3. While the public endpoint stays enabled, the cluster is still treated as internet reachable if any cluster security group allows ingress from anywhere. Remove each such rule, using the group IDs from step 1 and the rule IDs returned by `describe-security-group-rules`:
-
-            ```bash
-            aws ec2 describe-security-group-rules \
-              --filters Name=group-id,Values=<security-group-id> \
-              --query 'SecurityGroupRules[?IsEgress==`false` && (CidrIpv4==`"0.0.0.0/0"` || CidrIpv6==`"::/0"`)].SecurityGroupRuleId'
-            aws ec2 revoke-security-group-ingress \
-              --group-id <security-group-id> \
-              --security-group-rule-ids <security-group-rule-id>
             ```
         - id: terraform
           desc: |
@@ -19792,6 +19774,7 @@ queries:
   - uid: mondoo-aws-security-eks-cluster-restrict-public-access-aws
     filters: asset.platform == "aws-eks-cluster"
     mql: |
+      aws.eks.cluster.endpointPublicAccess == false ||
       aws.eks.cluster.publicAccessCidrs.none(_ == "0.0.0.0/0")
       aws.eks.cluster.exposure.internetReachable == false
   - uid: mondoo-aws-security-eks-cluster-restrict-public-access-terraform-hcl
@@ -19831,6 +19814,8 @@ queries:
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::EKS::Cluster")
     mql: |
       cloudformation.template.resources.where(type == "AWS::EKS::Cluster").all(
+        properties['ResourcesVpcConfig'] != empty &&
+        properties['ResourcesVpcConfig']['EndpointPublicAccess'] == false ||
         properties['ResourcesVpcConfig'] != empty &&
         properties['ResourcesVpcConfig']['PublicAccessCidrs'] != empty &&
         properties['ResourcesVpcConfig']['PublicAccessCidrs'].none(_ == "0.0.0.0/0")
@@ -24976,13 +24961,13 @@ queries:
   - uid: mondoo-aws-security-ecs-container-non-root-user-aws
     filters: asset.platform == "aws-ecs-taskdefinition"
     mql: |
-      aws.ecs.taskDefinition.containerDefinitions.all(user != empty && user != "root" && user != "0")
+      aws.ecs.taskDefinition.containerDefinitions.all(user != empty && user != /^(root|0)(:|$)/)
   - uid: mondoo-aws-security-ecs-container-non-root-user-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_ecs_task_definition")
     mql: |
       terraform.resources("aws_ecs_task_definition").all(
         arguments.container_definitions.all(
-          _['user'] != empty && _['user'] != "root" && _['user'] != "0"
+          _['user'] != empty && _['user'] != /^(root|0)(:|$)/
         )
       )
   - uid: mondoo-aws-security-ecs-container-non-root-user-terraform-plan
@@ -24990,7 +24975,7 @@ queries:
     mql: |
       terraform.plan.resourceChanges.where(type == "aws_ecs_task_definition").all(
         change.after.container_definitions.all(
-          _['user'] != empty && _['user'] != "root" && _['user'] != "0"
+          _['user'] != empty && _['user'] != /^(root|0)(:|$)/
         )
       )
   - uid: mondoo-aws-security-ecs-container-non-root-user-terraform-state
@@ -24998,7 +24983,7 @@ queries:
     mql: |
       terraform.state.resources.where(type == "aws_ecs_task_definition").all(
         values.container_definitions.all(
-          _['user'] != empty && _['user'] != "root" && _['user'] != "0"
+          _['user'] != empty && _['user'] != /^(root|0)(:|$)/
         )
       )
   - uid: mondoo-aws-security-ecs-container-non-root-user-cloudformation
@@ -25006,7 +24991,7 @@ queries:
     mql: |
       cloudformation.template.resources.where(type == "AWS::ECS::TaskDefinition").all(
         properties['ContainerDefinitions'].all(
-          _['User'] != empty && _['User'] != "root" && _['User'] != "0"
+          _['User'] != empty && _['User'] != /^(root|0)(:|$)/
         )
       )
   - uid: mondoo-aws-security-ecs-efs-volume-transit-encryption
@@ -29551,7 +29536,7 @@ queries:
           mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
-        This check verifies that EKS managed node group EBS volumes are encrypted, by requiring EBS encryption by default to be enabled in each region where node groups run. AWS does not enable EBS encryption by default, so volumes provisioned through node auto-scaling are created unencrypted unless something else configures them.
+        This check verifies that EKS managed node group EBS volumes are encrypted, by requiring EBS encryption by default to be enabled in every Region, since a node group can be created in any of them. AWS does not enable EBS encryption by default, so volumes provisioned through node auto-scaling are created unencrypted unless something else configures them.
 
         The setting is under **EBS encryption** in **Account attributes** in the EC2 console, or applied with `aws ec2 enable-ebs-encryption-by-default --region <region>`.
 
@@ -29569,14 +29554,14 @@ queries:
 
         1. Sign in to the AWS Management Console and open the **EC2** console.
         2. In the left navigation pane, under **Account attributes**, choose **EBS encryption**.
-        3. Verify that **Always encrypt new EBS volumes** is enabled for each region where EKS clusters are deployed.
+        3. Verify that **Always encrypt new EBS volumes** is enabled in every Region.
         4. To check individual node group volumes, open the **EKS** console, select a cluster, go to the **Compute** tab, select a node group, and review the **Launch template** to confirm EBS volumes have encryption enabled.
 
         A passing configuration shows **Enabled** for EBS encryption by default. A failing configuration shows **Disabled** or shows a launch template with `Encrypted: false` for the root volume.
 
         ### Audit via CLI
 
-        1. Check EBS encryption by default status in each relevant region:
+        1. Check EBS encryption by default status in each Region:
 
         ```bash
         aws ec2 get-ebs-encryption-by-default \
@@ -29591,7 +29576,7 @@ queries:
             To ensure EBS encryption by default is enabled for EKS node group volumes using the AWS Console:
 
             1. Navigate to **EC2** > **EBS Encryption** (under Account attributes).
-            2. Enable **Always encrypt new EBS volumes** in all regions where EKS clusters are deployed.
+            2. Enable **Always encrypt new EBS volumes** in every Region.
             3. Optionally set a default KMS key for EBS encryption.
         - id: cli
           desc: |
@@ -30142,215 +30127,6 @@ queries:
         title: AWS Documentation - Amazon EKS networking requirements
       - url: https://docs.aws.amazon.com/eks/latest/userguide/eks-networking.html
         title: AWS Documentation - Configure networking for Amazon EKS clusters
-  - uid: mondoo-aws-security-eks-access-entry-no-system-masters
-    title: Ensure EKS access entries do not grant the system:masters group
-    impact: 85
-    tags:
-      compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
-      compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
-      compliance/iso-27001-2022: iso-27001-2022-a-8-2
-      compliance/nis-2: nis-2-21-2-i
-      compliance/nist-csf-1: nist-csf-1-pr-ac-4
-      compliance/nist-csf-2: nist-csf-2-pr-aa-05
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
-      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
-      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
-      compliance/pci-dss-4: pcidss-requirement-7-2-2
-      compliance/soc2-2017: soc2-control-cc6-3-1
-      compliance/vda-isa-5: vda-isa-5-4-2-1
-    variants:
-      - uid: mondoo-aws-security-eks-access-entry-no-system-masters-aws
-        tags:
-          mondoo.com/filter-title: AWS EKS Cluster
-          mondoo.com/filter-icon: aws
-      - uid: mondoo-aws-security-eks-access-entry-no-system-masters-terraform-hcl
-        tags:
-          mondoo.com/filter-title: Terraform HCL
-          mondoo.com/filter-icon: terraform
-      - uid: mondoo-aws-security-eks-access-entry-no-system-masters-terraform-plan
-        tags:
-          mondoo.com/filter-title: Terraform Plan
-          mondoo.com/filter-icon: terraform
-      - uid: mondoo-aws-security-eks-access-entry-no-system-masters-terraform-state
-        tags:
-          mondoo.com/filter-title: Terraform State
-          mondoo.com/filter-icon: terraform
-      - uid: mondoo-aws-security-eks-access-entry-no-system-masters-cloudformation
-        tags:
-          mondoo.com/filter-title: CloudFormation
-          mondoo.com/filter-icon: cloudformation
-    docs:
-      desc: |
-        This check verifies that no Amazon EKS access entry maps an IAM principal into the `system:masters` Kubernetes group. That group is bound to the built-in `cluster-admin` ClusterRole, which grants unconditional access to every resource in the cluster and cannot be narrowed, audited through RBAC review, or revoked without editing the access entry itself.
-
-        AWS provides scoped access policies such as `AmazonEKSAdminPolicy` and `AmazonEKSClusterAdminPolicy` that can be limited to specific namespaces and are visible through the EKS API. Remove the group with `aws eks update-access-entry` and associate a scoped policy instead.
-
-        **Why this matters**
-
-        `system:masters` bypasses RBAC evaluation entirely, so a `kubectl auth can-i` review or a ClusterRoleBinding audit reveals nothing about what the principal can do. The permission is invisible to the tooling built to inspect permissions.
-
-        Private endpoints, authorized CIDR ranges, and network policies restrict how the API server is reached, not what a `system:masters` caller may do once connected, so none of the surrounding controls constrain it.
-
-        A cluster-admin can read every Kubernetes secret and mount any service account, which typically yields IAM role credentials and converts cluster access into AWS account access.
-
-        The group also grants nothing less than whole-cluster authority, so it cannot express the access a team actually needs. Associating `AmazonEKSAdminPolicy` with a namespace scope grants day-to-day administration without that, and policy associations are recorded through the EKS API and CloudTrail so grants and revocations leave a trail.
-      audit: |
-        ### Audit via Console
-
-        1. Sign in to the AWS Management Console and open the **EKS** console.
-        2. In the left navigation pane, choose **Clusters** and select a cluster.
-        3. Choose the **Access** tab and review the **IAM access entries** list.
-        4. Select each access entry and review its **Kubernetes groups**.
-
-        A passing access entry lists no Kubernetes groups, or lists only groups bound to scoped RBAC roles. A failing access entry lists `system:masters`.
-
-        ### Audit via CLI
-
-        1. List the access entries for a cluster:
-
-        ```bash
-        aws eks list-access-entries --cluster-name <cluster-name>
-        ```
-
-        2. Inspect the Kubernetes groups on each access entry:
-
-        ```bash
-        aws eks describe-access-entry \
-          --cluster-name <cluster-name> \
-          --principal-arn <principal-arn> \
-          --query 'accessEntry.kubernetesGroups'
-        ```
-
-        A passing access entry returns a list that does not contain `system:masters`. A failing access entry returns a list containing `system:masters`.
-      remediation:
-        - id: console
-          desc: |
-            To ensure EKS access entries do not grant the system:masters group using the AWS Console:
-
-            1. Navigate to the **EKS** console and select the cluster.
-            2. Choose the **Access** tab and select the access entry that lists `system:masters`.
-            3. Choose **Edit** and remove `system:masters` from **Kubernetes groups**.
-            4. Choose **Add access policy** and associate a scoped policy such as `AmazonEKSAdminPolicy`, selecting a namespace scope where whole-cluster access is not required.
-            5. Save the access entry.
-        - id: cli
-          desc: |
-            To ensure EKS access entries do not grant the system:masters group using the AWS CLI, grant a scoped access policy and then remove the group, in that order so the principal keeps access throughout.
-
-            1. Associate a scoped access policy. `team-a` is an example namespace; list the namespaces the principal administers, or use `type=cluster` with `AmazonEKSClusterAdminPolicy` only where whole-cluster administration is genuinely required:
-
-            ```bash
-            aws eks associate-access-policy \
-              --cluster-name <cluster-name> \
-              --principal-arn <principal-arn> \
-              --policy-arn arn:aws:eks::aws:cluster-access-policy/AmazonEKSAdminPolicy \
-              --access-scope type=namespace,namespaces=team-a
-            ```
-
-            2. Clear the Kubernetes groups on the access entry. The option needs a value, so pass an empty JSON list; if the entry has other groups to keep, list those groups instead and leave out `system:masters`:
-
-            ```bash
-            aws eks update-access-entry \
-              --cluster-name <cluster-name> \
-              --principal-arn <principal-arn> \
-              --kubernetes-groups '[]'
-            ```
-
-            3. Verify that `system:masters` is gone:
-
-            ```bash
-            aws eks describe-access-entry \
-              --cluster-name <cluster-name> \
-              --principal-arn <principal-arn> \
-              --query 'accessEntry.kubernetesGroups'
-            ```
-        - id: terraform
-          desc: |
-            To ensure EKS access entries do not grant the system:masters group in Terraform, omit `kubernetes_groups` and grant a scoped access policy association:
-
-            ```hcl
-            resource "aws_eks_access_entry" "admin" {
-              cluster_name  = aws_eks_cluster.example.name
-              principal_arn = aws_iam_role.cluster_admin.arn
-              type          = "STANDARD"
-            }
-
-            resource "aws_eks_access_policy_association" "admin" {
-              cluster_name  = aws_eks_cluster.example.name
-              principal_arn = aws_iam_role.cluster_admin.arn
-              policy_arn    = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSAdminPolicy"
-
-              access_scope {
-                type       = "namespace"
-                namespaces = ["team-a"]
-              }
-            }
-            ```
-        - id: cloudformation
-          desc: |
-            To ensure EKS access entries do not grant the system:masters group in CloudFormation, omit `KubernetesGroups` and use `AccessPolicies`:
-
-            ```yaml
-            Resources:
-              ClusterAdminAccessEntry:
-                Type: AWS::EKS::AccessEntry
-                Properties:
-                  ClusterName: !Ref EKSCluster
-                  PrincipalArn: !GetAtt ClusterAdminRole.Arn
-                  Type: STANDARD
-                  AccessPolicies:
-                    - PolicyArn: arn:aws:eks::aws:cluster-access-policy/AmazonEKSAdminPolicy
-                      AccessScope:
-                        Type: namespace
-                        Namespaces:
-                          - team-a
-            ```
-    refs:
-      - url: https://docs.aws.amazon.com/eks/latest/userguide/access-entries.html
-        title: Manage access entries
-      - url: https://docs.aws.amazon.com/eks/latest/userguide/access-policies.html
-        title: Associate access policies with access entries
-
-  - uid: mondoo-aws-security-eks-access-entry-no-system-masters-aws
-    filters: asset.platform == "aws-eks-cluster"
-    mql: |
-      aws.eks.cluster.accessEntries.all(
-        kubernetesGroups == empty || kubernetesGroups.none(_ == "system:masters")
-      )
-
-  - uid: mondoo-aws-security-eks-access-entry-no-system-masters-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_eks_access_entry")
-    mql: |
-      terraform.resources("aws_eks_access_entry").all(
-        arguments['kubernetes_groups'] == empty ||
-        arguments['kubernetes_groups'].none(_ == "system:masters")
-      )
-
-  - uid: mondoo-aws-security-eks-access-entry-no-system-masters-terraform-plan
-    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_eks_access_entry")
-    mql: |
-      terraform.plan.resourceChanges.where(type == "aws_eks_access_entry").all(
-        change.after['kubernetes_groups'] == empty ||
-        change.after['kubernetes_groups'].none(_ == "system:masters")
-      )
-
-  - uid: mondoo-aws-security-eks-access-entry-no-system-masters-terraform-state
-    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_eks_access_entry")
-    mql: |
-      terraform.state.resources.where(type == "aws_eks_access_entry").all(
-        values['kubernetes_groups'] == empty ||
-        values['kubernetes_groups'].none(_ == "system:masters")
-      )
-
-  - uid: mondoo-aws-security-eks-access-entry-no-system-masters-cloudformation
-    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::EKS::AccessEntry")
-    mql: |
-      cloudformation.template.resources.where(type == "AWS::EKS::AccessEntry").all(
-        properties['KubernetesGroups'] == empty ||
-        properties['KubernetesGroups'].none(_ == "system:masters")
-      )
-
   # No Terraform variants: the check resolves the IAM role referenced by the association and inspects the policies attached to it. In Terraform the association carries only a role_arn, and the attached policies live in separate aws_iam_role_policy_attachment resources that may be defined in another module or state, so no single-resource variant can decide whether the role is administrative.
   - uid: mondoo-aws-security-eks-pod-identity-role-no-admin-access
     title: Ensure EKS pod identity associations do not use administrator roles
@@ -30645,7 +30421,7 @@ queries:
           --query 'clusters[*].settings'
         ```
 
-        A passing cluster returns a settings entry with `"name": "containerInsights"` and `"value": "enabled"`. A failing cluster returns `"value": "disabled"` or no `containerInsights` entry.
+        A passing cluster returns a settings entry with `"name": "containerInsights"` and `"value": "enabled"` or `"value": "enhanced"`. A failing cluster returns `"value": "disabled"` or no `containerInsights` entry.
       remediation:
         - id: console
           desc: |
@@ -30696,7 +30472,7 @@ queries:
     filters: asset.platform == "aws"
     mql: |
       aws.ecs.clusters.all(
-        configuration["containerInsights"] == "enabled"
+        settings["containerInsights"] == /^(enabled|enhanced)$/
       )
   - uid: mondoo-aws-security-ecs-cluster-container-insights-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_ecs_cluster")
@@ -30712,20 +30488,23 @@ queries:
     mql: |
       terraform.plan.resourceChanges.where(type == "aws_ecs_cluster").all(
         change.after.setting != empty &&
-        change.after.setting.any(name == "containerInsights" && value == "enabled")
+        change.after.setting.any(name == "containerInsights" && value == /^(enabled|enhanced)$/)
       )
   - uid: mondoo-aws-security-ecs-cluster-container-insights-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_ecs_cluster")
     mql: |
       terraform.state.resources.where(type == "aws_ecs_cluster").all(
         values.setting != empty &&
-        values.setting.any(name == "containerInsights" && value == "enabled")
+        values.setting.any(name == "containerInsights" && value == /^(enabled|enhanced)$/)
       )
   - uid: mondoo-aws-security-ecs-cluster-container-insights-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::ECS::Cluster")
     mql: |
       cloudformation.template.resources.where(type == "AWS::ECS::Cluster").all(
-        properties['ClusterSettings'] != empty
+        properties['ClusterSettings'] != empty &&
+        properties['ClusterSettings'].any(
+          _['Name'] == "containerInsights" && _['Value'] == /^(enabled|enhanced)$/
+        )
       )
   - uid: mondoo-aws-security-ecs-cluster-fargate-encryption
     title: Ensure ECS clusters use KMS encryption for Fargate ephemeral storage
@@ -60026,9 +59805,37 @@ queries:
       )
   - uid: mondoo-aws-security-emr-not-publicly-accessible-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::EMR::Cluster")
+    # A subnet declared in the same template is public when it maps public IPs on launch or its route table
+    # sends 0.0.0.0/0 to an internet gateway. `!Ref` reaches the query as {Ref: "<logical name>"}, so the public
+    # subnets' logical names are joined into one delimited string and the cluster's subnet is looked up in it.
+    # A `{Ref: ...}` value is a dict, which `+` does not accept; `[value].join("")` turns it into a string.
+    # A literal subnet ID names a subnet outside the template, whose routing the template cannot show.
     mql: |
+      igws = "|" + cloudformation.template.resources.where(type == "AWS::EC2::InternetGateway").map(name).join("|") + "|"
+      igwTables = "|" + cloudformation.template.resources.where(type == "AWS::EC2::Route").where(
+        properties['DestinationCidrBlock'] == "0.0.0.0/0" &&
+        properties['RouteTableId'] != /./ &&
+        properties['GatewayId'] != empty
+      ).where(
+        properties['GatewayId'] == /^igw-/ ||
+        properties['GatewayId'] != /./ && igws.contains("|" + [properties['GatewayId']['Ref']].join("") + "|")
+      ).map(properties['RouteTableId']['Ref']).join("|") + "|"
+      publicSubnets = "|" + cloudformation.template.resources.where(
+        type == "AWS::EC2::Subnet" && properties['MapPublicIpOnLaunch'] == true
+      ).map(name).join("|") + "|" + cloudformation.template.resources.where(
+        type == "AWS::EC2::SubnetRouteTableAssociation" &&
+        properties['RouteTableId'] != /./ &&
+        properties['SubnetId'] != /./
+      ).where(
+        igwTables.contains("|" + [properties['RouteTableId']['Ref']].join("") + "|")
+      ).map(properties['SubnetId']['Ref']).join("|") + "|"
       cloudformation.template.resources.where(type == "AWS::EMR::Cluster").all(
-        properties['Instances'] != empty && properties['Instances']['Ec2SubnetId'] != empty
+        properties['Instances'] != empty &&
+        properties['Instances']['Ec2SubnetId'] != empty &&
+        properties['Instances']['Ec2SubnetId'] == /./ ||
+        properties['Instances'] != empty &&
+        properties['Instances']['Ec2SubnetId'] != empty &&
+        publicSubnets.contains("|" + [properties['Instances']['Ec2SubnetId']['Ref']].join("") + "|") == false
       )
   - uid: mondoo-aws-security-emr-log-cmk-encryption
     title: Ensure EMR cluster logs are encrypted with CMK
@@ -60071,9 +59878,9 @@ queries:
           mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
-        This check verifies that Amazon EMR clusters use a customer managed KMS key to encrypt log data, by requiring a log encryption key to be present. In the Terraform form, the check verifies that any cluster with a log URI set names a log encryption key in `log_encryption_kms_key_id`, which is available from EMR release 5.30.0 (except 6.0.0).
+        This check verifies that Amazon EMR clusters that publish logs to Amazon S3 encrypt them with a customer managed KMS key, by requiring every cluster with a log URI to name a log encryption key. A cluster without a log URI passes here, and the logging check in this policy fails it instead. Log encryption is available from EMR release 5.30.0, except 6.0.0.
 
-        The key is configured in a security configuration with `aws emr create-security-configuration` and the configuration is attached when the cluster is launched.
+        The key is named with `--log-encryption-kms-key-id` when the cluster is launched and cannot be added to a running cluster.
 
         **Why this matters**
 
@@ -60089,31 +59896,21 @@ queries:
 
         1. Sign in to the AWS Management Console and open the **EMR** console.
         2. In the left navigation pane, choose **Clusters**.
-        3. Select a cluster and review the **Summary** tab. Check that **Log URI** is set.
-        4. Under **Security and access**, review the **Security configuration** field. If logging is enabled, a security configuration should be attached.
-        5. Open the **EMR** console, choose **Security configurations**, select the referenced configuration, and verify that **S3 encryption** is configured with a **SSE-KMS** mode using a CMK.
+        3. Select a cluster and review the **Cluster logs** section of its configuration.
 
-        A passing cluster shows a security configuration attached that includes CMK-based S3 encryption for logs. A failing cluster with logging enabled shows no security configuration or one with no CMK-based S3 encryption.
+        A passing cluster either publishes no logs to Amazon S3 or lists a KMS key for log encryption next to the S3 log location. A failing cluster publishes logs to Amazon S3 with no log encryption key.
 
         ### Audit via CLI
 
-        1. Retrieve the cluster's log URI and security configuration:
+        1. Retrieve the cluster's log URI and log encryption key:
 
         ```bash
         aws emr describe-cluster \
           --cluster-id <cluster-id> \
-          --query "Cluster.{LogUri:LogUri,SecurityConfiguration:SecurityConfiguration}"
+          --query "Cluster.{LogUri:LogUri,LogEncryptionKmsKeyId:LogEncryptionKmsKeyId}"
         ```
 
-        2. If a security configuration is attached, inspect its encryption settings:
-
-        ```bash
-        aws emr describe-security-configuration \
-          --name <security-configuration-name> \
-          --query "SecurityConfiguration"
-        ```
-
-        A passing cluster with logging enabled returns a security configuration name and the configuration's `S3EncryptionConfiguration.EncryptionMode` is `SSE-KMS` with an `AwsKmsKey` set to a CMK ARN. A failing cluster returns no security configuration or one without CMK-based S3 encryption.
+        A passing cluster returns `"LogUri": null`, or a `LogEncryptionKmsKeyId` holding a KMS key ARN. A failing cluster returns a `LogUri` with `"LogEncryptionKmsKeyId": null`.
 
       remediation:
         - id: console
@@ -60223,8 +60020,9 @@ queries:
       - url: https://docs.aws.amazon.com/emr/latest/ManagementGuide/emr-plan-debugging.html
         title: AWS Documentation - Configure logging and debugging
   - uid: mondoo-aws-security-emr-log-cmk-encryption-aws
-    filters: asset.platform == "aws-emr-cluster" && aws.emr.cluster.logUri != empty
+    filters: asset.platform == "aws-emr-cluster"
     mql: |
+      aws.emr.cluster.logUri == empty ||
       aws.emr.cluster.logEncryptionKmsKey != empty
   - uid: mondoo-aws-security-emr-log-cmk-encryption-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_emr_cluster")
@@ -60248,11 +60046,11 @@ queries:
         values['log_encryption_kms_key_id'] != empty
       )
   - uid: mondoo-aws-security-emr-log-cmk-encryption-cloudformation
-    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::EMR::SecurityConfiguration")
+    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::EMR::Cluster")
     mql: |
-      cloudformation.template.resources.where(type == "AWS::EMR::SecurityConfiguration").all(
-        properties['SecurityConfiguration']['EncryptionConfiguration'] != empty &&
-        properties['SecurityConfiguration']['EncryptionConfiguration']['EnableAtRestEncryption'] == true
+      cloudformation.template.resources.where(type == "AWS::EMR::Cluster").all(
+        properties['LogUri'] == empty ||
+        properties['LogEncryptionKmsKeyId'] != empty
       )
   - uid: mondoo-aws-security-neptune-no-default-security-groups
     title: Ensure Neptune clusters do not use default security groups
@@ -61859,7 +61657,7 @@ queries:
     impact: 60
     filters: asset.platform == "aws"
     mql: |
-      aws.ecs.containers.all(image != /:latest$/ && image == /[:@]/)
+      aws.ecs.containers.all(image != /:latest$/ && image == /[:@][^\/]*$/)
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ccc-06
@@ -63682,7 +63480,7 @@ queries:
           --query "Stacks[*].{Name:Name,HostToClientEnabled:ContentRedirection.HostToClient.Enabled}"
         ```
 
-        A passing stack returns `"HostToClientEnabled": false`. A failing stack returns `"HostToClientEnabled": true`, or `null` when content redirection has never been saved on the stack.
+        A passing stack returns `"HostToClientEnabled": false`, or `null` when content redirection has never been configured on the stack, which leaves redirection off. A failing stack returns `"HostToClientEnabled": true`.
 
       remediation:
         - id: console
@@ -63698,7 +63496,7 @@ queries:
             The change applies to streaming sessions started after the update. Sessions that are already running keep redirecting URLs until they end.
         - id: cli
           desc: |
-            To ensure AppStream 2.0 stacks have URL redirection disabled using the AWS CLI, set `HostToClient.Enabled` to `false` in the stack's content redirection settings. Saving the value explicitly also covers stacks where redirection was never configured. Existing streaming sessions are not affected, so the change reaches users as they start new sessions:
+            To ensure AppStream 2.0 stacks have URL redirection disabled using the AWS CLI, set `HostToClient.Enabled` to `false` in the stack's content redirection settings. Existing streaming sessions are not affected, so the change reaches users as they start new sessions:
 
             ```bash
             aws appstream update-stack \
@@ -63713,6 +63511,7 @@ queries:
     filters: asset.platform == "aws"
     mql: |
       aws.appstream.stacks.all(
+        contentRedirection == empty ||
         contentRedirection.hostToClientEnabled == false
       )
   - uid: mondoo-aws-security-vpc-dhcp-custom-dns
@@ -66469,7 +66268,7 @@ queries:
 
         Once a subnet or Transit Gateway is shared externally, workloads in that account sit inside your network topology, which is a considerably deeper form of access than a data grant.
 
-        NIST SP 800-53 AC-6 and SOC 2 CC6.1 both require least-privilege access controls on shared resources, and organization-only sharing is what keeps the trust boundary inside accounts you govern. A companion check in this policy separately catches wildcard principals on a share.
+        NIST SP 800-53 AC-6 and SOC 2 CC6.1 both require least-privilege access controls on shared resources, and organization-only sharing is what keeps the trust boundary inside accounts you govern.
       audit: |
         ### Audit via Console
 
@@ -66568,176 +66367,6 @@ queries:
     mql: |
       cloudformation.template.resources.where(type == "AWS::RAM::ResourceShare").all(
         properties['AllowExternalPrincipals'] == false
-      )
-  - uid: mondoo-aws-security-ram-no-wildcard-principals
-    title: Ensure RAM shares do not use wildcard principals
-    impact: 70
-    tags:
-      compliance/iso-27001-2022: iso-27001-2022-a-8-3
-      compliance/nis-2: nis-2-21-2-i
-      compliance/nist-csf-1: nist-csf-1-pr-ac-4
-      compliance/nist-csf-2: nist-csf-2-pr-aa-05
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
-      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
-      compliance/soc2-2017: soc2-control-cc6-1-3
-      compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
-      compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
-      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
-      compliance/pci-dss-4: pcidss-requirement-7-2-1
-      compliance/vda-isa-5: vda-isa-5-4-2-1
-    variants:
-      - uid: mondoo-aws-security-ram-no-wildcard-principals-aws
-        tags:
-          mondoo.com/filter-title: AWS Account
-          mondoo.com/filter-icon: aws
-      - uid: mondoo-aws-security-ram-no-wildcard-principals-terraform-hcl
-        tags:
-          mondoo.com/filter-title: Terraform HCL
-          mondoo.com/filter-icon: terraform
-      - uid: mondoo-aws-security-ram-no-wildcard-principals-terraform-plan
-        tags:
-          mondoo.com/filter-title: Terraform Plan
-          mondoo.com/filter-icon: terraform
-      - uid: mondoo-aws-security-ram-no-wildcard-principals-terraform-state
-        tags:
-          mondoo.com/filter-title: Terraform State
-          mondoo.com/filter-icon: terraform
-      - uid: mondoo-aws-security-ram-no-wildcard-principals-cloudformation
-        tags:
-          mondoo.com/filter-title: CloudFormation
-          mondoo.com/filter-icon: cloudformation
-    docs:
-      desc: |
-        This check verifies that AWS Resource Access Manager resource shares do not list `*` as a principal. A wildcard principal grants access to all AWS accounts, which makes the shared resources reachable by anyone.
-
-        Principals are reviewed on the **Principals** tab of a resource share, and corrected with `aws ram disassociate-resource-share` to remove the wildcard followed by `aws ram associate-resource-share` naming the intended accounts or organizational units.
-
-        **Why this matters**
-
-        A wildcard principal means any AWS account can access the shared resources, which for RAM means infrastructure rather than data.
-
-        Shared resources such as VPC subnets and Transit Gateways place the recipient's workloads inside your network, so an unknown third party accepting a wildcard share gains a network position rather than read access to something.
-
-        NIST SP 800-53 AC-6 requires least privilege, and a share available to every AWS account is the clearest possible violation of it.
-
-        Replacing the wildcard with specific account IDs or organizational unit ARNs also makes the audit trail meaningful, because resource access can be attributed to a known principal rather than to an anonymous grant. A companion check in this policy requires external principals to be disallowed entirely.
-      audit: |
-        ### Audit via Console
-
-        1. Sign in to the AWS Management Console and open the **AWS RAM Console**.
-        2. In the left navigation pane, choose **Resource shares**.
-        3. Select each resource share and choose the **Principals** tab.
-        4. Review the list of principals associated with the share.
-        5. Check for any entry that is `*` (wildcard).
-
-        A passing resource share shows only specific account IDs, user ARNs, role ARNs, or organizational unit ARNs in the principals list. A failing resource share shows `*` as one of the principals.
-
-        ### Audit via CLI
-
-        1. List all resource shares owned by this account:
-
-        ```bash
-        aws ram get-resource-shares \
-          --resource-owner SELF \
-          --query "resourceShares[].{Name:name,Arn:resourceShareArn}" \
-          --output table
-        ```
-
-        2. For each resource share ARN, list the associated principals:
-
-        ```bash
-        aws ram list-principals \
-          --resource-owner SELF \
-          --resource-share-arns <resource-share-arn> \
-          --query "principals[].id"
-        ```
-
-        A passing resource share returns a list of principals that contains no `"*"` entry. A failing resource share returns a list that includes `"*"`.
-      remediation:
-        - id: console
-          desc: |
-            To ensure RAM resource shares do not use wildcard principals using the AWS Console:
-
-            1. Navigate to the **AWS RAM Console** and select **Resource shares**.
-            2. Select the resource share you want to configure.
-            3. Review the **Principals** section.
-            4. Remove any wildcard (*) principals.
-            5. Add specific AWS account IDs or organizational unit ARNs instead.
-            6. Choose **Save**.
-        - id: cli
-          desc: |
-            To ensure RAM resource shares do not use wildcard principals using the AWS CLI:
-
-            ```bash
-            aws ram disassociate-resource-share \
-              --resource-share-arn <resource-share-arn> \
-              --principals "*"
-            ```
-
-            Then associate specific principals:
-
-            ```bash
-            aws ram associate-resource-share \
-              --resource-share-arn <resource-share-arn> \
-              --principals <account-id-or-ou-arn>
-            ```
-        - id: terraform
-          desc: |
-            To ensure RAM resource shares do not use wildcard principals in Terraform:
-
-            ```hcl
-            resource "aws_ram_principal_association" "example" {
-              principal          = "123456789012"
-              resource_share_arn = aws_ram_resource_share.example.arn
-            }
-            ```
-        - id: cloudformation
-          desc: |
-            Never list `"*"` in `Principals` on `AWS::RAM::ResourceShare`. Always scope shares to specific account, OU, or organization ARNs:
-
-            ```yaml
-            Resources:
-              ResourceShare:
-                Type: AWS::RAM::ResourceShare
-                Properties:
-                  Name: example
-                  ResourceArns:
-                    - !GetAtt SharedSubnet.Arn
-                  Principals:
-                    - "111122223333"
-            ```
-    refs:
-      - url: https://docs.aws.amazon.com/ram/latest/userguide/working-with-sharing.html
-        title: AWS Documentation - Sharing your AWS resources
-  - uid: mondoo-aws-security-ram-no-wildcard-principals-aws
-    filters: asset.platform == "aws"
-    mql: |
-      aws.ram.resourceShares.all(principals.none(_ == "*"))
-  - uid: mondoo-aws-security-ram-no-wildcard-principals-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_ram_principal_association")
-    mql: |
-      terraform.resources("aws_ram_principal_association").all(
-        arguments.principal != "*"
-      )
-  - uid: mondoo-aws-security-ram-no-wildcard-principals-terraform-plan
-    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_ram_principal_association")
-    mql: |
-      terraform.plan.resourceChanges.where(type == "aws_ram_principal_association").all(
-        change.after["principal"] != "*"
-      )
-  - uid: mondoo-aws-security-ram-no-wildcard-principals-terraform-state
-    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_ram_principal_association")
-    mql: |
-      terraform.state.resources.where(type == "aws_ram_principal_association").all(
-        values["principal"] != "*"
-      )
-  - uid: mondoo-aws-security-ram-no-wildcard-principals-cloudformation
-    filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::RAM::ResourceShare")
-    mql: |
-      cloudformation.template.resources.where(type == "AWS::RAM::ResourceShare").all(
-        properties['Principals'] == null || properties['Principals'].none(_ == "*")
       )
   - uid: mondoo-aws-security-transfer-no-ftp
     title: Ensure Transfer Family servers do not use plain FTP
@@ -74532,252 +74161,6 @@ queries:
       cloudformation.template.resources.where(type == "AWS::SQS::Queue").all(
         properties['KmsMasterKeyId'] != empty &&
         properties['KmsMasterKeyId'] != "alias/aws/sqs"
-      )
-  # No Terraform variants: AppStream image visibility is a runtime image-sharing setting controlled via `aws appstream update-image-permissions`, with no analog argument on Terraform AppStream resources.
-  - uid: mondoo-aws-security-appstream-image-no-public-visibility
-    title: Ensure customer-built AppStream images are not publicly visible
-    impact: 90
-    tags:
-      compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
-      compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
-      compliance/iso-27001-2022: iso-27001-2022-a-8-3
-      compliance/nis-2: nis-2-21-2-e
-      compliance/nist-csf-1: nist-csf-1-pr-ac-4
-      compliance/nist-csf-2: nist-csf-2-pr-aa-05
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
-      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
-      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
-      compliance/pci-dss-4: pcidss-requirement-7-2-1
-      compliance/soc2-2017: soc2-control-cc6-1-3
-      compliance/vda-isa-5: vda-isa-5-4-2-1
-    variants:
-      - uid: mondoo-aws-security-appstream-image-no-public-visibility-aws
-        tags:
-          mondoo.com/filter-title: AWS Account
-          mondoo.com/filter-icon: aws
-    docs:
-      desc: |
-        This check verifies that customer-built AppStream 2.0 images are not configured with `PUBLIC` visibility. AWS-published base images are intentionally public and are excluded by filtering on `baseImageArn`, which is set only on customer-built images. A customer image marked public is shared cross-account and can be discovered and launched by other AWS accounts.
-
-        Public visibility cannot be removed from an existing customer-built image, so remediation means creating a replacement from the same image builder, keeping it private, and deleting the public image with `aws appstream delete-image`.
-
-        **Why this matters**
-
-        AppStream images contain installed applications, configuration files, registry settings, license keys, and any credentials baked into the gold image at build time.
-
-        Public visibility exposes all of that to every AWS account, which is a complete disclosure of the desktop environment's contents including anything an operator assumed was internal.
-
-        Because the image is a full desktop build, its contents describe the applications, versions, and configuration the organization runs, which is reconnaissance material even where no credential is present.
-
-        Keeping images `PRIVATE`, or sharing them explicitly with named accounts, prevents proprietary content being launched outside the owning organization and limits the blast radius if a secret was accidentally baked into the build. Because public visibility cannot be reversed, treat a finding as requiring a rebuild rather than a setting change.
-      audit: |
-        ### Audit via Console
-
-        1. Open the [AppStream 2.0 Console](https://console.aws.amazon.com/appstream2/) and choose **Images** then **Image Registry**.
-        2. Filter the list to show only customer-built images by checking for a non-empty **Base image ARN** value.
-        3. Confirm that the **Visibility** column shows **Private** for every customer-built image.
-
-        A passing image shows **Private** visibility. A failing image shows **Public** visibility.
-
-        ### Audit via CLI
-
-        1. List customer-built images and check their visibility:
-
-        ```bash
-        aws appstream describe-images \
-          --type PRIVATE \
-          --query 'Images[?BaseImageArn!=null && BaseImageArn!=`""`].[Name,Visibility]' \
-          --output table
-        ```
-
-        A passing image returns `PRIVATE` in the Visibility column. A failing image returns `PUBLIC`.
-      remediation:
-        - id: console
-          desc: |
-            To replace a public customer-built AppStream image using the AWS Console:
-
-            1. Open the **AppStream 2.0 Console** and select **Images**, then **Image builder**.
-            2. Start the image builder that produced the flagged image, connect to it, and create a new image. The new image is private.
-            3. Select **Fleets**, and for each fleet that uses the flagged image, stop it if required, edit it to use the new image, and start it again.
-            4. Return to **Images**, select the customer-built image flagged as `PUBLIC`, and choose **Actions** then **Delete**. An image still in use by a fleet or image builder cannot be deleted.
-        - id: cli
-          desc: |
-            Public visibility cannot be removed from an existing customer-built image. Create a replacement image from the same image builder and keep its visibility private. Point each fleet that uses the public image at the replacement, because an image that is in use cannot be deleted:
-
-            ```bash
-            aws appstream update-fleet \
-              --name <fleet-name> \
-              --image-name <replacement-image-name>
-            ```
-
-            Then delete the public image:
-
-            ```bash
-            aws appstream delete-image --name <public-image-name>
-            ```
-
-            To share the replacement image with specific accounts instead of making it public:
-
-            ```bash
-            aws appstream update-image-permissions \
-              --name <image-name> \
-              --shared-account-id <account-id> \
-              --image-permissions allowFleet=true,allowImageBuilder=false
-            ```
-        # No Terraform remediation: There is no `aws_appstream_image` resource in the hashicorp/aws provider; customer-built AppStream images and their visibility settings are managed through the console or CLI, not Terraform.
-    refs:
-      - url: https://docs.aws.amazon.com/appstream2/latest/developerguide/share-image-with-another-account.html
-        title: Share an Image That You Own With Another AWS Account in Amazon WorkSpaces Applications
-  - uid: mondoo-aws-security-appstream-image-no-public-visibility-aws
-    filters: asset.platform == "aws"
-    mql: |
-      aws.appstream.images.where(baseImageArn != null && baseImageArn != "").all(visibility != "PUBLIC")
-  # No CloudFormation variant: the items of `EmbedHostDomains` are constrained to a hostname pattern that admits
-  # neither a wildcard nor an empty string, so neither failing state can be written in a template.
-  - uid: mondoo-aws-security-appstream-stack-embed-host-domains-no-wildcards
-    title: Ensure AppStream stack embedHostDomains do not contain wildcards
-    impact: 80
-    tags:
-      compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
-      compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
-      compliance/iso-27001-2022: iso-27001-2022-a-8-3
-      compliance/nis-2: nis-2-21-2-e
-      compliance/nist-csf-1: nist-csf-1-pr-ac-5
-      compliance/nist-csf-2: nist-csf-2-pr-aa-05
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
-      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
-      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
-      compliance/pci-dss-4: pcidss-requirement-1-3-1
-      compliance/soc2-2017: soc2-control-cc6-1-3
-      compliance/vda-isa-5: vda-isa-5-5-2-7
-    variants:
-      - uid: mondoo-aws-security-appstream-stack-embed-host-domains-no-wildcards-aws
-        tags:
-          mondoo.com/filter-title: AWS Account
-          mondoo.com/filter-icon: aws
-      - uid: mondoo-aws-security-appstream-stack-embed-host-domains-no-wildcards-terraform-hcl
-        tags:
-          mondoo.com/filter-title: Terraform HCL
-          mondoo.com/filter-icon: terraform
-      - uid: mondoo-aws-security-appstream-stack-embed-host-domains-no-wildcards-terraform-plan
-        tags:
-          mondoo.com/filter-title: Terraform Plan
-          mondoo.com/filter-icon: terraform
-      - uid: mondoo-aws-security-appstream-stack-embed-host-domains-no-wildcards-terraform-state
-        tags:
-          mondoo.com/filter-title: Terraform State
-          mondoo.com/filter-icon: terraform
-    docs:
-      desc: |
-        This check verifies that the `embedHostDomains` allowlist on each AppStream 2.0 stack contains only specific fully qualified domain names, with no wildcard entries and no empty strings. That list controls which host pages may embed the streaming session in an iframe.
-
-        Entries are edited under **Embed AppStream 2.0** when editing a stack, or set with `aws appstream update-stack --embed-host-domains app.example.com portal.example.com`.
-
-        **Why this matters**
-
-        A wildcard entry allows any site to frame the streaming session, which means an attacker-controlled page can wrap the session in its own chrome.
-
-        Once embedded, the attacker controls everything around the session and can mount UI redress attacks that harvest credentials or trick the user into triggering actions inside the streamed application.
-
-        Because the user sees a legitimate streaming session inside an attacker's page, the deception is considerably more convincing than a conventional phishing page.
-
-        Restricting the list to known internal fully qualified domain names blocks third-party sites from framing the session at all, and pairing that with a Content Security Policy at the embedding origin gives the browser a second reason to refuse. Scheme-only and empty entries are rejected for the same reason a wildcard is.
-      audit: |
-        ### Audit via Console
-
-        1. Open the [AppStream 2.0 Console](https://console.aws.amazon.com/appstream2/) and choose **Stacks**.
-        2. Select each stack and choose **Edit**.
-        3. Under **Embed AppStream 2.0**, review each entry in the **Allowed domains** list. Confirm that no entry contains `*` or is an empty string.
-
-        A passing stack has no wildcard or empty entries in its embed host domain list. A failing stack has at least one entry containing `*` or an empty string.
-
-        ### Audit via CLI
-
-        1. Describe all stacks and check their EmbedHostDomains lists:
-
-        ```bash
-        aws appstream describe-stacks \
-          --query 'Stacks[*].[Name,EmbedHostDomains]' \
-          --output json
-        ```
-
-        Review the output and flag any stack whose `EmbedHostDomains` list contains a value with `*` or an empty string. A passing stack has a `null` or fully-qualified FQDN-only list. A failing stack has a wildcard or empty entry in the list.
-      remediation:
-        - id: console
-          desc: |
-            To restrict AppStream embed host domains using the AWS Console:
-
-            1. Open the **AppStream 2.0 Console** and select **Stacks**.
-            2. Select the stack and choose **Edit**.
-            3. Under **Embed AppStream 2.0**, replace any wildcard entry with the specific FQDNs allowed to embed the session.
-            4. Save the changes.
-        - id: cli
-          desc: |
-            To restrict AppStream embed host domains using the AWS CLI:
-
-            ```bash
-            aws appstream update-stack \
-              --name <stack-name> \
-              --embed-host-domains app.example.com portal.example.com
-            ```
-        - id: terraform
-          desc: |
-            To restrict AppStream embed host domains in Terraform:
-
-            ```hcl
-            resource "aws_appstream_stack" "example" {
-              name               = "example"
-              embed_host_domains = ["app.example.com", "portal.example.com"]
-            }
-            ```
-        - id: cloudformation
-          desc: |
-            To restrict AppStream embed host domains in CloudFormation, list the exact hosts rather than a wildcard:
-
-            ```yaml
-            Resources:
-              AppStreamStack:
-                Type: AWS::AppStream::Stack
-                Properties:
-                  Name: example
-                  EmbedHostDomains:
-                    - app.example.com
-                    - portal.example.com
-            ```
-    refs:
-      - url: https://docs.aws.amazon.com/appstream2/latest/developerguide/embed-streaming-sessions.html
-        title: Amazon AppStream 2.0 - Embed AppStream 2.0 streaming sessions
-  - uid: mondoo-aws-security-appstream-stack-embed-host-domains-no-wildcards-aws
-    filters: asset.platform == "aws"
-    mql: |
-      aws.appstream.stacks.all(
-        embedHostDomains == null ||
-        embedHostDomains.none(_.contains("*") || _ == "")
-      )
-  - uid: mondoo-aws-security-appstream-stack-embed-host-domains-no-wildcards-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_appstream_stack")
-    mql: |
-      terraform.resources("aws_appstream_stack").all(
-        arguments["embed_host_domains"] == null ||
-        arguments["embed_host_domains"].none(_.contains("*") || _ == "")
-      )
-  - uid: mondoo-aws-security-appstream-stack-embed-host-domains-no-wildcards-terraform-plan
-    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_appstream_stack")
-    mql: |
-      terraform.plan.resourceChanges.where(type == "aws_appstream_stack").all(
-        change.after["embed_host_domains"] == null ||
-        change.after["embed_host_domains"].none(_.contains("*") || _ == "")
-      )
-  - uid: mondoo-aws-security-appstream-stack-embed-host-domains-no-wildcards-terraform-state
-    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_appstream_stack")
-    mql: |
-      terraform.state.resources.where(type == "aws_appstream_stack").all(
-        values["embed_host_domains"] == null ||
-        values["embed_host_domains"].none(_.contains("*") || _ == "")
       )
   - uid: mondoo-aws-security-workspaces-web-ip-access-no-public
     title: Ensure WorkSpaces Web IP access settings exclude public CIDR ranges
@@ -82972,10 +82355,10 @@ queries:
       aws.appmesh.meshes.all(
         virtualNodes.all(
           listeners.all(
-            _['tls'] != null &&
-            _['tls']['mode'] == "STRICT" ||
-            _['tls'] != null &&
-            _['tls']['mode'] == "PERMISSIVE"
+            _['Tls'] != null &&
+            _['Tls']['Mode'] == "STRICT" ||
+            _['Tls'] != null &&
+            _['Tls']['Mode'] == "PERMISSIVE"
           )
         )
       )
@@ -91323,9 +90706,12 @@ queries:
     filters: asset.platform == "aws-directoryservice-directory"
     mql: |
       aws.directoryservice.directory.shareMethod != "HANDSHAKE"
+      aws.directoryservice.directory.sharedDirectories.none(
+        shareMethod == "HANDSHAKE" && shareStatus != /^(Deleted|Deleting|Rejected)$/
+      )
     docs:
       desc: |
-        This check verifies that AWS Directory Service directories are not shared with AWS accounts outside your organization, by requiring the share method not to be `HANDSHAKE`. Directory sharing supports two methods: `ORGANIZATIONS`, which shares within your organization, and `HANDSHAKE`, which shares with any AWS account outside it.
+        This check verifies that AWS Directory Service directories are not shared through the `HANDSHAKE` method. On a directory this account owns, it fails any share to another account that uses `HANDSHAKE` and has not been rejected or deleted. On a directory shared into this account, it fails when that share used `HANDSHAKE`. Directory sharing supports two methods: `ORGANIZATIONS`, which shares within your organization, and `HANDSHAKE`, which shares with any AWS account, including accounts outside it.
 
         Shares are reviewed on the **Scale & share** tab of the directory, and removed with `aws ds unshare-directory --unshare-target Id=111122223333,Type=ACCOUNT`.
 
@@ -91349,14 +90735,22 @@ queries:
 
         ### Audit via CLI
 
-        1. Inspect the share method reported for each directory:
+        1. List the shares of a directory this account owns:
+
+        ```bash
+        aws ds describe-shared-directories \
+          --owner-directory-id <directory-id> \
+          --query "SharedDirectories[*].{Account:SharedAccountId,Method:ShareMethod,Status:ShareStatus}"
+        ```
+
+        2. For a directory shared into this account, inspect the share method it reports:
 
         ```bash
         aws ds describe-directories \
           --query "DirectoryDescriptions[*].{Id:DirectoryId,ShareMethod:ShareMethod,ShareStatus:ShareStatus}"
         ```
 
-        A passing directory reports a `ShareMethod` other than `HANDSHAKE` (empty or `ORGANIZATIONS`). A failing directory reports `HANDSHAKE`.
+        A passing directory has no share with `ShareMethod` `HANDSHAKE` other than ones in `Rejected`, `Deleting`, or `Deleted` status, and does not itself report `HANDSHAKE`. A failing directory has such a share or reports `HANDSHAKE`.
       remediation:
         - id: console
           desc: |
@@ -92170,117 +91564,6 @@ queries:
     refs:
       - url: https://docs.aws.amazon.com/AmazonElastiCache/latest/dg/in-transit-encryption.html
         title: ElastiCache in-transit encryption
-  # No Terraform variants: matches the runtime-only pattern of the EMR checks in this policy. The fix (visible_to_all_users = false) is documented in the Terraform and CloudFormation remediation.
-  - uid: mondoo-aws-security-emr-cluster-restrict-visibility
-    title: Ensure EMR clusters restrict visibility to the creating IAM principal
-    impact: 60
-    tags:
-      compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
-      compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
-      compliance/iso-27001-2022: iso-27001-2022-a-8-3
-      compliance/nis-2: nis-2-21-2-i
-      compliance/nist-csf-1: nist-csf-1-pr-ac-4
-      compliance/nist-csf-2: nist-csf-2-pr-aa-05
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
-      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
-      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
-      compliance/pci-dss-4: pcidss-requirement-7-2-1
-      compliance/soc2-2017: soc2-control-cc6-1-3
-      compliance/vda-isa-5: vda-isa-5-4-2-1
-    filters: asset.platform == "aws-emr-cluster"
-    mql: |
-      aws.emr.cluster.visibleToAllUsers == false
-    docs:
-      desc: |
-        This check verifies that Amazon EMR clusters are not marked visible to all IAM users in the account, requiring `visibleToAllUsers` to be false. When a cluster is visible to all users, any IAM principal holding the relevant EMR actions can view and act on it, subject to their own IAM policies.
-
-        Visibility is set at launch and can be changed with `aws emr modify-cluster-attributes --cluster-id j-XXXXXXXXXXXXX --no-visible-to-all-users`.
-
-        **Why this matters**
-
-        A cluster visible to all users broadens who can enumerate and potentially operate on it well beyond the team that owns it, which is a wider audience than the workload's data warrants.
-
-        EMR clusters process large volumes of data and hold references to the data sources feeding them, so listing a cluster reveals where the data lives even to somebody who cannot read it.
-
-        Restricting visibility narrows the audience for reconnaissance of the data-processing infrastructure, which is the step that precedes an attempt against it.
-
-        Access to compute infrastructure should be scoped to the principals that need it, and restricting visibility limits both who can enumerate the cluster and who can act on it. Note that visibility is not a substitute for IAM policy, since a principal with broad EMR permissions can still act on clusters they can see.
-      audit: |
-        ### Audit via Console
-
-        1. Navigate to the **Amazon EMR Console**.
-        2. Select the cluster and open its **Summary**.
-        3. Review the **Visible to all users** setting.
-
-        A passing cluster shows visibility restricted (not visible to all users). A failing cluster is visible to all IAM users.
-
-        ### Audit via CLI
-
-        1. Inspect the cluster's visibility flag:
-
-        ```bash
-        aws emr describe-cluster \
-          --cluster-id j-XXXXXXXXXXXXX \
-          --query "Cluster.VisibleToAllUsers"
-        ```
-
-        A passing cluster returns `false`. A failing cluster returns `true`.
-      remediation:
-        - id: console
-          desc: |
-            EMR cluster visibility is set at launch. To remediate an existing cluster, relaunch it with visibility restricted, or use the CLI below. For new clusters, in the **Advanced options** at creation, do not enable **Visible to all users**.
-        - id: cli
-          desc: |
-            To restrict EMR cluster visibility using the AWS CLI:
-
-            ```bash
-            aws emr modify-cluster-attributes \
-              --cluster-id j-XXXXXXXXXXXXX \
-              --no-visible-to-all-users
-            ```
-        - id: terraform
-          desc: |
-            To restrict EMR cluster visibility in Terraform, set `visible_to_all_users = false`:
-
-            ```hcl
-            resource "aws_emr_cluster" "example" {
-              name                 = "my-cluster"
-              release_label        = "emr-7.0.0"
-              service_role         = aws_iam_role.emr.arn
-              visible_to_all_users = false
-
-              master_instance_group {
-                instance_type = "m5.xlarge"
-              }
-            }
-            ```
-        - id: cloudformation
-          desc: |
-            To restrict EMR cluster visibility in CloudFormation, set `VisibleToAllUsers` to `false`:
-
-            ```yaml
-            Resources:
-              EMRCluster:
-                Type: AWS::EMR::Cluster
-                Properties:
-                  Instances:
-                    MasterInstanceGroup:
-                      InstanceCount: 1
-                      InstanceType: m5.xlarge
-                    CoreInstanceGroup:
-                      InstanceCount: 2
-                      InstanceType: m5.xlarge
-                  JobFlowRole: EMR_EC2_DefaultRole
-                  ServiceRole: EMR_DefaultRole
-                  Name: my-cluster
-                  ReleaseLabel: emr-7.0.0
-                  VisibleToAllUsers: false
-            ```
-    refs:
-      - url: https://docs.aws.amazon.com/emr/latest/ManagementGuide/emr-plan-access-iam.html
-        title: IAM with Amazon EMR
   # No Terraform variants: enhanced-scanning frequency is set at the registry level (aws_ecr_registry_scanning_configuration rules), not on the repository resource, so a faithful per-repository IaC variant is not possible. The fix is documented in the Terraform remediation.
   - uid: mondoo-aws-security-ecr-repository-continuous-scanning
     title: Ensure ECR repositories use continuous vulnerability scanning
