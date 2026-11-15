@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-mikrotik-security
     name: Mondoo MikroTik RouterOS Security
-    version: 1.1.0
+    version: 1.2.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -24,8 +24,10 @@ policies:
         - Insecure management services such as Telnet, FTP, cleartext HTTP, and the cleartext API
         - Management plane access control, SSH and TLS hardening
         - Layer 2 management exposure through MAC server, neighbor discovery, and RoMON
-        - Local user accounts, RADIUS, and script permissions
+        - Local user accounts, password policy, idle session handling, RADIUS, and script permissions
         - SNMP, logging, time synchronization, and DNS resolver settings
+        - Bandwidth test server, SOCKS, web proxy, and UPnP services
+        - RouterOS release channel and updates
         - IPv4 and IPv6 firewall input filtering
         - PPTP, L2TP, and IPsec VPN settings
         - Wireless authentication and Layer 2 hardening
@@ -63,6 +65,9 @@ policies:
           - uid: mondoo-mikrotik-security-users-source-restricted
           - uid: mondoo-mikrotik-security-radius-message-authenticator
           - uid: mondoo-mikrotik-security-script-permissions-enforced
+          - uid: mondoo-mikrotik-security-password-minimum-length
+          - uid: mondoo-mikrotik-security-password-complexity
+          - uid: mondoo-mikrotik-security-users-inactivity-timeout
       - title: SNMP Security
         filters: asset.platform == "mikrotik" && mikrotik.snmp.enabled
         checks:
@@ -76,6 +81,7 @@ policies:
         checks:
           - uid: mondoo-mikrotik-security-ntp-client-enabled
           - uid: mondoo-mikrotik-security-logging-remote-syslog
+          - uid: mondoo-mikrotik-security-logging-tls-certificate-verified
       - title: DNS Resolver Security
         filters: asset.platform == "mikrotik"
         checks:
@@ -93,6 +99,17 @@ policies:
           - uid: mondoo-mikrotik-security-pptp-server-disabled
           - uid: mondoo-mikrotik-security-l2tp-ipsec-required
           - uid: mondoo-mikrotik-security-ipsec-proposal-strong-algorithms
+      - title: Network Services
+        filters: asset.platform == "mikrotik"
+        checks:
+          - uid: mondoo-mikrotik-security-bandwidth-server-restricted
+          - uid: mondoo-mikrotik-security-socks-secured
+          - uid: mondoo-mikrotik-security-web-proxy-disabled
+          - uid: mondoo-mikrotik-security-upnp-disabled
+      - title: Software Updates
+        filters: asset.platform == "mikrotik"
+        checks:
+          - uid: mondoo-mikrotik-security-routeros-up-to-date
       - title: Wireless Security
         filters: asset.platform == "mikrotik" && mikrotik.wifiInterfaces != empty
         checks:
@@ -619,6 +636,204 @@ queries:
             ```text
             /user set netadmin address=192.168.88.0/24
             ```
+    refs:
+      - url: https://help.mikrotik.com/docs/spaces/ROS/pages/8978504/User
+        title: MikroTik RouterOS User Management
+
+  - uid: mondoo-mikrotik-security-password-minimum-length
+    title: Ensure local passwords must be at least 12 characters long
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-02
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-308-a-5-ii-d-security-awareness-training-and-tools-password-management
+      compliance/iso-27001-2022: iso-27001-2022-a-5-17
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-7
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a07
+      compliance/pci-dss-4: pcidss-requirement-8-3-6
+      compliance/soc2-2017: soc2-control-cc6-1-8
+      compliance/vda-isa-5: vda-isa-5-4-1-3
+    mql: |
+      mikrotik.userSettings.minimumPasswordLength >= 12
+    docs:
+      desc: |
+        This check verifies that the router refuses local account passwords shorter than 12 characters.
+
+        RouterOS enforces a password policy for local accounts under `/user settings`. Its `minimum-password-length` setting is `0` by default, so a factory configuration accepts a password of any length, including a single character. The check requires at least 12, the minimum length PCI DSS 4.0 sets in requirement 8.3.6.
+
+        **Why this matters**
+
+        Length is what makes a password expensive to guess. SSH, WinBox, and the API accept password logins from every address their service restrictions allow, and the scanning campaigns aimed at MikroTik devices try short and common passwords against them first. A 12 character minimum takes those candidates off the table for every local account.
+
+        Local accounts on a router hold full administrative control over the network behind it, so a short password protects far more than one user's data.
+
+        RouterOS applies the policy when a password is set. Passwords set before the policy was raised keep working until they are changed, so change existing administrator passwords after raising the minimum.
+      audit: |
+        To verify the minimum password length from the RouterOS CLI:
+
+        1. Open an SSH session to the device.
+        2. Display the user password policy:
+
+           ```text
+           /user settings print
+           ```
+
+        3. Inspect the `minimum-password-length` field.
+
+        If `minimum-password-length` is 12 or more, the check passes. If it is lower, the check fails.
+      remediation:
+        - id: cli
+          desc: |
+            To require passwords of at least 12 characters using the RouterOS CLI:
+
+            1. Set the minimum length:
+
+               ```text
+               /user settings set minimum-password-length=12
+               ```
+
+            2. Change each existing local account password that is shorter than the new minimum, since RouterOS checks the policy only when a password is set:
+
+               ```text
+               /user set netadmin password=<new-password>
+               ```
+    refs:
+      - url: https://help.mikrotik.com/docs/spaces/ROS/pages/8978504/User
+        title: MikroTik RouterOS User Management
+
+  - uid: mondoo-mikrotik-security-password-complexity
+    title: Ensure local passwords must use at least three character categories
+    impact: 65
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-02
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-308-a-5-ii-d-security-awareness-training-and-tools-password-management
+      compliance/iso-27001-2022: iso-27001-2022-a-5-17
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-7
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a07
+      compliance/pci-dss-4: pcidss-requirement-8-3-6
+      compliance/soc2-2017: soc2-control-cc6-1-8
+      compliance/vda-isa-5: vda-isa-5-4-1-3
+    mql: |
+      mikrotik.userSettings.minimumCategories >= 3
+    docs:
+      desc: |
+        This check verifies that the router refuses local account passwords drawn from fewer than three character categories.
+
+        The `minimum-categories` setting under `/user settings` counts four categories: lowercase letters, uppercase letters, digits, and symbols. It ranges from `0` to `4` and is `0` by default, so a factory configuration accepts a password made of a single category, such as a dictionary word in lowercase. The check requires at least 3.
+
+        **Why this matters**
+
+        Password guessing tools start with dictionary words, names, and keyboard patterns, then the same words with a digit appended. A password that has to mix three categories cannot be one of those first candidates, which is where most cracked router passwords come from.
+
+        Pair this with a minimum length of at least 12 characters. PCI DSS 4.0 requirement 8.3.6 asks for both letters and digits, and two categories can be met with letters alone, so three is the lowest setting that cannot be satisfied by letters only.
+
+        As with the minimum length, RouterOS checks the policy only when a password is set.
+      audit: |
+        To verify the password complexity requirement from the RouterOS CLI:
+
+        1. Open an SSH session to the device.
+        2. Display the user password policy:
+
+           ```text
+           /user settings print
+           ```
+
+        3. Inspect the `minimum-categories` field.
+
+        If `minimum-categories` is 3 or 4, the check passes. If it is lower, the check fails.
+      remediation:
+        - id: cli
+          desc: |
+            To require at least three character categories using the RouterOS CLI:
+
+            1. Set the minimum number of categories:
+
+               ```text
+               /user settings set minimum-categories=3
+               ```
+
+            2. Change each existing local account password that does not meet the new rule, since RouterOS checks the policy only when a password is set.
+    refs:
+      - url: https://help.mikrotik.com/docs/spaces/ROS/pages/8978504/User
+        title: MikroTik RouterOS User Management
+
+  - uid: mondoo-mikrotik-security-users-inactivity-timeout
+    title: Ensure idle CLI sessions are locked or logged out within 15 minutes
+    impact: 60
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: false
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-2-iii-access-control-automatic-logoff
+      compliance/iso-27001-2022: iso-27001-2022-a-8-5
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-7
+      compliance/nist-csf-2: nist-csf-2-pr-aa-03
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-11
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-10
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a07
+      compliance/pci-dss-4: pcidss-requirement-8-2-8
+      compliance/soc2-2017: soc2-control-cc6-1-8
+      compliance/vda-isa-5: vda-isa-5-4-1-2
+    mql: |
+      mikrotik.users.where(disabled != true) != empty
+      mikrotik.users
+        .where(disabled != true)
+        .all(
+          inactivityPolicy == /^(logout|lockscreen)$/ &&
+          inactivityTimeout == /^(([1-9]|1[0-4])m([1-5]?[0-9]s)?|15m)$/
+        )
+    docs:
+      desc: |
+        This check verifies that an idle command line session on the router is locked or ended after at most 15 minutes for every enabled local account.
+
+        Each account under `/user` carries an `inactivity-policy` and an `inactivity-timeout`. The policy is `none` by default, which leaves an idle session open indefinitely. `lockscreen` locks the session until the password is entered again, and `logout` ends it. The timeout ranges from 1 minute to 1 day and is 10 minutes by default. The check requires `lockscreen` or `logout` with a timeout of 15 minutes or less, the idle limit PCI DSS 4.0 sets in requirement 8.2.8.
+
+        MikroTik documents both settings as applying to CLI sessions only, such as SSH and Telnet, so they do not end WinBox, WebFig, or API sessions.
+
+        **Why this matters**
+
+        An administrator's SSH session left open on an unattended laptop or jump host is a full administrative session that anyone with access to that screen can use, with no password prompt. Sessions are also left open when a technician's connection drops and the terminal stays logged in on a shared console server.
+
+        A lock or logout after a short idle period limits that window to minutes and puts the password prompt back in front of whoever returns to the session.
+      audit: |
+        To verify the inactivity settings from the RouterOS CLI:
+
+        1. Open an SSH session to the device.
+        2. Display the user accounts in detail:
+
+           ```text
+           /user print detail
+           ```
+
+        3. For each enabled account, inspect the `inactivity-policy` and `inactivity-timeout` fields.
+
+        If every enabled account has `inactivity-policy` set to `lockscreen` or `logout` and an `inactivity-timeout` of 15 minutes or less, the check passes. If any enabled account has `inactivity-policy=none` or a longer timeout, the check fails.
+      remediation:
+        - id: cli
+          desc: |
+            To lock idle CLI sessions after 10 minutes using the RouterOS CLI:
+
+            1. Set the policy and timeout on every enabled account:
+
+               ```text
+               /user set [find disabled=no] inactivity-policy=lockscreen inactivity-timeout=10m
+               ```
+
+            2. Repeat the setting for each account you add later, since a new account starts with `inactivity-policy=none`.
+
+            Use `inactivity-policy=logout` instead to end the session rather than lock it.
     refs:
       - url: https://help.mikrotik.com/docs/spaces/ROS/pages/8978504/User
         title: MikroTik RouterOS User Management
@@ -2120,6 +2335,73 @@ queries:
       - url: https://help.mikrotik.com/docs/spaces/ROS/pages/328094/Log
         title: MikroTik RouterOS Log
 
+  - uid: mondoo-mikrotik-security-logging-tls-certificate-verified
+    title: Ensure remote logging over TLS validates the collector certificate
+    impact: 65
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a04
+      compliance/pci-dss-4: pcidss-requirement-4-2-1
+      compliance/soc2-2017: soc2-control-cc6-7-2
+      compliance/vda-isa-5: vda-isa-5-5-1-2
+    mql: |
+      mikrotik.loggingActions != empty
+      mikrotik.loggingActions
+        .where(target == "remote" && remoteProtocol == "tls")
+        .all(checkCertificate == true)
+    docs:
+      desc: |
+        This check verifies that every remote logging destination reached over TLS authenticates the collector before sending it log messages.
+
+        Remote logging actions under `/system logging action` choose a transport with `remote-protocol`, which is `udp`, `tcp`, or `tls`. On a `tls` action, `check-certificate` decides whether the router validates the collector's certificate. RouterOS creates a new TLS action with `check-certificate=no`, so the stream is encrypted but the router accepts any certificate it is shown. The check fails if any action with `target=remote` and `remote-protocol=tls` has `check-certificate=no`. Actions over `udp` or `tcp` are not in scope.
+
+        **Why this matters**
+
+        TLS without certificate validation does not stop an attacker who can intercept the connection. Anything on the path between the router and the collector, such as a host using ARP spoofing on the management segment, can terminate the TLS session with its own certificate, read every message, and pass on a version with the entries about its own activity removed.
+
+        Router logs record logins, configuration changes, and firewall hits, so they are what an investigation relies on after an intrusion. Validating the collector's certificate is what makes the TLS transport protect them.
+      audit: |
+        To verify certificate validation on TLS logging actions from the RouterOS CLI:
+
+        1. Open an SSH session to the device.
+        2. List the logging actions:
+
+           ```text
+           /system logging action print detail where target=remote
+           ```
+
+        3. For each action with `remote-protocol=tls`, inspect the `check-certificate` field.
+
+        If every action with `remote-protocol=tls` has `check-certificate=yes`, or no action uses TLS, the check passes. If any TLS action has `check-certificate=no`, the check fails.
+      remediation:
+        - id: cli
+          desc: |
+            To validate the collector certificate on a TLS logging action using the RouterOS CLI:
+
+            1. Import the certificate of the CA that issued the collector's certificate, so the router can validate it:
+
+               ```text
+               /certificate import file-name=collector-ca.crt
+               ```
+
+            2. Enable certificate validation on the action:
+
+               ```text
+               /system logging action set [find name=tlslog] check-certificate=yes
+               ```
+    refs:
+      - url: https://help.mikrotik.com/docs/spaces/ROS/pages/328094/Log
+        title: MikroTik RouterOS Log
+
   # ==========================================
   # DNS Resolver Security (remote requests)
   # ==========================================
@@ -2465,3 +2747,344 @@ queries:
     refs:
       - url: https://help.mikrotik.com/docs/spaces/ROS/pages/11993097/IPsec
         title: MikroTik RouterOS IPsec
+
+  # ==========================================
+  # Network Services
+  # ==========================================
+  - uid: mondoo-mikrotik-security-bandwidth-server-restricted
+    title: Ensure the bandwidth test server is disabled or restricted
+    impact: 60
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-04
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: false
+      compliance/nist-csf-1: nist-csf-1-pr-pt-3
+      compliance/nist-csf-2: nist-csf-2-pr-ps-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-4-6
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a02
+      compliance/pci-dss-4: pcidss-requirement-2-2-4
+      compliance/soc2-2017: soc2-control-cc6-6-1
+      compliance/vda-isa-5: vda-isa-5-5-2-7
+    mql: |
+      mikrotik.bandwidthServer.enabled == false ||
+        mikrotik.bandwidthServer.authenticate == true &&
+        mikrotik.bandwidthServer.allowedAddresses4 != empty &&
+        mikrotik.bandwidthServer.allowedAddresses6 != empty &&
+        mikrotik.bandwidthServer.allowedAddresses4.none(_ == "0.0.0.0/0") &&
+        mikrotik.bandwidthServer.allowedAddresses6.none(_ == "::/0")
+    docs:
+      desc: |
+        This check verifies that the router does not offer its bandwidth test server to arbitrary clients.
+
+        The bandwidth test server under `/tool bandwidth-server` answers throughput tests from MikroTik's Bandwidth Test tool, and RouterOS enables it by default. Its `authenticate` setting decides whether a client must log in with a router account, and `allowed-addresses4` and `allowed-addresses6` list the networks that may connect at all. Both lists are empty by default, which admits every client. The check passes when the server is disabled. Otherwise it requires `authenticate=yes` and both address lists set, with neither containing `0.0.0.0/0` or `::/0`.
+
+        **Why this matters**
+
+        A bandwidth test is designed to saturate the link it runs over, and the router does the work. A client that can start tests against the router can exhaust its uplink and CPU, and with `authenticate=no` that client needs no credentials at all. With authentication on but no address list, the server is one more place on TCP port 2000 to guess router account passwords.
+
+        MikroTik's own hardening guide recommends disabling the server in production. Enable it only for the duration of a test, from the networks the test runs between.
+      audit: |
+        To verify the bandwidth test server settings from the RouterOS CLI:
+
+        1. Open an SSH session to the device.
+        2. Display the bandwidth test server settings:
+
+           ```text
+           /tool bandwidth-server print
+           ```
+
+        3. Inspect the `enabled`, `authenticate`, `allowed-addresses4`, and `allowed-addresses6` fields.
+
+        If `enabled` is `no`, the check passes. If the server is enabled, the check passes only when `authenticate` is `yes` and both address lists are set to specific trusted networks. An empty list, or one containing `0.0.0.0/0` or `::/0`, fails the check.
+      remediation:
+        - id: cli
+          desc: |
+            To disable the bandwidth test server using the RouterOS CLI:
+
+            ```text
+            /tool bandwidth-server set enabled=no
+            ```
+
+            Where the server must stay available, require authentication and restrict it to the networks that run tests. Set an IPv6 entry even if the router does not use IPv6, since an empty list admits every client:
+
+            ```text
+            /tool bandwidth-server set authenticate=yes allowed-addresses4=192.168.88.0/24 allowed-addresses6=::1/128
+            ```
+    refs:
+      - url: https://help.mikrotik.com/docs/spaces/ROS/pages/7962644/Bandwidth+Test
+        title: MikroTik RouterOS Bandwidth Test
+      - url: https://help.mikrotik.com/docs/spaces/ROS/pages/328353/Securing+your+router
+        title: MikroTik RouterOS Securing your router
+
+  - uid: mondoo-mikrotik-security-socks-secured
+    title: Ensure the SOCKS proxy is disabled or requires password login
+    impact: 75
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-04
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: false
+      compliance/nist-csf-1: nist-csf-1-pr-pt-3
+      compliance/nist-csf-2: nist-csf-2-pr-ps-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-4-6
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a02
+      compliance/pci-dss-4: pcidss-requirement-2-2-4
+      compliance/soc2-2017: soc2-control-cc6-6-1
+      compliance/vda-isa-5: vda-isa-5-5-2-7
+    mql: |
+      mikrotik.socks.enabled == false ||
+        mikrotik.socks.version == 5 && mikrotik.socks.authMethod == "password"
+    docs:
+      desc: |
+        This check verifies that the router's SOCKS proxy cannot be used without credentials.
+
+        RouterOS includes a SOCKS server under `/ip socks`, disabled by default. When enabled it relays TCP connections for any client that reaches its port, 1080 by default. It speaks SOCKS 4 by default, which has no password authentication, and SOCKS 5 asks for a user from `/ip socks users` only when `auth-method=password`. The check passes when the server is disabled, or when it runs `version=5` with `auth-method=password`.
+
+        **Why this matters**
+
+        An open SOCKS proxy turns the router into a relay. Anyone who reaches it can open connections that appear to come from the router's own address, both out to the internet and into the networks the router is attached to, past firewall rules that trust the router. Attackers have used this at scale: in 2018 researchers found hundreds of thousands of compromised MikroTik routers with a SOCKS4 proxy that the attackers had enabled to relay their own traffic.
+
+        MikroTik's hardening guide recommends disabling the SOCKS server. Where it is needed, require SOCKS 5 password authentication and restrict the clients with `/ip socks access` rules or the firewall.
+      audit: |
+        To verify the SOCKS server settings from the RouterOS CLI:
+
+        1. Open an SSH session to the device.
+        2. Display the SOCKS settings:
+
+           ```text
+           /ip socks print
+           ```
+
+        3. Inspect the `enabled`, `version`, and `auth-method` fields.
+
+        If `enabled` is `no`, the check passes. If the server is enabled, the check passes only when `version` is `5` and `auth-method` is `password`. Otherwise it fails.
+      remediation:
+        - id: cli
+          desc: |
+            To disable the SOCKS server using the RouterOS CLI:
+
+            ```text
+            /ip socks set enabled=no
+            ```
+
+            Where the proxy must stay available, create the proxy users and require SOCKS 5 password authentication:
+
+            ```text
+            /ip socks users add name=proxyuser password=<strong-password>
+            /ip socks set version=5 auth-method=password
+            ```
+    refs:
+      - url: https://help.mikrotik.com/docs/spaces/ROS/pages/73826308/SOCKS
+        title: MikroTik RouterOS SOCKS
+      - url: https://help.mikrotik.com/docs/spaces/ROS/pages/328353/Securing+your+router
+        title: MikroTik RouterOS Securing your router
+
+  - uid: mondoo-mikrotik-security-web-proxy-disabled
+    title: Ensure the web proxy is disabled
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-04
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: false
+      compliance/nist-csf-1: nist-csf-1-pr-pt-3
+      compliance/nist-csf-2: nist-csf-2-pr-ps-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-4-6
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a02
+      compliance/pci-dss-4: pcidss-requirement-2-2-4
+      compliance/soc2-2017: soc2-control-cc6-6-1
+      compliance/vda-isa-5: vda-isa-5-5-2-7
+    mql: |
+      mikrotik.webProxy.enabled == false
+    docs:
+      desc: |
+        This check verifies that the router does not run its HTTP proxy.
+
+        The web proxy under `/ip proxy` is a caching HTTP proxy that fetches web content on behalf of its clients. It is disabled by default and listens on port 8080 when enabled. The check requires it to stay disabled.
+
+        **Why this matters**
+
+        An enabled web proxy accepts requests from any client that can reach its port unless `/ip proxy access` rules or firewall rules say otherwise. Exposed to the internet it becomes an open proxy: others use it to reach hosts inside the network that trust the router, to hide the origin of abuse traffic, and to send spam and fraud through the router's address, which then lands on blocklists.
+
+        MikroTik's hardening guide recommends disabling the proxy. Where one is still required, restrict it with access rules to the internal networks it serves and block its port from the internet.
+      audit: |
+        To verify the web proxy state from the RouterOS CLI:
+
+        1. Open an SSH session to the device.
+        2. Display the web proxy settings:
+
+           ```text
+           /ip proxy print
+           ```
+
+        3. Inspect the `enabled` field.
+
+        If `enabled` is `no`, the check passes. If it is `yes`, the check fails.
+      remediation:
+        - id: cli
+          desc: |
+            To disable the web proxy using the RouterOS CLI:
+
+            ```text
+            /ip proxy set enabled=no
+            ```
+    refs:
+      - url: https://help.mikrotik.com/docs/spaces/ROS/pages/132350000/Proxy
+        title: MikroTik RouterOS Proxy
+      - url: https://help.mikrotik.com/docs/spaces/ROS/pages/328353/Securing+your+router
+        title: MikroTik RouterOS Securing your router
+
+  - uid: mondoo-mikrotik-security-upnp-disabled
+    title: Ensure UPnP is disabled
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-04
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: false
+      compliance/nist-csf-1: nist-csf-1-pr-pt-3
+      compliance/nist-csf-2: nist-csf-2-pr-ps-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-4-6
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a02
+      compliance/pci-dss-4: pcidss-requirement-2-2-4
+      compliance/soc2-2017: soc2-control-cc6-6-1
+      compliance/vda-isa-5: vda-isa-5-5-2-7
+    mql: |
+      mikrotik.upnp.enabled == false
+    docs:
+      desc: |
+        This check verifies that hosts on the network cannot open inbound port forwards on the router through Universal Plug and Play.
+
+        UPnP under `/ip upnp` lets clients on an internal interface create NAT port mappings on the router without any authentication. It is disabled by default. The check requires it to stay disabled.
+
+        **Why this matters**
+
+        With UPnP enabled, any program on any internal host can expose itself to the internet by asking the router for a port forward, and no administrator sees or approves the change. Malware uses this to make an infected host reachable from outside, and MikroTik notes that an internal interface can create mappings for any subnet, not only its own. With `allow-disable-external-interface=yes`, the same unauthenticated clients can also take the router's external interface down.
+
+        The firewall policy then stops being what the administrator configured. MikroTik's hardening guide recommends disabling UPnP. Configure the forwards that are genuinely needed as static NAT rules instead.
+      audit: |
+        To verify the UPnP state from the RouterOS CLI:
+
+        1. Open an SSH session to the device.
+        2. Display the UPnP settings:
+
+           ```text
+           /ip upnp print
+           ```
+
+        3. Inspect the `enabled` field.
+
+        If `enabled` is `no`, the check passes. If it is `yes`, the check fails.
+      remediation:
+        - id: cli
+          desc: |
+            To disable UPnP using the RouterOS CLI:
+
+            ```text
+            /ip upnp set enabled=no
+            ```
+
+            Recreate any port forward a host still needs as a static rule under `/ip firewall nat`.
+    refs:
+      - url: https://help.mikrotik.com/docs/spaces/ROS/pages/24805490/UPnP
+        title: MikroTik RouterOS UPnP
+      - url: https://help.mikrotik.com/docs/spaces/ROS/pages/328353/Securing+your+router
+        title: MikroTik RouterOS Securing your router
+
+  # ==========================================
+  # Software Updates
+  # ==========================================
+  - uid: mondoo-mikrotik-security-routeros-up-to-date
+    title: Ensure RouterOS runs the latest release of a production channel
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-tvm-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-8
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ip-12
+      compliance/nist-csf-2: nist-csf-2-pr-ps-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-2
+      compliance/nist-sp-800-171: nist-sp-800-171--3-14-1
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a03
+      compliance/pci-dss-4: pcidss-requirement-6-3-3
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: vda-isa-5-5-2-5
+    mql: |
+      mikrotik.packageUpdate.channel == "stable" || mikrotik.packageUpdate.channel == "long-term"
+      mikrotik.packageUpdate.checked == true
+      mikrotik.packageUpdate.updateAvailable == false
+    docs:
+      desc: |
+        This check verifies that the router runs the newest RouterOS release offered on the stable or long-term channel, according to the router's own update check.
+
+        Under `/system package update`, the `channel` setting picks the release channel the router takes updates from: `stable`, `long-term`, `testing`, or `development`. The command `/system package update check-for-updates` asks MikroTik's update server for the latest release on that channel and records it as `latest-version`. The check requires three things:
+
+        - The channel is `stable` or `long-term`. MikroTik states that testing releases should not be used in production.
+        - The router holds a result from an update check. RouterOS discards that result on every reboot, and a check that cannot reach the update server records an error instead. Without a result the check fails, because not having looked is not the same as being current.
+        - The installed version is the latest version the check returned.
+
+        **Why this matters**
+
+        Outdated RouterOS is how MikroTik routers are compromised in bulk. The WinBox flaw CVE-2018-14847 let attackers read the user database from any router that exposed WinBox, and MikroTik shipped a fix in April 2018. In 2021, MikroTik attributed the Meris botnet to routers that attackers had compromised through that flaw in 2018. These devices are rarely logged into after installation, so a fix that is never applied leaves them exposed indefinitely.
+
+        Schedule the update check so the router holds a result after every reboot, and allow the router HTTPS access to MikroTik's update servers. A router that cannot reach them fails this check until someone runs the update check by hand.
+      audit: |
+        To verify the RouterOS version against the release channel from the RouterOS CLI:
+
+        1. Open an SSH session to the device.
+        2. Ask the update server for the latest release on the configured channel:
+
+           ```text
+           /system package update check-for-updates
+           ```
+
+        3. Inspect the `channel`, `installed-version`, `latest-version`, and `status` fields.
+
+        If `channel` is `stable` or `long-term` and `status` reports `System is already up to date`, the check passes. If the channel is `testing` or `development`, `status` reports `New version is available`, or the check could not reach the update server, the check fails.
+      remediation:
+        - id: cli
+          desc: |
+            To update RouterOS using the RouterOS CLI:
+
+            1. Select a production release channel and check for updates:
+
+               ```text
+               /system package update set channel=stable
+               /system package update check-for-updates
+               ```
+
+            2. Download and install the latest release. The router reboots to apply it:
+
+               ```text
+               /system package update install
+               ```
+
+            3. Schedule an update check shortly after every boot and once a day, so the router holds a current result. The delay gives the router time to bring up the connection to the update server:
+
+               ```text
+               /system scheduler add name=check-updates-boot start-time=startup on-event=":delay 30s; /system package update check-for-updates once"
+               /system scheduler add name=check-updates-daily interval=1d on-event="/system package update check-for-updates once"
+               ```
+
+            **Plan the reboot.** Installing an update restarts the router and interrupts the traffic it carries.
+    refs:
+      - url: https://help.mikrotik.com/docs/spaces/ROS/pages/328142/Upgrading+and+installation
+        title: MikroTik RouterOS Upgrading and installation
+      - url: https://help.mikrotik.com/docs/spaces/ROS/pages/328353/Securing+your+router
+        title: MikroTik RouterOS Securing your router
