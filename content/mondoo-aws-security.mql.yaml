@@ -473,7 +473,6 @@ policies:
           - uid: mondoo-aws-security-sns-no-public-access
           - uid: mondoo-aws-security-sns-topic-cmk-encryption
           - uid: mondoo-aws-security-sns-topic-policy-secure-transport
-          - uid: mondoo-aws-security-sns-topic-data-protection-policy
       - title: Amazon SQS
         checks:
           - uid: mondoo-aws-security-sqs-queue-encrypted
@@ -2063,7 +2062,7 @@ queries:
   - uid: mondoo-aws-security-appflow-flow-cmk-encryption-aws
     filters: asset.platform == "aws"
     mql: |
-      aws.appflow.flows.all(kmsKey != null)
+      aws.appflow.flows.all(kmsKey != empty && kmsKey.keyManager == "CUSTOMER")
   - uid: mondoo-aws-security-appflow-flow-cmk-encryption-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_appflow_flow")
     mql: |
@@ -2127,7 +2126,7 @@ queries:
           mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
-        This check verifies that each AWS Lambda function runs on a currently supported managed runtime. It accepts `nodejs18.x`, `nodejs20.x`, `nodejs22.x`, `python3.10` through `python3.13`, `java17`, `java21`, `dotnet8`, `ruby3.2` and later, `provided.al2`, and `provided.al2023`. Functions packaged as container images set no managed runtime and are treated as compliant. AWS stops applying security patches once a runtime reaches end of support and eventually blocks updates and then invocations.
+        This check verifies that each AWS Lambda function runs on a managed runtime that AWS still supports, by comparing the runtime with the deprecation dates published in the Lambda runtimes documentation. A runtime fails from its deprecation date onward, and a runtime the check does not recognize fails as well. Functions packaged as container images set no managed runtime and are treated as compliant. AWS stops applying security patches once a runtime is deprecated, then blocks creating functions on it, and then blocks updating them.
 
         The runtime is shown in the **Runtime** column of the function list and changed under **Runtime settings**, or with `aws lambda update-function-configuration --runtime python3.13`.
 
@@ -2137,7 +2136,7 @@ queries:
 
         Those are publicly known flaws in the language and dependency base, which means an attacker does not have to discover anything to exploit them. The gap between end of support and exploitation is not a research gap.
 
-        The problem also becomes an availability problem on a schedule AWS controls. Create and update operations are blocked first, then invocations, so a function left behind eventually stops working rather than merely becoming risky.
+        The problem also becomes an operational problem on a schedule AWS controls. Function creation is blocked first and code and configuration updates after that, so a function left behind can no longer be patched or redeployed on its old runtime, and AWS warns that deprecated runtimes may stop working properly, for example when a certificate expires.
 
         Migrating early is the difference between a planned runtime upgrade and an unplanned outage, and it is worth testing against the target runtime before switching, because language version changes can alter behavior as well as remove vulnerabilities.
       audit: |
@@ -2158,7 +2157,7 @@ queries:
         aws lambda list-functions --query "Functions[].{Name:FunctionName,Runtime:Runtime}"
         ```
 
-        A passing function reports a supported runtime or no runtime for container-image functions. A failing function reports a deprecated runtime such as `python3.8` or `nodejs16.x`.
+        A passing function reports a supported runtime or no runtime for container-image functions. A failing function reports a runtime listed under deprecated runtimes in the Lambda documentation, such as `python3.9` or `nodejs20.x`.
       remediation:
         - id: console
           desc: |
@@ -2179,7 +2178,7 @@ queries:
               --runtime python3.13
             ```
 
-            Replace `python3.13` with a supported runtime for the language the function is written in, for example `nodejs22.x` for a Node.js function or `java21` for a Java function. Changing the runtime does not rebuild the deployment package, so test the function on the target runtime before switching a production function.
+            Replace `python3.13` with a supported runtime for the language the function is written in, for example `nodejs24.x` for a Node.js function or `java21` for a Java function. Changing the runtime does not rebuild the deployment package, so test the function on the target runtime before switching a production function.
         - id: terraform
           desc: |
             To keep a Lambda function on a supported runtime in Terraform, set the runtime argument to a supported value:
@@ -2219,34 +2218,74 @@ queries:
     filters: asset.platform == "aws-lambda-function"
     mql: |
       aws.lambda.function.runtime == empty ||
-      aws.lambda.function.runtime == /^(nodejs(18|20|22)\.x|python3\.1[0-3]|java(17|21)|dotnet8|ruby3\.[2-9]|provided\.al2023|provided\.al2)$/
+      aws.lambda.function.runtime == /^(python3\.1[34]|java(25|21)|java(17|11|8)\.al2023|provided\.al2023)$/ && time.now < parse.date("2029-06-30") ||
+      aws.lambda.function.runtime == "ruby4.0" && time.now < parse.date("2029-03-31") ||
+      aws.lambda.function.runtime == "dotnet10" && time.now < parse.date("2028-11-14") ||
+      aws.lambda.function.runtime == "python3.12" && time.now < parse.date("2028-10-31") ||
+      aws.lambda.function.runtime == "nodejs24.x" && time.now < parse.date("2028-04-30") ||
+      aws.lambda.function.runtime == "ruby3.4" && time.now < parse.date("2028-03-31") ||
+      aws.lambda.function.runtime == /^(python3\.11|java17|java11|java8\.al2)$/ && time.now < parse.date("2027-06-30") ||
+      aws.lambda.function.runtime == "nodejs22.x" && time.now < parse.date("2027-05-30") ||
+      aws.lambda.function.runtime == "ruby3.3" && time.now < parse.date("2027-03-31")
   - uid: mondoo-aws-security-lambda-no-deprecated-runtime-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_lambda_function")
     mql: |
       terraform.resources("aws_lambda_function").all(
         arguments.runtime == empty ||
-        arguments.runtime == /^(nodejs(18|20|22)\.x|python3\.1[0-3]|java(17|21)|dotnet8|ruby3\.[2-9]|provided\.al2023|provided\.al2)$/
+        arguments.runtime == /^(python3\.1[34]|java(25|21)|java(17|11|8)\.al2023|provided\.al2023)$/ && time.now < parse.date("2029-06-30") ||
+        arguments.runtime == "ruby4.0" && time.now < parse.date("2029-03-31") ||
+        arguments.runtime == "dotnet10" && time.now < parse.date("2028-11-14") ||
+        arguments.runtime == "python3.12" && time.now < parse.date("2028-10-31") ||
+        arguments.runtime == "nodejs24.x" && time.now < parse.date("2028-04-30") ||
+        arguments.runtime == "ruby3.4" && time.now < parse.date("2028-03-31") ||
+        arguments.runtime == /^(python3\.11|java17|java11|java8\.al2)$/ && time.now < parse.date("2027-06-30") ||
+        arguments.runtime == "nodejs22.x" && time.now < parse.date("2027-05-30") ||
+        arguments.runtime == "ruby3.3" && time.now < parse.date("2027-03-31")
       )
   - uid: mondoo-aws-security-lambda-no-deprecated-runtime-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_lambda_function")
     mql: |
       terraform.plan.resourceChanges.where(type == "aws_lambda_function").all(
         change.after.runtime == empty ||
-        change.after.runtime == /^(nodejs(18|20|22)\.x|python3\.1[0-3]|java(17|21)|dotnet8|ruby3\.[2-9]|provided\.al2023|provided\.al2)$/
+        change.after.runtime == /^(python3\.1[34]|java(25|21)|java(17|11|8)\.al2023|provided\.al2023)$/ && time.now < parse.date("2029-06-30") ||
+        change.after.runtime == "ruby4.0" && time.now < parse.date("2029-03-31") ||
+        change.after.runtime == "dotnet10" && time.now < parse.date("2028-11-14") ||
+        change.after.runtime == "python3.12" && time.now < parse.date("2028-10-31") ||
+        change.after.runtime == "nodejs24.x" && time.now < parse.date("2028-04-30") ||
+        change.after.runtime == "ruby3.4" && time.now < parse.date("2028-03-31") ||
+        change.after.runtime == /^(python3\.11|java17|java11|java8\.al2)$/ && time.now < parse.date("2027-06-30") ||
+        change.after.runtime == "nodejs22.x" && time.now < parse.date("2027-05-30") ||
+        change.after.runtime == "ruby3.3" && time.now < parse.date("2027-03-31")
       )
   - uid: mondoo-aws-security-lambda-no-deprecated-runtime-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_lambda_function")
     mql: |
       terraform.state.resources.where(type == "aws_lambda_function").all(
         values.runtime == empty ||
-        values.runtime == /^(nodejs(18|20|22)\.x|python3\.1[0-3]|java(17|21)|dotnet8|ruby3\.[2-9]|provided\.al2023|provided\.al2)$/
+        values.runtime == /^(python3\.1[34]|java(25|21)|java(17|11|8)\.al2023|provided\.al2023)$/ && time.now < parse.date("2029-06-30") ||
+        values.runtime == "ruby4.0" && time.now < parse.date("2029-03-31") ||
+        values.runtime == "dotnet10" && time.now < parse.date("2028-11-14") ||
+        values.runtime == "python3.12" && time.now < parse.date("2028-10-31") ||
+        values.runtime == "nodejs24.x" && time.now < parse.date("2028-04-30") ||
+        values.runtime == "ruby3.4" && time.now < parse.date("2028-03-31") ||
+        values.runtime == /^(python3\.11|java17|java11|java8\.al2)$/ && time.now < parse.date("2027-06-30") ||
+        values.runtime == "nodejs22.x" && time.now < parse.date("2027-05-30") ||
+        values.runtime == "ruby3.3" && time.now < parse.date("2027-03-31")
       )
   - uid: mondoo-aws-security-lambda-no-deprecated-runtime-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::Lambda::Function")
     mql: |
       cloudformation.template.resources.where(type == "AWS::Lambda::Function").all(
         properties['Runtime'] == empty ||
-        properties['Runtime'] == /^(nodejs(18|20|22)\.x|python3\.1[0-3]|java(17|21)|dotnet8|ruby3\.[2-9]|provided\.al2023|provided\.al2)$/
+        properties['Runtime'] == /^(python3\.1[34]|java(25|21)|java(17|11|8)\.al2023|provided\.al2023)$/ && time.now < parse.date("2029-06-30") ||
+        properties['Runtime'] == "ruby4.0" && time.now < parse.date("2029-03-31") ||
+        properties['Runtime'] == "dotnet10" && time.now < parse.date("2028-11-14") ||
+        properties['Runtime'] == "python3.12" && time.now < parse.date("2028-10-31") ||
+        properties['Runtime'] == "nodejs24.x" && time.now < parse.date("2028-04-30") ||
+        properties['Runtime'] == "ruby3.4" && time.now < parse.date("2028-03-31") ||
+        properties['Runtime'] == /^(python3\.11|java17|java11|java8\.al2)$/ && time.now < parse.date("2027-06-30") ||
+        properties['Runtime'] == "nodejs22.x" && time.now < parse.date("2027-05-30") ||
+        properties['Runtime'] == "ruby3.3" && time.now < parse.date("2027-03-31")
       )
   - uid: mondoo-aws-security-efs-enforce-transit-encryption
     title: Ensure EFS file systems enforce encryption in transit via policy
@@ -14023,9 +14062,8 @@ queries:
     filters: asset.platform == "aws-gateway-restapi"
     mql: |
       aws.apigateway.restapi.stages.all(
-        methodSettings['*/*'] != empty &&
-        methodSettings['*/*']['LoggingLevel'] != "" &&
-        methodSettings['*/*']['LoggingLevel'] != "OFF"
+        methodSettings['*/*']['LoggingLevel'] == "INFO" ||
+        methodSettings['*/*']['LoggingLevel'] == "ERROR"
       )
   - uid: mondoo-aws-security-api-gw-execution-logging-enabled-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_api_gateway_method_settings" || nameLabel == "aws_api_gateway_stage")
@@ -15707,7 +15745,7 @@ queries:
           mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
-        This check verifies that Amazon S3 bucket access control lists grant no `READ` or `FULL_CONTROL` permission to the `AllUsers` group, identified by the grantee URI `http://acs.amazonaws.com/groups/global/AllUsers`. Buckets are private when created, but the ACL can be set to `public-read` or `public-read-write` at creation time or through a later API call, making every object freely downloadable.
+        This check verifies that Amazon S3 bucket access control lists grant no `READ` or `FULL_CONTROL` permission to the `AllUsers` group or the `AuthenticatedUsers` group, identified by the grantee URIs `http://acs.amazonaws.com/groups/global/AllUsers` and `http://acs.amazonaws.com/groups/global/AuthenticatedUsers`. `AuthenticatedUsers` means any AWS account, not only accounts in the bucket owner's organization. Buckets are private when created, but the ACL can be set to `public-read` or `public-read-write` at creation time or through a later API call, making every object freely downloadable.
 
         The grants are listed under **Access control list (ACL)** on the **Permissions** tab of the bucket, and cleared with `aws s3api put-bucket-acl --acl private`.
 
@@ -15809,11 +15847,8 @@ queries:
     filters: asset.platform == "aws-s3-bucket"
     mql: |
       aws.s3.bucket.acl.none(
-        permission == "READ" && grantee['URI'] == "http://acs.amazonaws.com/groups/global/AllUsers"
-      )
-      aws.s3.bucket.acl.none(
-        permission == "FULL_CONTROL" &&
-        grantee['URI'] == "http://acs.amazonaws.com/groups/global/AllUsers"
+        permission == /^(READ|FULL_CONTROL)$/ &&
+        grantee['uri'] == /^http:\/\/acs\.amazonaws\.com\/groups\/global\/(AllUsers|AuthenticatedUsers)$/
       )
   # aws_s3_bucket_acl takes either a canned `acl` or an `access_control_policy`
   # of explicit grants, so both are read. Read access to objects comes from
@@ -24221,7 +24256,7 @@ queries:
         title: AWS Documentation - Supported protocols and ciphers between viewers and CloudFront
   - uid: mondoo-aws-security-cloudfront-minimum-tls-version-distribution
     filters: asset.platform == "aws-cloudfront-distribution"
-    mql: aws.cloudfront.distribution.minimumProtocolVersion == /TLSv1\.2/
+    mql: aws.cloudfront.distribution.minimumProtocolVersion == /^TLSv1\.[23]_/
   - uid: mondoo-aws-security-cloudfront-minimum-tls-version-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_cloudfront_distribution")
     mql: |
@@ -24236,14 +24271,14 @@ queries:
     mql: |
       terraform.plan.resourceChanges.where(type == "aws_cloudfront_distribution").all(
         change.after.viewer_certificate != empty &&
-        change.after.viewer_certificate.all(minimum_protocol_version == /TLSv1\.2/)
+        change.after.viewer_certificate.all(minimum_protocol_version == /^TLSv1\.[23]_/)
       )
   - uid: mondoo-aws-security-cloudfront-minimum-tls-version-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_cloudfront_distribution")
     mql: |
       terraform.state.resources.where(type == "aws_cloudfront_distribution").all(
         values.viewer_certificate != empty &&
-        values.viewer_certificate.all(minimum_protocol_version == /TLSv1\.2/)
+        values.viewer_certificate.all(minimum_protocol_version == /^TLSv1\.[23]_/)
       )
   - uid: mondoo-aws-security-cloudfront-minimum-tls-version-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::CloudFront::Distribution")
@@ -24251,7 +24286,7 @@ queries:
       cloudformation.template.resources.where(type == "AWS::CloudFront::Distribution").all(
         properties['DistributionConfig'] != empty &&
         properties['DistributionConfig']['ViewerCertificate'] != empty &&
-        properties['DistributionConfig']['ViewerCertificate']['MinimumProtocolVersion'] == /TLSv1\.2/
+        properties['DistributionConfig']['ViewerCertificate']['MinimumProtocolVersion'] == /^TLSv1\.[23]_/
       )
   - uid: mondoo-aws-security-cloudfront-waf-enabled
     title: Ensure CloudFront distributions have WAF web ACL associated
@@ -26951,7 +26986,7 @@ queries:
         title: AWS Documentation - Source version sample
   - uid: mondoo-aws-security-codebuild-source-ssl-verification-aws
     filters: asset.platform == "aws-codebuild-project"
-    mql: aws.codebuild.project.source["insecureSsl"] != true
+    mql: aws.codebuild.project.source["InsecureSsl"] != true
   - uid: mondoo-aws-security-codebuild-source-ssl-verification-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_codebuild_project")
     mql: |
@@ -32056,7 +32091,7 @@ queries:
         title: AWS Documentation - Security in AWS CodeBuild
   - uid: mondoo-aws-security-codebuild-encryption-key-configured-aws
     filters: asset.platform == "aws-codebuild-project"
-    mql: aws.codebuild.project.encryptionKey.metadata["KeyManager"] == "CUSTOMER"
+    mql: aws.codebuild.project.encryptionKey.keyManager == "CUSTOMER"
   - uid: mondoo-aws-security-codebuild-encryption-key-configured-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_codebuild_project")
     mql: |
@@ -41852,8 +41887,7 @@ queries:
     filters: asset.platform == "aws"
     mql: |
       aws.glue.catalogEncryptionSettings.all(
-        _['EncryptionAtRest']['CatalogEncryptionMode'] != "" &&
-        _['EncryptionAtRest']['CatalogEncryptionMode'] != "DISABLED"
+        _['EncryptionAtRest']['CatalogEncryptionMode'] == /^SSE-KMS/
       )
   - uid: mondoo-aws-security-glue-catalog-encryption-enabled-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == /^aws_glue_/)
@@ -41935,7 +41969,7 @@ queries:
           mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
-        This check verifies that AWS Glue security configurations do not set the S3 encryption mode to `DISABLED`. The security configuration controls whether data that Glue jobs and crawlers write to S3 is encrypted.
+        This check verifies that AWS Glue security configurations set the S3 encryption mode to `SSE-KMS` or `SSE-S3`. A configuration created without an S3 encryption mode leaves it `DISABLED` and fails. The security configuration controls whether data that Glue jobs and crawlers write to S3 is encrypted.
 
         The mode is set when creating a security configuration with `aws glue create-security-configuration --encryption-configuration` specifying an `S3Encryption` mode of `SSE-KMS` or `SSE-S3`. Security configurations are immutable, so changing the mode means creating a new one.
 
@@ -41967,7 +42001,7 @@ queries:
           --query "SecurityConfigurations[*].{Name:Name,S3Encryption:EncryptionConfiguration.S3Encryption}"
         ```
 
-        A passing security configuration returns `S3EncryptionMode` with a value other than `DISABLED` (for example, `SSE-KMS` or `SSE-S3`). A failing security configuration returns `S3EncryptionMode` equal to `DISABLED`.
+        A passing security configuration returns `S3EncryptionMode` of `SSE-KMS` or `SSE-S3`. A failing security configuration returns `DISABLED` or no `S3EncryptionMode`.
 
       remediation:
         - id: console
@@ -42053,16 +42087,14 @@ queries:
   - uid: mondoo-aws-security-glue-security-config-s3-encryption-aws
     filters: asset.platform == "aws"
     mql: |
-      aws.glue.securityConfigurations.all(
-        s3Encryption['S3EncryptionMode'] != "DISABLED"
-      )
+      aws.glue.securityConfigurations.all(s3DataEncryption.mode == /^SSE-(KMS|S3)$/)
   - uid: mondoo-aws-security-glue-security-config-s3-encryption-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_glue_security_configuration")
     mql: |
       terraform.resources("aws_glue_security_configuration").all(
         blocks.where(type == "encryption_configuration").all(
           blocks.where(type == "s3_encryption").all(
-            arguments.s3_encryption_mode != "DISABLED"
+            arguments.s3_encryption_mode == /^SSE-(KMS|S3)$/
           )
         )
       )
@@ -42072,7 +42104,7 @@ queries:
       terraform.plan.resourceChanges.where(type == "aws_glue_security_configuration").all(
         change.after.encryption_configuration != empty &&
         change.after.encryption_configuration.all(
-          _['s3_encryption'] != empty && _['s3_encryption'].all(_['s3_encryption_mode'] != "DISABLED")
+          _['s3_encryption'] != empty && _['s3_encryption'].all(_['s3_encryption_mode'] == /^SSE-(KMS|S3)$/)
         )
       )
   - uid: mondoo-aws-security-glue-security-config-s3-encryption-terraform-state
@@ -42081,7 +42113,7 @@ queries:
       terraform.state.resources.where(type == "aws_glue_security_configuration").all(
         values.encryption_configuration != empty &&
         values.encryption_configuration.all(
-          _['s3_encryption'] != empty && _['s3_encryption'].all(_['s3_encryption_mode'] != "DISABLED")
+          _['s3_encryption'] != empty && _['s3_encryption'].all(_['s3_encryption_mode'] == /^SSE-(KMS|S3)$/)
         )
       )
   - uid: mondoo-aws-security-glue-security-config-s3-encryption-cloudformation
@@ -42090,7 +42122,7 @@ queries:
       cloudformation.template.resources.where(type == "AWS::Glue::SecurityConfiguration").all(
         properties['EncryptionConfiguration'] != empty &&
         properties['EncryptionConfiguration']['S3Encryptions'] != empty &&
-        properties['EncryptionConfiguration']['S3Encryptions'].all(_['S3EncryptionMode'] != "DISABLED")
+        properties['EncryptionConfiguration']['S3Encryptions'].all(_['S3EncryptionMode'] == /^SSE-(KMS|S3)$/)
       )
   - uid: mondoo-aws-security-glue-security-config-cloudwatch-encryption
     title: Ensure AWS Glue security configurations encrypt CloudWatch logs
@@ -42133,7 +42165,7 @@ queries:
           mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
-        This check verifies that AWS Glue security configurations do not set the CloudWatch encryption mode to `DISABLED`. Glue jobs and crawlers emit logs to CloudWatch during execution, and this setting determines whether those logs are encrypted.
+        This check verifies that AWS Glue security configurations set the CloudWatch encryption mode to `SSE-KMS`. A configuration created without a CloudWatch encryption setting leaves it disabled and fails. Glue jobs and crawlers emit logs to CloudWatch during execution, and this setting determines whether those logs are encrypted.
 
         The mode is set when creating a security configuration with `aws glue create-security-configuration --encryption-configuration` specifying a `CloudWatchEncryption` mode of `SSE-KMS`. Security configurations are immutable, so changing it means creating a new one.
 
@@ -42165,7 +42197,7 @@ queries:
           --query "SecurityConfigurations[*].{Name:Name,CloudWatchEncryption:EncryptionConfiguration.CloudWatchEncryption}"
         ```
 
-        A passing security configuration returns `CloudWatchEncryptionMode` with a value other than `DISABLED` (for example, `SSE-KMS`). A failing security configuration returns `CloudWatchEncryptionMode` equal to `DISABLED`.
+        A passing security configuration returns `CloudWatchEncryptionMode` of `SSE-KMS`. A failing security configuration returns `DISABLED` or no `CloudWatchEncryption` setting.
 
       remediation:
         - id: console
@@ -42251,16 +42283,14 @@ queries:
   - uid: mondoo-aws-security-glue-security-config-cloudwatch-encryption-aws
     filters: asset.platform == "aws"
     mql: |
-      aws.glue.securityConfigurations.all(
-        cloudWatchEncryption['CloudWatchEncryptionMode'] != "DISABLED"
-      )
+      aws.glue.securityConfigurations.all(cloudWatchLogsEncryption.mode == "SSE-KMS")
   - uid: mondoo-aws-security-glue-security-config-cloudwatch-encryption-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_glue_security_configuration")
     mql: |
       terraform.resources("aws_glue_security_configuration").all(
         blocks.where(type == "encryption_configuration").all(
           blocks.where(type == "cloudwatch_encryption").all(
-            arguments.cloudwatch_encryption_mode != "DISABLED"
+            arguments.cloudwatch_encryption_mode == "SSE-KMS"
           )
         )
       )
@@ -42271,7 +42301,7 @@ queries:
         change.after.encryption_configuration != empty &&
         change.after.encryption_configuration.all(
           _['cloudwatch_encryption'] != empty &&
-          _['cloudwatch_encryption'].all(_['cloudwatch_encryption_mode'] != "DISABLED")
+          _['cloudwatch_encryption'].all(_['cloudwatch_encryption_mode'] == "SSE-KMS")
         )
       )
   - uid: mondoo-aws-security-glue-security-config-cloudwatch-encryption-terraform-state
@@ -42281,7 +42311,7 @@ queries:
         values.encryption_configuration != empty &&
         values.encryption_configuration.all(
           _['cloudwatch_encryption'] != empty &&
-          _['cloudwatch_encryption'].all(_['cloudwatch_encryption_mode'] != "DISABLED")
+          _['cloudwatch_encryption'].all(_['cloudwatch_encryption_mode'] == "SSE-KMS")
         )
       )
   - uid: mondoo-aws-security-glue-security-config-cloudwatch-encryption-cloudformation
@@ -42290,7 +42320,7 @@ queries:
       cloudformation.template.resources.where(type == "AWS::Glue::SecurityConfiguration").all(
         properties['EncryptionConfiguration'] != empty &&
         properties['EncryptionConfiguration']['CloudWatchEncryption'] != empty &&
-        properties['EncryptionConfiguration']['CloudWatchEncryption']['CloudWatchEncryptionMode'] != "DISABLED"
+        properties['EncryptionConfiguration']['CloudWatchEncryption']['CloudWatchEncryptionMode'] == "SSE-KMS"
       )
   - uid: mondoo-aws-security-glue-security-config-bookmark-encryption
     title: Ensure AWS Glue security configurations encrypt job bookmarks
@@ -42333,7 +42363,7 @@ queries:
           mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
-        This check verifies that AWS Glue security configurations do not set the job bookmark encryption mode to `DISABLED`. Job bookmarks track the state of ETL job runs so that jobs process only new or changed data.
+        This check verifies that AWS Glue security configurations set the job bookmark encryption mode to `CSE-KMS`. A configuration created without a job bookmark encryption setting leaves it disabled and fails. Job bookmarks track the state of ETL job runs so that jobs process only new or changed data.
 
         The mode is set when creating a security configuration with `aws glue create-security-configuration --encryption-configuration` specifying a `JobBookmarksEncryption` mode of `CSE-KMS`. Security configurations are immutable, so changing it means creating a new one.
 
@@ -42365,7 +42395,7 @@ queries:
           --query "SecurityConfigurations[*].{Name:Name,JobBookmarksEncryption:EncryptionConfiguration.JobBookmarksEncryption}"
         ```
 
-        A passing security configuration returns `JobBookmarksEncryptionMode` with a value other than `DISABLED` (for example, `CSE-KMS`). A failing security configuration returns `JobBookmarksEncryptionMode` equal to `DISABLED`.
+        A passing security configuration returns `JobBookmarksEncryptionMode` of `CSE-KMS`. A failing security configuration returns `DISABLED` or no `JobBookmarksEncryption` setting.
 
       remediation:
         - id: console
@@ -42451,16 +42481,14 @@ queries:
   - uid: mondoo-aws-security-glue-security-config-bookmark-encryption-aws
     filters: asset.platform == "aws"
     mql: |
-      aws.glue.securityConfigurations.all(
-        jobBookmarksEncryption['JobBookmarksEncryptionMode'] != "DISABLED"
-      )
+      aws.glue.securityConfigurations.all(bookmarkStateEncryption.mode == "CSE-KMS")
   - uid: mondoo-aws-security-glue-security-config-bookmark-encryption-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_glue_security_configuration")
     mql: |
       terraform.resources("aws_glue_security_configuration").all(
         blocks.where(type == "encryption_configuration").all(
           blocks.where(type == "job_bookmarks_encryption").all(
-            arguments.job_bookmarks_encryption_mode != "DISABLED"
+            arguments.job_bookmarks_encryption_mode == "CSE-KMS"
           )
         )
       )
@@ -42471,7 +42499,7 @@ queries:
         change.after.encryption_configuration != empty &&
         change.after.encryption_configuration.all(
           _['job_bookmarks_encryption'] != empty &&
-          _['job_bookmarks_encryption'].all(_['job_bookmarks_encryption_mode'] != "DISABLED")
+          _['job_bookmarks_encryption'].all(_['job_bookmarks_encryption_mode'] == "CSE-KMS")
         )
       )
   - uid: mondoo-aws-security-glue-security-config-bookmark-encryption-terraform-state
@@ -42481,7 +42509,7 @@ queries:
         values.encryption_configuration != empty &&
         values.encryption_configuration.all(
           _['job_bookmarks_encryption'] != empty &&
-          _['job_bookmarks_encryption'].all(_['job_bookmarks_encryption_mode'] != "DISABLED")
+          _['job_bookmarks_encryption'].all(_['job_bookmarks_encryption_mode'] == "CSE-KMS")
         )
       )
   - uid: mondoo-aws-security-glue-security-config-bookmark-encryption-cloudformation
@@ -42490,7 +42518,7 @@ queries:
       cloudformation.template.resources.where(type == "AWS::Glue::SecurityConfiguration").all(
         properties['EncryptionConfiguration'] != empty &&
         properties['EncryptionConfiguration']['JobBookmarksEncryption'] != empty &&
-        properties['EncryptionConfiguration']['JobBookmarksEncryption']['JobBookmarksEncryptionMode'] != "DISABLED"
+        properties['EncryptionConfiguration']['JobBookmarksEncryption']['JobBookmarksEncryptionMode'] == "CSE-KMS"
       )
   - uid: mondoo-aws-security-glue-job-supported-version
     title: Ensure AWS Glue jobs use a supported Glue version
@@ -42533,7 +42561,7 @@ queries:
           mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
-        This check verifies that AWS Glue ETL jobs run on Glue version 3.0 or later. Older versions may contain unpatched vulnerabilities and lack security features available in newer releases. AWS Security Hub control Glue.4 recommends running jobs on supported versions.
+        This check verifies that AWS Glue ETL jobs run on a Glue version that has not reached end of support under the AWS Glue version support policy. A version the check does not recognize fails as well. Older versions may contain unpatched vulnerabilities and lack security features available in newer releases. AWS Security Hub control Glue.4 recommends running jobs on supported versions.
 
         The version is set on the job details in the Glue console, or by retrieving the full job definition and resubmitting it with `aws glue update-job`, which replaces the entire definition.
 
@@ -42545,7 +42573,7 @@ queries:
 
         Versions past end of support no longer receive security patches from AWS at all, which means known vulnerabilities in the data processing pipeline stay open indefinitely.
 
-        Older versions also lack support for newer encryption modes, IAM features, and VPC configurations, so staying behind limits what other controls in this policy can even be applied. Note that the version comparison is lexicographic, which is correct for versions 2.0 through 4.0 but would need updating if AWS releases Glue 10.0 or higher.
+        Older versions also lack support for newer encryption modes, IAM features, and VPC configurations, so staying behind limits what other controls in this policy can even be applied.
       audit: |
         ### Audit via Console
 
@@ -42633,34 +42661,36 @@ queries:
     refs:
       - url: https://docs.aws.amazon.com/glue/latest/dg/release-notes.html
         title: AWS Documentation - AWS Glue release notes
+      - url: https://docs.aws.amazon.com/glue/latest/dg/glue-version-support-policy.html
+        title: AWS Documentation - AWS Glue version support policy
       - url: https://docs.aws.amazon.com/securityhub/latest/userguide/glue-controls.html
         title: AWS Documentation - AWS Glue controls
   - uid: mondoo-aws-security-glue-job-supported-version-aws
     filters: asset.platform == "aws"
-    mql: aws.glue.jobs.all(glueVersion >= "3.0")
+    mql: aws.glue.jobs.all(glueVersion == /^[3-6]\.0$/)
   - uid: mondoo-aws-security-glue-job-supported-version-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_glue_job")
     mql: |
       terraform.resources("aws_glue_job").all(
-        arguments.glue_version >= "3.0"
+        arguments.glue_version == /^[3-6]\.0$/
       )
   - uid: mondoo-aws-security-glue-job-supported-version-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_glue_job")
     mql: |
       terraform.plan.resourceChanges.where(type == "aws_glue_job").all(
-        change.after.glue_version >= "3.0"
+        change.after.glue_version == /^[3-6]\.0$/
       )
   - uid: mondoo-aws-security-glue-job-supported-version-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_glue_job")
     mql: |
       terraform.state.resources.where(type == "aws_glue_job").all(
-        values.glue_version >= "3.0"
+        values.glue_version == /^[3-6]\.0$/
       )
   - uid: mondoo-aws-security-glue-job-supported-version-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::Glue::Job")
     mql: |
       cloudformation.template.resources.where(type == "AWS::Glue::Job").all(
-        properties['GlueVersion'] >= "3.0"
+        properties['GlueVersion'] == /^[3-6]\.0$/
       )
   - uid: mondoo-aws-security-elasticbeanstalk-enhanced-health
     title: Ensure Elastic Beanstalk environments use enhanced health reporting
@@ -62918,7 +62948,7 @@ queries:
   - uid: mondoo-aws-security-kinesis-cmk-typed-key-aws
     filters: asset.platform == "aws"
     mql: |
-      aws.kinesis.streams.all(kmsKey { metadata["KeyManager"] == "CUSTOMER" })
+      aws.kinesis.streams.all(kmsKey != empty && kmsKey.keyManager == "CUSTOMER")
   - uid: mondoo-aws-security-kinesis-cmk-typed-key-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_kinesis_stream")
     mql: |
@@ -63119,7 +63149,7 @@ queries:
   - uid: mondoo-aws-security-dynamodb-cmk-encryption-aws
     filters: asset.platform == "aws-dynamodb-table"
     mql: |
-      aws.dynamodb.table.sseKmsKey { metadata["KeyManager"] == "CUSTOMER" }
+      aws.dynamodb.table.sseKmsKey != empty && aws.dynamodb.table.sseKmsKey.keyManager == "CUSTOMER"
   - uid: mondoo-aws-security-dynamodb-cmk-encryption-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_dynamodb_table")
     mql: |
@@ -67278,7 +67308,9 @@ queries:
   - uid: mondoo-aws-security-transfer-security-policy-aws
     filters: asset.platform == "aws-transfer-server"
     mql: |
-      aws.transfer.server.securityPolicyName != "TransferSecurityPolicy-2018-11"
+      aws.transfer.server.securityPolicyName != "TransferSecurityPolicy-2018-11" &&
+      aws.transfer.server.securityPolicyName != "TransferSecurityPolicy-Restricted-2018-11" &&
+      aws.transfer.server.securityPolicyName != /^TransferSecurityPolicy-PQ-SSH-(FIPS-)?Experimental-2023-04$/
   - uid: mondoo-aws-security-transfer-security-policy-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_transfer_server")
     mql: |
@@ -67293,20 +67325,27 @@ queries:
     mql: |
       terraform.plan.resourceChanges.where(type == "aws_transfer_server").all(
         change.after["security_policy_name"] == null ||
-        change.after["security_policy_name"] != "TransferSecurityPolicy-2018-11"
+        change.after["security_policy_name"] != "TransferSecurityPolicy-2018-11" &&
+        change.after["security_policy_name"] != "TransferSecurityPolicy-Restricted-2018-11" &&
+        change.after["security_policy_name"] != /^TransferSecurityPolicy-PQ-SSH-(FIPS-)?Experimental-2023-04$/
       )
   - uid: mondoo-aws-security-transfer-security-policy-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_transfer_server")
     mql: |
       terraform.state.resources.where(type == "aws_transfer_server").all(
         values["security_policy_name"] == null ||
-        values["security_policy_name"] != "TransferSecurityPolicy-2018-11"
+        values["security_policy_name"] != "TransferSecurityPolicy-2018-11" &&
+        values["security_policy_name"] != "TransferSecurityPolicy-Restricted-2018-11" &&
+        values["security_policy_name"] != /^TransferSecurityPolicy-PQ-SSH-(FIPS-)?Experimental-2023-04$/
       )
   - uid: mondoo-aws-security-transfer-security-policy-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::Transfer::Server")
     mql: |
       cloudformation.template.resources.where(type == "AWS::Transfer::Server").all(
-        properties['SecurityPolicyName'] != "TransferSecurityPolicy-2018-11"
+        properties['SecurityPolicyName'] == null ||
+        properties['SecurityPolicyName'] != "TransferSecurityPolicy-2018-11" &&
+        properties['SecurityPolicyName'] != "TransferSecurityPolicy-Restricted-2018-11" &&
+        properties['SecurityPolicyName'] != /^TransferSecurityPolicy-PQ-SSH-(FIPS-)?Experimental-2023-04$/
       )
   - uid: mondoo-aws-security-transfer-identity-provider
     title: Ensure Transfer Family servers use external identity providers
@@ -77266,7 +77305,7 @@ queries:
           mondoo.com/filter-icon: aws
     docs:
       desc: |
-        This check verifies that the IAM execution role of every AWS Step Functions state machine contains no `Allow` statement with `Resource: "*"`, and carries no inline policies. State machines orchestrate service calls under that role, so a wildcard resource means the workflow can invoke Lambda functions, write to DynamoDB tables, and publish to SNS topics across the whole account.
+        This check verifies that the IAM execution role of every AWS Step Functions state machine contains no `Allow` statement with `Resource: "*"`, and carries no inline policies. Statements that grant only the CloudWatch Logs delivery actions and X-Ray tracing actions are exempt, because AWS requires `Resource: "*"` for them when a state machine has logging or tracing enabled. State machines orchestrate service calls under that role, so a wildcard resource means the workflow can invoke Lambda functions, write to DynamoDB tables, and publish to SNS topics across the whole account.
 
         Policies are listed with `aws iam list-attached-role-policies --role-name <role-name>` after reading the role ARN from `aws stepfunctions describe-state-machine`, and replaced with a scoped policy naming the specific resource ARNs.
 
@@ -77425,7 +77464,10 @@ queries:
         iamRole.attachedPolicies.all(
           defaultVersion.document['Statement'].all(
             _['Effect'].upcase == "DENY" ||
-            [_['Resource']].flat.none(_ == "*")
+            [_['Resource']].flat.none(_ == "*") ||
+            [_['Action']].flat.all(
+              _ == /^(logs:(CreateLogDelivery|GetLogDelivery|UpdateLogDelivery|DeleteLogDelivery|ListLogDeliveries|PutResourcePolicy|DescribeResourcePolicies|DescribeLogGroups)|xray:(PutTraceSegments|PutTelemetryRecords|GetSamplingRules|GetSamplingTargets))$/
+            )
           )
         )
       )
@@ -78173,7 +78215,7 @@ queries:
           mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
-        This check verifies that API Gateway v2 routes require callers to present credentials, by requiring an authorization type other than `NONE` on every route whose key does not begin with `OPTIONS`. New routes are created without an authorizer, so an endpoint stays open to any caller who can reach the API URL until one is explicitly attached.
+        This check verifies that API Gateway v2 routes require callers to present credentials, by requiring an authorization type other than `NONE` on every route whose key does not begin with `OPTIONS`. WebSocket APIs accept authorization on the `$connect` route only, so on a WebSocket API only the `$connect` route is checked. New routes are created without an authorizer, so an endpoint stays open to any caller who can reach the API URL until one is explicitly attached.
 
         Authorization is attached under **Authorization** on the route in the API Gateway console, or with `aws apigatewayv2 update-route --authorization-type JWT --authorizer-id`. `OPTIONS` routes are excluded because CORS preflight requests are unauthenticated by design.
 
@@ -78277,39 +78319,55 @@ queries:
   - uid: mondoo-aws-security-apigatewayv2-routes-require-authorizer-aws
     filters: asset.platform == "aws-apigatewayv2-api"
     mql: |
-      aws.apigatewayv2.api.routes.where(routeKey != /^OPTIONS /).all(
-        authorizationType != "NONE"
-      )
+      aws.apigatewayv2.api.routes
+        .where(routeKey != /^OPTIONS /)
+        .where(aws.apigatewayv2.api.protocolType != "WEBSOCKET" || routeKey == "$connect")
+        .all(authorizationType != "NONE")
   - uid: mondoo-aws-security-apigatewayv2-routes-require-authorizer-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_apigatewayv2_route")
     mql: |
-      terraform.resources("aws_apigatewayv2_route").where(arguments.route_key != /^OPTIONS /).all(
-        arguments.authorization_type != null && arguments.authorization_type != "NONE"
-      )
+      wsApis = terraform.resources("aws_apigatewayv2_api").where(arguments.protocol_type == "WEBSOCKET").map("aws_apigatewayv2_api." + labels[1] + ".id")
+      terraform.resources("aws_apigatewayv2_route")
+        .where(arguments.route_key != /^OPTIONS /)
+        .where(arguments.route_key == "$connect" || arguments.api_id.in(wsApis) == false)
+        .all(
+          arguments.authorization_type != null && arguments.authorization_type != "NONE"
+        )
   - uid: mondoo-aws-security-apigatewayv2-routes-require-authorizer-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_apigatewayv2_route")
     mql: |
+      wsApis = terraform.plan.configuration.resources.where(_['type'] == "aws_apigatewayv2_api" && _['expressions']['protocol_type']['constant_value'] == "WEBSOCKET").map(_['address']).join(",").split(",")
+      wsRoutes = terraform.plan.configuration.resources.where(_['type'] == "aws_apigatewayv2_route" && _['expressions']['api_id']['references'][1].in(wsApis)).map(_['address']).join(",").split(",")
       terraform.plan.resourceChanges
         .where(type == "aws_apigatewayv2_route")
         .where(change.after.route_key != /^OPTIONS /)
+        .where(change.after.route_key == "$connect" || address.in(wsRoutes) == false)
         .all(
           change.after.authorization_type != null && change.after.authorization_type != "NONE"
         )
   - uid: mondoo-aws-security-apigatewayv2-routes-require-authorizer-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_apigatewayv2_route")
     mql: |
+      wsApis = terraform.state.resources.where(type == "aws_apigatewayv2_api" && values.protocol_type == "WEBSOCKET").map(values.id).join(",").split(",")
       terraform.state.resources
         .where(type == "aws_apigatewayv2_route")
         .where(values.route_key != /^OPTIONS /)
+        .where(values.route_key == "$connect" || values.api_id.in(wsApis) == false)
         .all(
           values.authorization_type != null && values.authorization_type != "NONE"
         )
   - uid: mondoo-aws-security-apigatewayv2-routes-require-authorizer-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::ApiGatewayV2::Route")
     mql: |
+      wsApis = cloudformation.template.resources.where(type == "AWS::ApiGatewayV2::Api" && properties['ProtocolType'] == "WEBSOCKET").map(name)
       cloudformation.template.resources
         .where(type == "AWS::ApiGatewayV2::Route")
         .where(properties['RouteKey'] != /^OPTIONS /)
+        .where(
+          properties['RouteKey'] == "$connect" ||
+          properties['ApiId']['Ref'].in(wsApis) == false &&
+          properties['ApiId']['Fn::GetAtt'][0].in(wsApis) == false
+        )
         .all(
           properties['AuthorizationType'] != null && properties['AuthorizationType'] != "NONE"
         )
@@ -78354,7 +78412,7 @@ queries:
           mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
-        This check verifies that API Gateway v2 custom domains refuse legacy TLS, by requiring the `TLS_1_2` security policy on every endpoint configuration. AWS allows custom domains to be created with the legacy `TLS_1_0` policy, which permits negotiation of TLS 1.0 and TLS 1.1, both deprecated protocols with known cryptographic weaknesses.
+        This check verifies that API Gateway v2 custom domains refuse legacy TLS, by requiring the `TLS_1_2` security policy, or one of the `SecurityPolicy_TLS12_*` and `SecurityPolicy_TLS13_*` enhanced policies, on every endpoint configuration. AWS allows custom domains to be created with the legacy `TLS_1_0` policy, which permits negotiation of TLS 1.0 and TLS 1.1, both deprecated protocols with known cryptographic weaknesses.
 
         The policy is set per endpoint configuration under **Custom domain names** in the API Gateway console, or with `aws apigatewayv2 update-domain-name` supplying `SecurityPolicy=TLS_1_2` in the domain name configuration.
 
@@ -78449,35 +78507,35 @@ queries:
     filters: asset.platform == "aws"
     mql: |
       aws.apigatewayv2.domainNames.all(
-        domainNameConfigurations.all(_['SecurityPolicy'] == "TLS_1_2")
+        domainNameConfigurations.all(_['SecurityPolicy'] == "TLS_1_2" || _['SecurityPolicy'] == /^SecurityPolicy_TLS1[23]_/)
       )
   - uid: mondoo-aws-security-apigatewayv2-domain-tls-1-2-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_apigatewayv2_domain_name")
     mql: |
       terraform.resources("aws_apigatewayv2_domain_name").all(
         blocks.where(type == "domain_name_configuration") != empty &&
-        blocks.where(type == "domain_name_configuration").all(arguments.security_policy == "TLS_1_2")
+        blocks.where(type == "domain_name_configuration").all(arguments.security_policy == "TLS_1_2" || arguments.security_policy == /^SecurityPolicy_TLS1[23]_/)
       )
   - uid: mondoo-aws-security-apigatewayv2-domain-tls-1-2-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_apigatewayv2_domain_name")
     mql: |
       terraform.plan.resourceChanges.where(type == "aws_apigatewayv2_domain_name").all(
         change.after.domain_name_configuration != empty &&
-        change.after.domain_name_configuration.all(_['security_policy'] == "TLS_1_2")
+        change.after.domain_name_configuration.all(_['security_policy'] == "TLS_1_2" || _['security_policy'] == /^SecurityPolicy_TLS1[23]_/)
       )
   - uid: mondoo-aws-security-apigatewayv2-domain-tls-1-2-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_apigatewayv2_domain_name")
     mql: |
       terraform.state.resources.where(type == "aws_apigatewayv2_domain_name").all(
         values.domain_name_configuration != empty &&
-        values.domain_name_configuration.all(_['security_policy'] == "TLS_1_2")
+        values.domain_name_configuration.all(_['security_policy'] == "TLS_1_2" || _['security_policy'] == /^SecurityPolicy_TLS1[23]_/)
       )
   - uid: mondoo-aws-security-apigatewayv2-domain-tls-1-2-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::ApiGatewayV2::DomainName")
     mql: |
       cloudformation.template.resources.where(type == "AWS::ApiGatewayV2::DomainName").all(
         properties['DomainNameConfigurations'] != empty &&
-        properties['DomainNameConfigurations'].all(_['SecurityPolicy'] == "TLS_1_2")
+        properties['DomainNameConfigurations'].all(_['SecurityPolicy'] == "TLS_1_2" || _['SecurityPolicy'] == /^SecurityPolicy_TLS1[23]_/)
       )
   - uid: mondoo-aws-security-glue-catalog-encryption-cmk
     title: Ensure Glue Data Catalog encryption uses SSE-KMS with a CMK
@@ -78823,12 +78881,10 @@ queries:
     filters: asset.platform == "aws"
     mql: |
       aws.glue.securityConfigurations.all(
-        s3Encryption['S3EncryptionMode'] == "SSE-KMS" &&
-        s3Encryption['KmsKeyArn'] != null &&
-        s3Encryption['KmsKeyArn'] != "" &&
-        jobBookmarksEncryption['JobBookmarksEncryptionMode'] == "CSE-KMS" &&
-        jobBookmarksEncryption['KmsKeyArn'] != null &&
-        jobBookmarksEncryption['KmsKeyArn'] != ""
+        s3DataEncryption.mode == "SSE-KMS" &&
+        s3DataEncryption.kmsKey != empty &&
+        bookmarkStateEncryption.mode == "CSE-KMS" &&
+        bookmarkStateEncryption.kmsKey != empty
       )
   - uid: mondoo-aws-security-glue-security-config-cmk-encryption-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_glue_security_configuration")
@@ -79438,12 +79494,14 @@ queries:
     filters: asset.platform == "aws-apigatewayv2-api"
     mql: |
       aws.apigatewayv2.api.protocolType != "WEBSOCKET" ||
-      aws.apigatewayv2.api.routes.all(authorizationType != "NONE")
+      aws.apigatewayv2.api.routes.any(
+        routeKey == "$connect" && authorizationType == /^(AWS_IAM|CUSTOM)$/
+      )
     docs:
       desc: |
-        This check verifies that API Gateway v2 WebSocket APIs authenticate the clients that open and use a connection, by requiring an authorization type other than `NONE` on every route. WebSocket APIs establish long-lived, bidirectional connections, so an unauthenticated route lets any internet client open a persistent channel to the backend integration with no credential at all.
+        This check verifies that API Gateway v2 WebSocket APIs authenticate the clients that open a connection, by requiring a `$connect` route whose authorization type is `AWS_IAM` or `CUSTOM`. API Gateway accepts authorization settings on the `$connect` route only, and a WebSocket API without a `$connect` route accepts every connection. WebSocket APIs establish long-lived, bidirectional connections, so an unauthenticated `$connect` lets any internet client open a persistent channel to the backend integration with no credential at all.
 
-        Authorizers are attached under **Routes** for the WebSocket API in the API Gateway console, or with `aws apigatewayv2 update-route --authorization-type AWS_IAM`. The routes to review are `$connect`, `$disconnect`, `$default`, and every custom route.
+        The authorizer is attached to the `$connect` route under **Routes** for the WebSocket API in the API Gateway console, or with `aws apigatewayv2 update-route --authorization-type AWS_IAM`.
 
         **Why this matters**
 
@@ -79451,33 +79509,33 @@ queries:
 
         Backend integrations generally assume that an open connection was already authenticated, which makes the connect-time decision the primary security boundary for everything that follows on that connection.
 
-        WebSocket connections do not log individual messages the way HTTP requests are logged, so the authorization decisions made at connect time and on each route are the main control points and the main record of who did what.
+        WebSocket connections do not log individual messages the way HTTP requests are logged, so the authorization decision made at connect time is the main control point and the main record of who opened the session.
 
-        A long-lived unauthenticated connection supports sustained abuse, including resource exhaustion, exfiltration over an open channel, and pivoting into whatever downstream services the backend can reach, all under a single session nobody can attribute. Attaching authorizers to custom routes beyond `$connect` also keeps a connected client from performing actions its identity does not permit, and authenticated routes produce CloudTrail records tying WebSocket activity to a caller. Authorize at `$connect` first, since that is the cheapest place to reject an unwanted client.
+        A long-lived unauthenticated connection supports sustained abuse, including resource exhaustion, exfiltration over an open channel, and pivoting into whatever downstream services the backend can reach, all under a single session nobody can attribute. Because messages on later routes carry no authorization of their own, the identity established at `$connect` is the one the backend has to rely on for every action that follows.
       audit: |
         ### Audit via Console
 
         1. Open the **API Gateway** console and select a WebSocket API.
         2. Choose **Routes** in the left navigation pane.
-        3. For each route (`$connect`, `$disconnect`, `$default`, and any custom routes), confirm that the **Authorization** setting is not `NONE`.
+        3. Select the `$connect` route and review its **Authorization** setting.
         4. Repeat for all WebSocket APIs in the account.
 
-        A passing route shows an authorizer type of `AWS_IAM`, `JWT`, or `CUSTOM`. A failing route shows **Authorization: NONE**.
+        A passing API has a `$connect` route with authorization `AWS_IAM` or a Lambda authorizer. A failing API has no `$connect` route, or one with **Authorization: NONE**.
 
         ### Audit via CLI
 
-        1. List WebSocket APIs, then retrieve all routes for each to check authorization type:
+        1. List WebSocket APIs, then retrieve the `$connect` route of each:
 
         ```bash
         aws apigatewayv2 get-apis \
           --query 'Items[?ProtocolType==`WEBSOCKET`].ApiId' \
           --output text | tr '\t' '\n' | while read api_id; do
           aws apigatewayv2 get-routes --api-id "$api_id" \
-            --query 'Items[*].{RouteKey:RouteKey,AuthorizationType:AuthorizationType}'
+            --query 'Items[?RouteKey==`$connect`].{RouteKey:RouteKey,AuthorizationType:AuthorizationType}'
         done
         ```
 
-        A passing route returns an `AuthorizationType` of `AWS_IAM`, `JWT`, or `CUSTOM`. A failing route returns `AuthorizationType` of `NONE`.
+        A passing API returns a `$connect` route with an `AuthorizationType` of `AWS_IAM` or `CUSTOM`. A failing API returns an empty list or an `AuthorizationType` of `NONE`.
       remediation:
         - id: console
           desc: |
@@ -79499,7 +79557,7 @@ queries:
             ```
         - id: terraform
           desc: |
-            To require authorization on a WebSocket route in Terraform, set `authorization_type` to a non-`NONE` value on every `aws_apigatewayv2_route` whose parent API has `protocol_type = "WEBSOCKET"`:
+            To require authorization on a WebSocket API in Terraform, define a `$connect` route with `authorization_type` set to `AWS_IAM` or `CUSTOM`:
 
             ```hcl
             resource "aws_apigatewayv2_api" "example" {
@@ -79516,7 +79574,7 @@ queries:
             ```
         - id: cloudformation
           desc: |
-            To require authorization on a WebSocket route in CloudFormation, set `AuthorizationType` to a non-`NONE` value on every route of a `WEBSOCKET` API:
+            To require authorization on a WebSocket API in CloudFormation, define a `$connect` route with `AuthorizationType` set to `AWS_IAM` or `CUSTOM`:
 
             ```yaml
             Resources:
@@ -79705,9 +79763,9 @@ queries:
     mql: |
       aws.eventbridge.eventBuses.all(
         policy == "" ||
-        parse.json(content: policy).params["Statement"].where(_["Effect"] == "Allow").all(
+        policy.json["Statement"].where(_["Effect"] == "Allow").all(
           _["Principal"] != "*" &&
-          _["Principal"]["AWS"] != "*" ||
+          [_["Principal"]["AWS"]].flat.contains("*") == false ||
           _["Condition"] != null
         )
       )
@@ -80652,7 +80710,7 @@ queries:
     filters: asset.platform == "aws-dynamodb-table"
     mql: |
       aws.dynamodb.table.sseType == "KMS"
-      aws.dynamodb.table.sseKmsKey { metadata["KeyManager"] == "CUSTOMER" }
+      aws.dynamodb.table.sseKmsKey != empty && aws.dynamodb.table.sseKmsKey.keyManager == "CUSTOMER"
       aws.dynamodb.table.pointInTimeRecoveryEnabled == true
   - uid: mondoo-aws-security-dynamodb-pitr-cmk-encryption-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_dynamodb_table")
@@ -81577,7 +81635,7 @@ queries:
       aws.cloudfront.distribution.origins.where(
         domainName == /\.s3[.-][a-z0-9.-]*amazonaws\.com$/ &&
         domainName != /\.s3-website/
-      ).all(originAccessControlId != "")
+      ).all(originAccessControlId != empty)
   - uid: mondoo-aws-security-cloudfront-s3-origin-oac-with-encryption-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_cloudfront_distribution")
     mql: |
@@ -82329,7 +82387,7 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check verifies that the custom domains fronting API Gateway v2 WebSocket APIs pin their TLS floor to `TLS_1_2`. WebSocket APIs share the custom domain primitive with HTTP APIs, so the security policy chosen at the domain governs the cipher suite negotiated for every `wss://` session established through it.
+        This check verifies that the custom domains fronting API Gateway v2 WebSocket APIs pin their TLS floor to TLS 1.2, with the `TLS_1_2` security policy or one of the `SecurityPolicy_TLS12_*` and `SecurityPolicy_TLS13_*` enhanced policies. WebSocket APIs share the custom domain primitive with HTTP APIs, so the security policy chosen at the domain governs the cipher suite negotiated for every `wss://` session established through it.
 
         The floor is raised per domain configuration under **Custom domain names** in the API Gateway console, or with `aws apigatewayv2 update-domain-name` supplying `SecurityPolicy=TLS_1_2`.
 
@@ -82365,7 +82423,7 @@ queries:
           --query 'Items[*].{Domain:DomainName,Configs:DomainNameConfigurations[*].SecurityPolicy}'
         ```
 
-        A passing account either has no WebSocket APIs or returns `TLS_1_2` for every domain name configuration's `SecurityPolicy`. A failing account returns `TLS_1_0` on at least one domain name configuration.
+        A passing account either has no WebSocket APIs or returns `TLS_1_2` or a `SecurityPolicy_TLS12_*` or `SecurityPolicy_TLS13_*` policy for every domain name configuration's `SecurityPolicy`. A failing account returns `TLS_1_0` on at least one domain name configuration.
       remediation:
         - id: console
           desc: |
@@ -82427,7 +82485,7 @@ queries:
     filters: asset.platform == "aws" && aws.apigatewayv2.apis.any(protocolType == "WEBSOCKET")
     mql: |
       aws.apigatewayv2.domainNames.all(
-        domainNameConfigurations.all(_['SecurityPolicy'] == "TLS_1_2")
+        domainNameConfigurations.all(_['SecurityPolicy'] == "TLS_1_2" || _['SecurityPolicy'] == /^SecurityPolicy_TLS1[23]_/)
       )
   - uid: mondoo-aws-security-apigatewayv2-websocket-tls-1-2-minimum-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_apigatewayv2_api") && terraform.resources.contains(nameLabel == "aws_apigatewayv2_domain_name")
@@ -82435,7 +82493,7 @@ queries:
       terraform.resources("aws_apigatewayv2_api").any(arguments.protocol_type == "WEBSOCKET") &&
       terraform.resources("aws_apigatewayv2_domain_name").all(
         blocks.where(type == "domain_name_configuration") != empty &&
-        blocks.where(type == "domain_name_configuration").all(arguments.security_policy == "TLS_1_2")
+        blocks.where(type == "domain_name_configuration").all(arguments.security_policy == "TLS_1_2" || arguments.security_policy == /^SecurityPolicy_TLS1[23]_/)
       )
   - uid: mondoo-aws-security-apigatewayv2-websocket-tls-1-2-minimum-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_apigatewayv2_api") && terraform.plan.resourceChanges.contains(type == "aws_apigatewayv2_domain_name")
@@ -82445,7 +82503,7 @@ queries:
       ) &&
       terraform.plan.resourceChanges.where(type == "aws_apigatewayv2_domain_name").all(
         change.after.domain_name_configuration != empty &&
-        change.after.domain_name_configuration.all(_['security_policy'] == "TLS_1_2")
+        change.after.domain_name_configuration.all(_['security_policy'] == "TLS_1_2" || _['security_policy'] == /^SecurityPolicy_TLS1[23]_/)
       )
   - uid: mondoo-aws-security-apigatewayv2-websocket-tls-1-2-minimum-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_apigatewayv2_api") && terraform.state.resources.contains(type == "aws_apigatewayv2_domain_name")
@@ -82455,7 +82513,7 @@ queries:
       ) &&
       terraform.state.resources.where(type == "aws_apigatewayv2_domain_name").all(
         values.domain_name_configuration != empty &&
-        values.domain_name_configuration.all(_['security_policy'] == "TLS_1_2")
+        values.domain_name_configuration.all(_['security_policy'] == "TLS_1_2" || _['security_policy'] == /^SecurityPolicy_TLS1[23]_/)
       )
   - uid: mondoo-aws-security-dms-endpoint-ssl-enforced
     title: Ensure DMS endpoints require SSL connections
@@ -89249,20 +89307,18 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-6-2-4
       compliance/soc2-2017: false
       compliance/vda-isa-5: vda-isa-5-5-3-1
+    # No runtime version: GetApi and GetApis do not return DisableSchemaValidation,
+    # so a deployed API reads the same with validation on or off.
     variants:
-      - uid: mondoo-aws-security-apigatewayv2-schema-validation-enabled-aws
-        tags:
-          mondoo.com/filter-title: AWS API Gateway V2 API
-          mondoo.com/filter-icon: aws
       - uid: mondoo-aws-security-apigatewayv2-schema-validation-enabled-cloudformation
         tags:
           mondoo.com/filter-title: CloudFormation
           mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
-        This check verifies that API Gateway v2 APIs enforce their declared request models at the edge, by requiring that request schema validation has not been disabled. API Gateway validates incoming requests against the models declared for a route before they reach the backend integration, and rejects payloads that do not conform. Setting the disable flag suppresses that enforcement, so malformed or unexpected payloads pass straight through and the route request models are silently ignored.
+        This check verifies that CloudFormation templates do not disable request schema validation on API Gateway v2 APIs, by requiring that `DisableSchemaValidation` is not `true` on `AWS::ApiGatewayV2::Api`. The setting applies to WebSocket APIs and cannot be read back from a deployed API, because `GetApi` and `GetApis` do not return it, so the template is where it can be checked. API Gateway validates incoming requests against the models declared for a route before they reach the backend integration, and rejects payloads that do not conform. Setting the disable flag suppresses that enforcement, so malformed or unexpected payloads pass straight through and the route request models are silently ignored.
 
-        The flag is cleared with `aws apigatewayv2 update-api --no-disable-schema-validation`. Because validation follows the API definition, the console path is to export the OpenAPI 3 definition, correct it, and reimport.
+        The property is removed or set to `false` in the template. On a deployed API the flag is cleared with `aws apigatewayv2 update-api --no-disable-schema-validation`.
 
         **Why this matters**
 
@@ -89274,32 +89330,14 @@ queries:
 
         Invalid requests also consume compute and integration capacity before failing, which is throughput spent on traffic the gateway could have rejected for free. Enforcing the models at the edge blocks non-conforming requests early and keeps observed runtime behavior aligned with the published API definition, so define request models for routes that accept payloads rather than leaving validation enabled with nothing to validate against.
       audit: |
-        ### Audit via Console
+        ### Audit the CloudFormation template
 
-        1. Open the **API Gateway Console** and select the v2 API to inspect.
-        2. In the left navigation pane, choose **Export** and export the API as an OpenAPI 3 definition.
-        3. Confirm the routes declare request models and that the API was imported with schema validation left enabled.
+        1. Open each template that declares an `AWS::ApiGatewayV2::Api` resource.
+        2. Review the `DisableSchemaValidation` property of each API.
 
-        A passing API keeps schema validation enabled so declared models are enforced. A failing API has schema validation disabled, so declared models are never applied to incoming requests.
+        A passing API omits the property or sets it to `false`. A failing API sets it to `true`.
 
-        ### Audit via CLI
-
-        1. List the API Gateway v2 APIs in the account:
-
-        ```bash
-        aws apigatewayv2 get-apis \
-          --query 'Items[*].{Name:Name,ApiId:ApiId,ProtocolType:ProtocolType}' --output table
-        ```
-
-        2. For each API, read the schema validation setting:
-
-        ```bash
-        aws apigatewayv2 get-api \
-          --api-id <api-id> \
-          --query 'DisableSchemaValidation'
-        ```
-
-        A passing API returns `false` or an empty value, indicating schema validation is enforced. A failing API returns `true`, indicating validation is turned off.
+        API Gateway does not return this setting from `aws apigatewayv2 get-api` or from the console, so a deployed API cannot be audited directly.
       remediation:
         # No console remediation: DisableSchemaValidation applies only to WebSocket APIs, and exporting or
         # reimporting an OpenAPI definition does not change it; clear the flag with the CLI below.
@@ -89311,17 +89349,6 @@ queries:
             aws apigatewayv2 update-api \
               --api-id <api-id> \
               --no-disable-schema-validation
-            ```
-        - id: terraform
-          desc: |
-            The `aws_apigatewayv2_api` resource does not expose a discrete argument for request schema validation. Validation behavior is defined inside the OpenAPI definition supplied through the `body` argument, so re-enable it by importing a definition that declares request models and keeps validation on, then apply the configuration:
-
-            ```hcl
-            resource "aws_apigatewayv2_api" "example" {
-              name          = "example-http-api"
-              protocol_type = "HTTP"
-              body          = file("${path.module}/openapi.json")
-            }
             ```
         - id: cloudformation
           desc: |
@@ -89340,10 +89367,6 @@ queries:
     refs:
       - url: https://docs.aws.amazon.com/apigatewayv2/latest/api-reference/apis-apiid.html
         title: Amazon API Gateway Version 2 API Reference - Api DisableSchemaValidation
-  - uid: mondoo-aws-security-apigatewayv2-schema-validation-enabled-aws
-    filters: asset.platform == "aws-apigatewayv2-api"
-    mql: |
-      aws.apigatewayv2.api.disableSchemaValidation != true
   - uid: mondoo-aws-security-apigatewayv2-schema-validation-enabled-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::ApiGatewayV2::Api")
     mql: |
@@ -92423,124 +92446,6 @@ queries:
         properties['RotationPeriodInDays'] <= 365
       )
   # No Terraform variants: a data protection policy is applied via the separate aws_sns_topic_data_protection_policy resource, not an attribute of aws_sns_topic, so a faithful single-resource variant is not possible. The fix is documented in the Terraform and CloudFormation remediation.
-  - uid: mondoo-aws-security-sns-topic-data-protection-policy
-    title: Ensure SNS topics have a data protection policy configured
-    impact: 60
-    tags:
-      compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-dsp-17
-      compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
-      compliance/iso-27001-2022: iso-27001-2022-a-8-12
-      compliance/nis-2: false
-      compliance/nist-csf-1: nist-csf-1-pr-ds-5
-      compliance/nist-csf-2: nist-csf-2-pr-ds-02
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-4
-      compliance/nist-sp-800-171: nist-sp-800-171--3-1-3
-      compliance/owasp-top-10-2025: owasp-top-10-2025-a09
-      compliance/pci-dss-4: false
-      compliance/soc2-2017: false
-      compliance/vda-isa-5: vda-isa-5-5-1-2
-    filters: asset.platform == "aws-sns-topic"
-    mql: |
-      aws.sns.topic.dataProtectionPolicy != empty
-    docs:
-      desc: |
-        This check verifies that Amazon SNS topics have a data protection policy configured. Such a policy inspects message payloads for sensitive data such as credentials, financial identifiers, and personal information, and can audit, mask, redact, or block that data as it flows through the topic.
-
-        The policy is created on the **Data protection** tab of a topic in the SNS console, or applied with `aws sns put-data-protection-policy --resource-arn <topic-arn> --data-protection-policy file://data-protection-policy.json`.
-
-        **Why this matters**
-
-        Without a data protection policy, sensitive values in message payloads pass through the topic and out to every subscriber unmodified, because nothing in the delivery path inspects what is being sent.
-
-        SNS fans messages out to queues, functions, email addresses, and HTTP endpoints, which multiplies the exposure of anything sensitive by the number of subscribers rather than containing it to one destination.
-
-        A policy can redact or block the sensitive fields before they reach subscribers, which means the fix applies at the topic rather than requiring every subscriber to handle the data correctly.
-
-        Detecting and controlling sensitive data in transit is also what data protection and privacy obligations ask for, and the audit statements record where sensitive data was found without exposing the values themselves, which is how the emitting application gets fixed.
-      audit: |
-        ### Audit via Console
-
-        1. Navigate to the **Amazon SNS Console** and select the topic.
-        2. Open the **Data protection** tab.
-        3. Confirm a data protection policy is configured with the appropriate statements.
-
-        A passing topic has a data protection policy. A failing topic has none.
-
-        ### Audit via CLI
-
-        1. Retrieve the topic's data protection policy:
-
-        ```bash
-        aws sns get-data-protection-policy \
-          --resource-arn arn:aws:sns:us-east-1:111122223333:my-topic
-        ```
-
-        A passing topic returns a non-empty policy document. A failing topic returns an empty policy.
-      remediation:
-        - id: console
-          desc: |
-            To add a data protection policy to an SNS topic using the AWS Console:
-
-            1. Navigate to the **Amazon SNS Console** and select the topic.
-            2. Open the **Data protection** tab and choose **Edit** / **Create policy**.
-            3. Add statements that audit, de-identify (mask/redact), or deny the sensitive data types relevant to your data.
-            4. Save the policy.
-        - id: cli
-          desc: |
-            To add a data protection policy to an SNS topic using the AWS CLI:
-
-            ```bash
-            aws sns put-data-protection-policy \
-              --resource-arn arn:aws:sns:us-east-1:111122223333:my-topic \
-              --data-protection-policy file://data-protection-policy.json
-            ```
-        - id: terraform
-          desc: |
-            To add a data protection policy to an SNS topic in Terraform, use `aws_sns_topic_data_protection_policy`:
-
-            ```hcl
-            resource "aws_sns_topic_data_protection_policy" "example" {
-              arn = aws_sns_topic.example.arn
-
-              policy = jsonencode({
-                Name        = "protect-pii"
-                Version     = "2021-06-01"
-                Statement = [{
-                  DataDirection = "Outbound"
-                  Principal     = ["*"]
-                  DataIdentifier = ["arn:aws:dataprotection::aws:data-identifier/AwsSecretKey"]
-                  Operation     = { Deny = {} }
-                }]
-              })
-            }
-            ```
-        - id: cloudformation
-          desc: |
-            To add a data protection policy to an SNS topic in CloudFormation, set the `DataProtectionPolicy` property:
-
-            ```yaml
-            Resources:
-              Topic:
-                Type: AWS::SNS::Topic
-                Properties:
-                  TopicName: my-topic
-                  DataProtectionPolicy:
-                    Name: protect-pii
-                    Version: "2021-06-01"
-                    Statement:
-                      - DataDirection: Outbound
-                        Principal: ["*"]
-                        DataIdentifier:
-                          - "arn:aws:dataprotection::aws:data-identifier/AwsSecretKey"
-                        Operation:
-                          Deny: {}
-            ```
-    refs:
-      - url: https://docs.aws.amazon.com/sns/latest/dg/message-data-protection.html
-        title: Amazon SNS message data protection
-  # No Terraform variants: matches the runtime-only pattern of the ElastiCache checks in this policy. The fix (auto_minor_version_upgrade = true) is documented in the Terraform and CloudFormation remediation.
   - uid: mondoo-aws-security-elasticache-cluster-auto-minor-version-upgrade
     title: Ensure ElastiCache clusters enable automatic minor version upgrades
     impact: 60
