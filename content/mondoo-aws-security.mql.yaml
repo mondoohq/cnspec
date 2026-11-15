@@ -2474,14 +2474,16 @@ queries:
     mql: |
       aws.efs.filesystem.fileSystemPolicy != empty
       aws.efs.filesystem.policyStatements.where(effect == "Deny").any(
-        conditions["Bool"]["aws:SecureTransport"] != empty
+        conditions["Bool"]["aws:SecureTransport"] == "false" ||
+        conditions["Bool"]["aws:SecureTransport"] == false
       )
   - uid: mondoo-aws-security-efs-enforce-transit-encryption-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_efs_file_system")
     mql: |
       goodPolicies = terraform.resources("aws_efs_file_system_policy").where(
         arguments["policy"].first["Statement"].where(_["Effect"] == "Deny").any(
-          _["Condition"]["Bool"]["aws:SecureTransport"] != empty
+          _["Condition"]["Bool"]["aws:SecureTransport"] == "false" ||
+          _["Condition"]["Bool"]["aws:SecureTransport"] == false
         )
       ).map(arguments["file_system_id"]).join(",")
       terraform.resources("aws_efs_file_system").all(
@@ -2492,15 +2494,19 @@ queries:
     mql: |
       terraform.plan.resourceChanges.where(type == "aws_efs_file_system_policy").length > 0
       terraform.plan.resourceChanges.where(type == "aws_efs_file_system_policy").all(
-        change.after["policy"] == /"Effect":\s*"Deny"/ &&
-        change.after["policy"] == /aws:SecureTransport/
+        change.after["policy"].json["Statement"].where(_["Effect"] == "Deny").any(
+          _["Condition"]["Bool"]["aws:SecureTransport"] == "false" ||
+          _["Condition"]["Bool"]["aws:SecureTransport"] == false
+        )
       )
   - uid: mondoo-aws-security-efs-enforce-transit-encryption-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_efs_file_system")
     mql: |
       goodPolicies = terraform.state.resources.where(type == "aws_efs_file_system_policy").where(
-        values["policy"] == /"Effect":\s*"Deny"/ &&
-        values["policy"] == /aws:SecureTransport/
+        values["policy"].json["Statement"].where(_["Effect"] == "Deny").any(
+          _["Condition"]["Bool"]["aws:SecureTransport"] == "false" ||
+          _["Condition"]["Bool"]["aws:SecureTransport"] == false
+        )
       ).map(values["file_system_id"]).join(",")
       terraform.state.resources.where(type == "aws_efs_file_system").all(
         goodPolicies.contains(values["id"])
@@ -2511,7 +2517,8 @@ queries:
       cloudformation.template.resources.where(type == "AWS::EFS::FileSystem").all(
         properties['FileSystemPolicy'] != empty &&
         properties['FileSystemPolicy']['Statement'].where(_['Effect'] == "Deny").any(
-          _['Condition']['Bool']['aws:SecureTransport'] != empty
+          _['Condition']['Bool']['aws:SecureTransport'] == "false" ||
+          _['Condition']['Bool']['aws:SecureTransport'] == false
         )
       )
   - uid: mondoo-aws-security-eks-cluster-private-controlplane
@@ -12728,24 +12735,46 @@ queries:
           arguments["cidr_blocks"].contains("0.0.0.0/0") || arguments["ipv6_cidr_blocks"].contains("::/0")
         )
   - uid: mondoo-aws-security-secgroup-restricted-ssh-terraform-plan
-    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains( type == "aws_security_group")
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.where(type == "aws_security_group" || type == "aws_vpc_security_group_ingress_rule" || type == "aws_security_group_rule") != empty
     mql: |
+      terraform.plan.resourceChanges.where(type == "aws_security_group").all(
+        change.after["ingress"] == empty ||
+        change.after["ingress"].where(_["protocol"] == "-1" || _["from_port"] <= 22 && _["to_port"] >= 22).none(
+          _["cidr_blocks"].contains("0.0.0.0/0") || _["ipv6_cidr_blocks"].contains("::/0")
+        )
+      ) &&
       terraform.plan.resourceChanges
-        .where(type == "aws_security_group" && change.after.ingress.contains(to_port == 22))
+        .where(type == "aws_vpc_security_group_ingress_rule")
+        .where(change.after["ip_protocol"] == "-1" || change.after["ip_protocol"] == "all" || change.after["from_port"] <= 22 && change.after["to_port"] >= 22)
+        .all(
+          change.after["cidr_ipv4"] != "0.0.0.0/0" && change.after["cidr_ipv6"] != "::/0"
+        ) &&
+      terraform.plan.resourceChanges
+        .where(type == "aws_security_group_rule" && change.after["type"] == "ingress")
+        .where(change.after["protocol"] == "-1" || change.after["protocol"] == "all" || change.after["from_port"] <= 22 && change.after["to_port"] >= 22)
         .none(
-          change.after.ingress
-            .where(to_port == 22)
-            .any(cidr_blocks.contains("0.0.0.0/0") || cidr_blocks.contains("::/0"))
+          change.after["cidr_blocks"].contains("0.0.0.0/0") || change.after["ipv6_cidr_blocks"].contains("::/0")
         )
   - uid: mondoo-aws-security-secgroup-restricted-ssh-terraform-state
-    filters: asset.platform == "terraform-state" && terraform.state.resources.contains( type == "aws_security_group")
+    filters: asset.platform == "terraform-state" && terraform.state.resources.where(type == "aws_security_group" || type == "aws_vpc_security_group_ingress_rule" || type == "aws_security_group_rule") != empty
     mql: |
+      terraform.state.resources.where(type == "aws_security_group").all(
+        values["ingress"] == empty ||
+        values["ingress"].where(_["protocol"] == "-1" || _["from_port"] <= 22 && _["to_port"] >= 22).none(
+          _["cidr_blocks"].contains("0.0.0.0/0") || _["ipv6_cidr_blocks"].contains("::/0")
+        )
+      ) &&
       terraform.state.resources
-        .where(type == "aws_security_group" && values.ingress.contains(to_port == 22))
+        .where(type == "aws_vpc_security_group_ingress_rule")
+        .where(values["ip_protocol"] == "-1" || values["ip_protocol"] == "all" || values["from_port"] <= 22 && values["to_port"] >= 22)
+        .all(
+          values["cidr_ipv4"] != "0.0.0.0/0" && values["cidr_ipv6"] != "::/0"
+        ) &&
+      terraform.state.resources
+        .where(type == "aws_security_group_rule" && values["type"] == "ingress")
+        .where(values["protocol"] == "-1" || values["protocol"] == "all" || values["from_port"] <= 22 && values["to_port"] >= 22)
         .none(
-          values.ingress
-            .where(to_port == 22)
-            .any(cidr_blocks.contains("0.0.0.0/0") || cidr_blocks.contains("::/0"))
+          values["cidr_blocks"].contains("0.0.0.0/0") || values["ipv6_cidr_blocks"].contains("::/0")
         )
   - uid: mondoo-aws-security-secgroup-restricted-ssh-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::EC2::SecurityGroup")
@@ -12753,7 +12782,7 @@ queries:
       cloudformation.template.resources.where(type == "AWS::EC2::SecurityGroup").all(
         properties['SecurityGroupIngress'] == empty ||
         properties['SecurityGroupIngress']
-          .where(_['ToPort'] == 22)
+          .where(_['IpProtocol'] == "-1" || _['FromPort'] <= 22 && _['ToPort'] >= 22)
           .none(_['CidrIp'] == "0.0.0.0/0" || _['CidrIpv6'] == "::/0")
       )
   - uid: mondoo-aws-security-secgroup-restricted-vnc
@@ -12923,18 +12952,18 @@ queries:
     filters: asset.platform == "terraform-hcl" && terraform.resources.where(nameLabel == "aws_security_group" || nameLabel == "aws_vpc_security_group_ingress_rule" || nameLabel == "aws_security_group_rule") != empty
     mql: |
       terraform.resources("aws_security_group").all(
-        blocks.where(type == "ingress" && arguments.from_port <= 5903 && arguments.to_port >= 5900).none(
+        blocks.where(type == "ingress" && arguments.protocol == "-1" || type == "ingress" && arguments.from_port <= 5903 && arguments.to_port >= 5900).none(
           arguments.cidr_blocks.contains("0.0.0.0/0") || arguments.ipv6_cidr_blocks.contains("::/0")
         )
       ) &&
       terraform.resources("aws_security_group").all(
         arguments["ingress"] == empty ||
-        arguments["ingress"].where(_["from_port"] <= 5903 && _["to_port"] >= 5900).none(
+        arguments["ingress"].where(_["protocol"] == "-1" || _["from_port"] <= 5903 && _["to_port"] >= 5900).none(
           _["cidr_blocks"].contains("0.0.0.0/0") || _["ipv6_cidr_blocks"].contains("::/0")
         )
       ) &&
       terraform.resources("aws_vpc_security_group_ingress_rule")
-        .where(arguments.from_port <= 5903 && arguments.to_port >= 5900)
+        .where(arguments.ip_protocol == "-1" || arguments.ip_protocol == "all" || arguments.from_port <= 5903 && arguments.to_port >= 5900)
         .all(
           arguments.cidr_ipv4 != "0.0.0.0/0" && arguments.cidr_ipv6 != "::/0"
         ) &&
@@ -12944,41 +12973,59 @@ queries:
           arguments["from_port"] != /^(var|local|module|data|each)\./ &&
           arguments["to_port"] != /^(var|local|module|data|each)\./
         )
-        .where(arguments["from_port"] <= 5903 && arguments["to_port"] >= 5900)
+        .where(arguments["protocol"] == "-1" || arguments["protocol"] == "all" || arguments["from_port"] <= 5903 && arguments["to_port"] >= 5900)
         .none(
           arguments["cidr_blocks"].contains("0.0.0.0/0") || arguments["ipv6_cidr_blocks"].contains("::/0")
         )
   - uid: mondoo-aws-security-secgroup-restricted-vnc-terraform-plan
-    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "aws_security_group")
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.where(type == "aws_security_group" || type == "aws_vpc_security_group_ingress_rule" || type == "aws_security_group_rule") != empty
     mql: |
-      terraform.plan.resourceChanges.where(
-        type == "aws_security_group" && change.after.ingress.contains(
-          from_port <= 5903 && to_port >= 5900 && to_port != 0
+      terraform.plan.resourceChanges.where(type == "aws_security_group").all(
+        change.after["ingress"] == empty ||
+        change.after["ingress"].where(_["protocol"] == "-1" || _["from_port"] <= 5903 && _["to_port"] >= 5900).none(
+          _["cidr_blocks"].contains("0.0.0.0/0") || _["ipv6_cidr_blocks"].contains("::/0")
         )
-      ).none(
-        change.after.ingress
-          .where(from_port <= 5903 && to_port >= 5900 && to_port != 0)
-          .any(cidr_blocks.contains("0.0.0.0/0") || cidr_blocks.contains("::/0"))
-      )
+      ) &&
+      terraform.plan.resourceChanges
+        .where(type == "aws_vpc_security_group_ingress_rule")
+        .where(change.after["ip_protocol"] == "-1" || change.after["ip_protocol"] == "all" || change.after["from_port"] <= 5903 && change.after["to_port"] >= 5900)
+        .all(
+          change.after["cidr_ipv4"] != "0.0.0.0/0" && change.after["cidr_ipv6"] != "::/0"
+        ) &&
+      terraform.plan.resourceChanges
+        .where(type == "aws_security_group_rule" && change.after["type"] == "ingress")
+        .where(change.after["protocol"] == "-1" || change.after["protocol"] == "all" || change.after["from_port"] <= 5903 && change.after["to_port"] >= 5900)
+        .none(
+          change.after["cidr_blocks"].contains("0.0.0.0/0") || change.after["ipv6_cidr_blocks"].contains("::/0")
+        )
   - uid: mondoo-aws-security-secgroup-restricted-vnc-terraform-state
-    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "aws_security_group")
+    filters: asset.platform == "terraform-state" && terraform.state.resources.where(type == "aws_security_group" || type == "aws_vpc_security_group_ingress_rule" || type == "aws_security_group_rule") != empty
     mql: |
-      terraform.state.resources.where(
-        type == "aws_security_group" && values.ingress.contains(
-          from_port <= 5903 && to_port >= 5900 && to_port != 0
+      terraform.state.resources.where(type == "aws_security_group").all(
+        values["ingress"] == empty ||
+        values["ingress"].where(_["protocol"] == "-1" || _["from_port"] <= 5903 && _["to_port"] >= 5900).none(
+          _["cidr_blocks"].contains("0.0.0.0/0") || _["ipv6_cidr_blocks"].contains("::/0")
         )
-      ).none(
-        values.ingress
-          .where(from_port <= 5903 && to_port >= 5900 && to_port != 0)
-          .any(cidr_blocks.contains("0.0.0.0/0") || cidr_blocks.contains("::/0"))
-      )
+      ) &&
+      terraform.state.resources
+        .where(type == "aws_vpc_security_group_ingress_rule")
+        .where(values["ip_protocol"] == "-1" || values["ip_protocol"] == "all" || values["from_port"] <= 5903 && values["to_port"] >= 5900)
+        .all(
+          values["cidr_ipv4"] != "0.0.0.0/0" && values["cidr_ipv6"] != "::/0"
+        ) &&
+      terraform.state.resources
+        .where(type == "aws_security_group_rule" && values["type"] == "ingress")
+        .where(values["protocol"] == "-1" || values["protocol"] == "all" || values["from_port"] <= 5903 && values["to_port"] >= 5900)
+        .none(
+          values["cidr_blocks"].contains("0.0.0.0/0") || values["ipv6_cidr_blocks"].contains("::/0")
+        )
   - uid: mondoo-aws-security-secgroup-restricted-vnc-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::EC2::SecurityGroup")
     mql: |
       cloudformation.template.resources.where(type == "AWS::EC2::SecurityGroup").all(
         properties['SecurityGroupIngress'] == empty ||
         properties['SecurityGroupIngress']
-          .where(_['FromPort'] <= 5903 && _['ToPort'] >= 5900)
+          .where(_['IpProtocol'] == "-1" || _['FromPort'] <= 5903 && _['ToPort'] >= 5900)
           .none(_['CidrIp'] == "0.0.0.0/0" || _['CidrIpv6'] == "::/0")
       )
   - uid: mondoo-aws-security-secgroup-restricted-rdp
@@ -13204,24 +13251,46 @@ queries:
           arguments["cidr_blocks"].contains("0.0.0.0/0") || arguments["ipv6_cidr_blocks"].contains("::/0")
         )
   - uid: mondoo-aws-security-secgroup-restricted-rdp-terraform-plan
-    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains( type == "aws_security_group")
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.where(type == "aws_security_group" || type == "aws_vpc_security_group_ingress_rule" || type == "aws_security_group_rule") != empty
     mql: |
+      terraform.plan.resourceChanges.where(type == "aws_security_group").all(
+        change.after["ingress"] == empty ||
+        change.after["ingress"].where(_["protocol"] == "-1" || _["from_port"] <= 3389 && _["to_port"] >= 3389).none(
+          _["cidr_blocks"].contains("0.0.0.0/0") || _["ipv6_cidr_blocks"].contains("::/0")
+        )
+      ) &&
       terraform.plan.resourceChanges
-        .where(type == "aws_security_group" && change.after.ingress.contains(to_port == 3389))
+        .where(type == "aws_vpc_security_group_ingress_rule")
+        .where(change.after["ip_protocol"] == "-1" || change.after["ip_protocol"] == "all" || change.after["from_port"] <= 3389 && change.after["to_port"] >= 3389)
+        .all(
+          change.after["cidr_ipv4"] != "0.0.0.0/0" && change.after["cidr_ipv6"] != "::/0"
+        ) &&
+      terraform.plan.resourceChanges
+        .where(type == "aws_security_group_rule" && change.after["type"] == "ingress")
+        .where(change.after["protocol"] == "-1" || change.after["protocol"] == "all" || change.after["from_port"] <= 3389 && change.after["to_port"] >= 3389)
         .none(
-          change.after.ingress
-            .where(to_port == 3389)
-            .any(cidr_blocks.contains("0.0.0.0/0") || cidr_blocks.contains("::/0"))
+          change.after["cidr_blocks"].contains("0.0.0.0/0") || change.after["ipv6_cidr_blocks"].contains("::/0")
         )
   - uid: mondoo-aws-security-secgroup-restricted-rdp-terraform-state
-    filters: asset.platform == "terraform-state" && terraform.state.resources.contains( type == "aws_security_group")
+    filters: asset.platform == "terraform-state" && terraform.state.resources.where(type == "aws_security_group" || type == "aws_vpc_security_group_ingress_rule" || type == "aws_security_group_rule") != empty
     mql: |
+      terraform.state.resources.where(type == "aws_security_group").all(
+        values["ingress"] == empty ||
+        values["ingress"].where(_["protocol"] == "-1" || _["from_port"] <= 3389 && _["to_port"] >= 3389).none(
+          _["cidr_blocks"].contains("0.0.0.0/0") || _["ipv6_cidr_blocks"].contains("::/0")
+        )
+      ) &&
       terraform.state.resources
-        .where(type == "aws_security_group" && values.ingress.contains(to_port == 3389))
+        .where(type == "aws_vpc_security_group_ingress_rule")
+        .where(values["ip_protocol"] == "-1" || values["ip_protocol"] == "all" || values["from_port"] <= 3389 && values["to_port"] >= 3389)
+        .all(
+          values["cidr_ipv4"] != "0.0.0.0/0" && values["cidr_ipv6"] != "::/0"
+        ) &&
+      terraform.state.resources
+        .where(type == "aws_security_group_rule" && values["type"] == "ingress")
+        .where(values["protocol"] == "-1" || values["protocol"] == "all" || values["from_port"] <= 3389 && values["to_port"] >= 3389)
         .none(
-          values.ingress
-            .where(to_port == 3389)
-            .any(cidr_blocks.contains("0.0.0.0/0") || cidr_blocks.contains("::/0"))
+          values["cidr_blocks"].contains("0.0.0.0/0") || values["ipv6_cidr_blocks"].contains("::/0")
         )
   - uid: mondoo-aws-security-secgroup-restricted-rdp-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::EC2::SecurityGroup")
@@ -13229,7 +13298,7 @@ queries:
       cloudformation.template.resources.where(type == "AWS::EC2::SecurityGroup").all(
         properties['SecurityGroupIngress'] == empty ||
         properties['SecurityGroupIngress']
-          .where(_['ToPort'] == 3389)
+          .where(_['IpProtocol'] == "-1" || _['FromPort'] <= 3389 && _['ToPort'] >= 3389)
           .none(_['CidrIp'] == "0.0.0.0/0" || _['CidrIpv6'] == "::/0")
       )
   - uid: mondoo-aws-security-secgroup-restrict-traffic
@@ -70231,18 +70300,18 @@ queries:
     filters: asset.platform == "terraform-hcl" && terraform.resources.where(nameLabel == "aws_security_group" || nameLabel == "aws_vpc_security_group_ingress_rule" || nameLabel == "aws_security_group_rule") != empty
     mql: |
       terraform.resources("aws_security_group").all(
-        blocks.where(type == "ingress" && arguments.from_port <= 5432 && arguments.to_port >= 5432).none(
+        blocks.where(type == "ingress" && arguments.protocol == "-1" || type == "ingress" && arguments.from_port <= 5432 && arguments.to_port >= 5432).none(
           arguments.cidr_blocks.contains("0.0.0.0/0") || arguments.ipv6_cidr_blocks.contains("::/0")
         )
       ) &&
       terraform.resources("aws_vpc_security_group_ingress_rule")
-        .where(arguments.from_port <= 5432 && arguments.to_port >= 5432)
+        .where(arguments.ip_protocol == "-1" || arguments.ip_protocol == "all" || arguments.from_port <= 5432 && arguments.to_port >= 5432)
         .all(
           arguments.cidr_ipv4 != "0.0.0.0/0" && arguments.cidr_ipv6 != "::/0"
         ) &&
       terraform.resources("aws_security_group").all(
         arguments["ingress"] == empty ||
-        arguments["ingress"].where(_["from_port"] <= 5432 && _["to_port"] >= 5432).none(
+        arguments["ingress"].where(_["protocol"] == "-1" || _["from_port"] <= 5432 && _["to_port"] >= 5432).none(
           _["cidr_blocks"].contains("0.0.0.0/0") || _["ipv6_cidr_blocks"].contains("::/0")
         )
       ) &&
@@ -70252,37 +70321,51 @@ queries:
           arguments["from_port"] != /^(var|local|module|data|each)\./ &&
           arguments["to_port"] != /^(var|local|module|data|each)\./
         )
-        .where(arguments["from_port"] <= 5432 && arguments["to_port"] >= 5432)
+        .where(arguments["protocol"] == "-1" || arguments["protocol"] == "all" || arguments["from_port"] <= 5432 && arguments["to_port"] >= 5432)
         .none(
           arguments["cidr_blocks"].contains("0.0.0.0/0") || arguments["ipv6_cidr_blocks"].contains("::/0")
         )
   - uid: mondoo-aws-security-secgroup-restricted-postgresql-terraform-plan
-    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.where(type == "aws_security_group" || type == "aws_vpc_security_group_ingress_rule") != empty
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.where(type == "aws_security_group" || type == "aws_vpc_security_group_ingress_rule" || type == "aws_security_group_rule") != empty
     mql: |
       terraform.plan.resourceChanges.where(type == "aws_security_group").all(
-        change.after["ingress"].where(_["from_port"] <= 5432 && _["to_port"] >= 5432).none(
+        change.after["ingress"] == empty ||
+        change.after["ingress"].where(_["protocol"] == "-1" || _["from_port"] <= 5432 && _["to_port"] >= 5432).none(
           _["cidr_blocks"].contains("0.0.0.0/0") || _["ipv6_cidr_blocks"].contains("::/0")
         )
       ) &&
       terraform.plan.resourceChanges
         .where(type == "aws_vpc_security_group_ingress_rule")
-        .where(change.after["from_port"] <= 5432 && change.after["to_port"] >= 5432)
+        .where(change.after["ip_protocol"] == "-1" || change.after["ip_protocol"] == "all" || change.after["from_port"] <= 5432 && change.after["to_port"] >= 5432)
         .all(
           change.after["cidr_ipv4"] != "0.0.0.0/0" && change.after["cidr_ipv6"] != "::/0"
+        ) &&
+      terraform.plan.resourceChanges
+        .where(type == "aws_security_group_rule" && change.after["type"] == "ingress")
+        .where(change.after["protocol"] == "-1" || change.after["protocol"] == "all" || change.after["from_port"] <= 5432 && change.after["to_port"] >= 5432)
+        .none(
+          change.after["cidr_blocks"].contains("0.0.0.0/0") || change.after["ipv6_cidr_blocks"].contains("::/0")
         )
   - uid: mondoo-aws-security-secgroup-restricted-postgresql-terraform-state
-    filters: asset.platform == "terraform-state" && terraform.state.resources.where(type == "aws_security_group" || type == "aws_vpc_security_group_ingress_rule") != empty
+    filters: asset.platform == "terraform-state" && terraform.state.resources.where(type == "aws_security_group" || type == "aws_vpc_security_group_ingress_rule" || type == "aws_security_group_rule") != empty
     mql: |
       terraform.state.resources.where(type == "aws_security_group").all(
-        values["ingress"].where(_["from_port"] <= 5432 && _["to_port"] >= 5432).none(
+        values["ingress"] == empty ||
+        values["ingress"].where(_["protocol"] == "-1" || _["from_port"] <= 5432 && _["to_port"] >= 5432).none(
           _["cidr_blocks"].contains("0.0.0.0/0") || _["ipv6_cidr_blocks"].contains("::/0")
         )
       ) &&
       terraform.state.resources
         .where(type == "aws_vpc_security_group_ingress_rule")
-        .where(values["from_port"] <= 5432 && values["to_port"] >= 5432)
+        .where(values["ip_protocol"] == "-1" || values["ip_protocol"] == "all" || values["from_port"] <= 5432 && values["to_port"] >= 5432)
         .all(
           values["cidr_ipv4"] != "0.0.0.0/0" && values["cidr_ipv6"] != "::/0"
+        ) &&
+      terraform.state.resources
+        .where(type == "aws_security_group_rule" && values["type"] == "ingress")
+        .where(values["protocol"] == "-1" || values["protocol"] == "all" || values["from_port"] <= 5432 && values["to_port"] >= 5432)
+        .none(
+          values["cidr_blocks"].contains("0.0.0.0/0") || values["ipv6_cidr_blocks"].contains("::/0")
         )
   - uid: mondoo-aws-security-secgroup-restricted-postgresql-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::EC2::SecurityGroup")
@@ -70290,7 +70373,7 @@ queries:
       cloudformation.template.resources.where(type == "AWS::EC2::SecurityGroup").all(
         properties['SecurityGroupIngress'] == empty ||
         properties['SecurityGroupIngress']
-          .where(_['FromPort'] <= 5432 && _['ToPort'] >= 5432)
+          .where(_['IpProtocol'] == "-1" || _['FromPort'] <= 5432 && _['ToPort'] >= 5432)
           .none(_['CidrIp'] == "0.0.0.0/0" || _['CidrIpv6'] == "::/0")
       )
   - uid: mondoo-aws-security-secgroup-restricted-mysql
@@ -70431,18 +70514,18 @@ queries:
     filters: asset.platform == "terraform-hcl" && terraform.resources.where(nameLabel == "aws_security_group" || nameLabel == "aws_vpc_security_group_ingress_rule" || nameLabel == "aws_security_group_rule") != empty
     mql: |
       terraform.resources("aws_security_group").all(
-        blocks.where(type == "ingress" && arguments.from_port <= 3306 && arguments.to_port >= 3306).none(
+        blocks.where(type == "ingress" && arguments.protocol == "-1" || type == "ingress" && arguments.from_port <= 3306 && arguments.to_port >= 3306).none(
           arguments.cidr_blocks.contains("0.0.0.0/0") || arguments.ipv6_cidr_blocks.contains("::/0")
         )
       ) &&
       terraform.resources("aws_vpc_security_group_ingress_rule")
-        .where(arguments.from_port <= 3306 && arguments.to_port >= 3306)
+        .where(arguments.ip_protocol == "-1" || arguments.ip_protocol == "all" || arguments.from_port <= 3306 && arguments.to_port >= 3306)
         .all(
           arguments.cidr_ipv4 != "0.0.0.0/0" && arguments.cidr_ipv6 != "::/0"
         ) &&
       terraform.resources("aws_security_group").all(
         arguments["ingress"] == empty ||
-        arguments["ingress"].where(_["from_port"] <= 3306 && _["to_port"] >= 3306).none(
+        arguments["ingress"].where(_["protocol"] == "-1" || _["from_port"] <= 3306 && _["to_port"] >= 3306).none(
           _["cidr_blocks"].contains("0.0.0.0/0") || _["ipv6_cidr_blocks"].contains("::/0")
         )
       ) &&
@@ -70452,37 +70535,51 @@ queries:
           arguments["from_port"] != /^(var|local|module|data|each)\./ &&
           arguments["to_port"] != /^(var|local|module|data|each)\./
         )
-        .where(arguments["from_port"] <= 3306 && arguments["to_port"] >= 3306)
+        .where(arguments["protocol"] == "-1" || arguments["protocol"] == "all" || arguments["from_port"] <= 3306 && arguments["to_port"] >= 3306)
         .none(
           arguments["cidr_blocks"].contains("0.0.0.0/0") || arguments["ipv6_cidr_blocks"].contains("::/0")
         )
   - uid: mondoo-aws-security-secgroup-restricted-mysql-terraform-plan
-    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.where(type == "aws_security_group" || type == "aws_vpc_security_group_ingress_rule") != empty
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.where(type == "aws_security_group" || type == "aws_vpc_security_group_ingress_rule" || type == "aws_security_group_rule") != empty
     mql: |
       terraform.plan.resourceChanges.where(type == "aws_security_group").all(
-        change.after["ingress"].where(_["from_port"] <= 3306 && _["to_port"] >= 3306).none(
+        change.after["ingress"] == empty ||
+        change.after["ingress"].where(_["protocol"] == "-1" || _["from_port"] <= 3306 && _["to_port"] >= 3306).none(
           _["cidr_blocks"].contains("0.0.0.0/0") || _["ipv6_cidr_blocks"].contains("::/0")
         )
       ) &&
       terraform.plan.resourceChanges
         .where(type == "aws_vpc_security_group_ingress_rule")
-        .where(change.after["from_port"] <= 3306 && change.after["to_port"] >= 3306)
+        .where(change.after["ip_protocol"] == "-1" || change.after["ip_protocol"] == "all" || change.after["from_port"] <= 3306 && change.after["to_port"] >= 3306)
         .all(
           change.after["cidr_ipv4"] != "0.0.0.0/0" && change.after["cidr_ipv6"] != "::/0"
+        ) &&
+      terraform.plan.resourceChanges
+        .where(type == "aws_security_group_rule" && change.after["type"] == "ingress")
+        .where(change.after["protocol"] == "-1" || change.after["protocol"] == "all" || change.after["from_port"] <= 3306 && change.after["to_port"] >= 3306)
+        .none(
+          change.after["cidr_blocks"].contains("0.0.0.0/0") || change.after["ipv6_cidr_blocks"].contains("::/0")
         )
   - uid: mondoo-aws-security-secgroup-restricted-mysql-terraform-state
-    filters: asset.platform == "terraform-state" && terraform.state.resources.where(type == "aws_security_group" || type == "aws_vpc_security_group_ingress_rule") != empty
+    filters: asset.platform == "terraform-state" && terraform.state.resources.where(type == "aws_security_group" || type == "aws_vpc_security_group_ingress_rule" || type == "aws_security_group_rule") != empty
     mql: |
       terraform.state.resources.where(type == "aws_security_group").all(
-        values["ingress"].where(_["from_port"] <= 3306 && _["to_port"] >= 3306).none(
+        values["ingress"] == empty ||
+        values["ingress"].where(_["protocol"] == "-1" || _["from_port"] <= 3306 && _["to_port"] >= 3306).none(
           _["cidr_blocks"].contains("0.0.0.0/0") || _["ipv6_cidr_blocks"].contains("::/0")
         )
       ) &&
       terraform.state.resources
         .where(type == "aws_vpc_security_group_ingress_rule")
-        .where(values["from_port"] <= 3306 && values["to_port"] >= 3306)
+        .where(values["ip_protocol"] == "-1" || values["ip_protocol"] == "all" || values["from_port"] <= 3306 && values["to_port"] >= 3306)
         .all(
           values["cidr_ipv4"] != "0.0.0.0/0" && values["cidr_ipv6"] != "::/0"
+        ) &&
+      terraform.state.resources
+        .where(type == "aws_security_group_rule" && values["type"] == "ingress")
+        .where(values["protocol"] == "-1" || values["protocol"] == "all" || values["from_port"] <= 3306 && values["to_port"] >= 3306)
+        .none(
+          values["cidr_blocks"].contains("0.0.0.0/0") || values["ipv6_cidr_blocks"].contains("::/0")
         )
   - uid: mondoo-aws-security-secgroup-restricted-mysql-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::EC2::SecurityGroup")
@@ -70490,7 +70587,7 @@ queries:
       cloudformation.template.resources.where(type == "AWS::EC2::SecurityGroup").all(
         properties['SecurityGroupIngress'] == empty ||
         properties['SecurityGroupIngress']
-          .where(_['FromPort'] <= 3306 && _['ToPort'] >= 3306)
+          .where(_['IpProtocol'] == "-1" || _['FromPort'] <= 3306 && _['ToPort'] >= 3306)
           .none(_['CidrIp'] == "0.0.0.0/0" || _['CidrIpv6'] == "::/0")
       )
   - uid: mondoo-aws-security-secgroup-restricted-mssql
@@ -70631,18 +70728,18 @@ queries:
     filters: asset.platform == "terraform-hcl" && terraform.resources.where(nameLabel == "aws_security_group" || nameLabel == "aws_vpc_security_group_ingress_rule" || nameLabel == "aws_security_group_rule") != empty
     mql: |
       terraform.resources("aws_security_group").all(
-        blocks.where(type == "ingress" && arguments.from_port <= 1433 && arguments.to_port >= 1433).none(
+        blocks.where(type == "ingress" && arguments.protocol == "-1" || type == "ingress" && arguments.from_port <= 1433 && arguments.to_port >= 1433).none(
           arguments.cidr_blocks.contains("0.0.0.0/0") || arguments.ipv6_cidr_blocks.contains("::/0")
         )
       ) &&
       terraform.resources("aws_vpc_security_group_ingress_rule")
-        .where(arguments.from_port <= 1433 && arguments.to_port >= 1433)
+        .where(arguments.ip_protocol == "-1" || arguments.ip_protocol == "all" || arguments.from_port <= 1433 && arguments.to_port >= 1433)
         .all(
           arguments.cidr_ipv4 != "0.0.0.0/0" && arguments.cidr_ipv6 != "::/0"
         ) &&
       terraform.resources("aws_security_group").all(
         arguments["ingress"] == empty ||
-        arguments["ingress"].where(_["from_port"] <= 1433 && _["to_port"] >= 1433).none(
+        arguments["ingress"].where(_["protocol"] == "-1" || _["from_port"] <= 1433 && _["to_port"] >= 1433).none(
           _["cidr_blocks"].contains("0.0.0.0/0") || _["ipv6_cidr_blocks"].contains("::/0")
         )
       ) &&
@@ -70652,37 +70749,51 @@ queries:
           arguments["from_port"] != /^(var|local|module|data|each)\./ &&
           arguments["to_port"] != /^(var|local|module|data|each)\./
         )
-        .where(arguments["from_port"] <= 1433 && arguments["to_port"] >= 1433)
+        .where(arguments["protocol"] == "-1" || arguments["protocol"] == "all" || arguments["from_port"] <= 1433 && arguments["to_port"] >= 1433)
         .none(
           arguments["cidr_blocks"].contains("0.0.0.0/0") || arguments["ipv6_cidr_blocks"].contains("::/0")
         )
   - uid: mondoo-aws-security-secgroup-restricted-mssql-terraform-plan
-    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.where(type == "aws_security_group" || type == "aws_vpc_security_group_ingress_rule") != empty
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.where(type == "aws_security_group" || type == "aws_vpc_security_group_ingress_rule" || type == "aws_security_group_rule") != empty
     mql: |
       terraform.plan.resourceChanges.where(type == "aws_security_group").all(
-        change.after["ingress"].where(_["from_port"] <= 1433 && _["to_port"] >= 1433).none(
+        change.after["ingress"] == empty ||
+        change.after["ingress"].where(_["protocol"] == "-1" || _["from_port"] <= 1433 && _["to_port"] >= 1433).none(
           _["cidr_blocks"].contains("0.0.0.0/0") || _["ipv6_cidr_blocks"].contains("::/0")
         )
       ) &&
       terraform.plan.resourceChanges
         .where(type == "aws_vpc_security_group_ingress_rule")
-        .where(change.after["from_port"] <= 1433 && change.after["to_port"] >= 1433)
+        .where(change.after["ip_protocol"] == "-1" || change.after["ip_protocol"] == "all" || change.after["from_port"] <= 1433 && change.after["to_port"] >= 1433)
         .all(
           change.after["cidr_ipv4"] != "0.0.0.0/0" && change.after["cidr_ipv6"] != "::/0"
+        ) &&
+      terraform.plan.resourceChanges
+        .where(type == "aws_security_group_rule" && change.after["type"] == "ingress")
+        .where(change.after["protocol"] == "-1" || change.after["protocol"] == "all" || change.after["from_port"] <= 1433 && change.after["to_port"] >= 1433)
+        .none(
+          change.after["cidr_blocks"].contains("0.0.0.0/0") || change.after["ipv6_cidr_blocks"].contains("::/0")
         )
   - uid: mondoo-aws-security-secgroup-restricted-mssql-terraform-state
-    filters: asset.platform == "terraform-state" && terraform.state.resources.where(type == "aws_security_group" || type == "aws_vpc_security_group_ingress_rule") != empty
+    filters: asset.platform == "terraform-state" && terraform.state.resources.where(type == "aws_security_group" || type == "aws_vpc_security_group_ingress_rule" || type == "aws_security_group_rule") != empty
     mql: |
       terraform.state.resources.where(type == "aws_security_group").all(
-        values["ingress"].where(_["from_port"] <= 1433 && _["to_port"] >= 1433).none(
+        values["ingress"] == empty ||
+        values["ingress"].where(_["protocol"] == "-1" || _["from_port"] <= 1433 && _["to_port"] >= 1433).none(
           _["cidr_blocks"].contains("0.0.0.0/0") || _["ipv6_cidr_blocks"].contains("::/0")
         )
       ) &&
       terraform.state.resources
         .where(type == "aws_vpc_security_group_ingress_rule")
-        .where(values["from_port"] <= 1433 && values["to_port"] >= 1433)
+        .where(values["ip_protocol"] == "-1" || values["ip_protocol"] == "all" || values["from_port"] <= 1433 && values["to_port"] >= 1433)
         .all(
           values["cidr_ipv4"] != "0.0.0.0/0" && values["cidr_ipv6"] != "::/0"
+        ) &&
+      terraform.state.resources
+        .where(type == "aws_security_group_rule" && values["type"] == "ingress")
+        .where(values["protocol"] == "-1" || values["protocol"] == "all" || values["from_port"] <= 1433 && values["to_port"] >= 1433)
+        .none(
+          values["cidr_blocks"].contains("0.0.0.0/0") || values["ipv6_cidr_blocks"].contains("::/0")
         )
   - uid: mondoo-aws-security-secgroup-restricted-mssql-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::EC2::SecurityGroup")
@@ -70690,7 +70801,7 @@ queries:
       cloudformation.template.resources.where(type == "AWS::EC2::SecurityGroup").all(
         properties['SecurityGroupIngress'] == empty ||
         properties['SecurityGroupIngress']
-          .where(_['FromPort'] <= 1433 && _['ToPort'] >= 1433)
+          .where(_['IpProtocol'] == "-1" || _['FromPort'] <= 1433 && _['ToPort'] >= 1433)
           .none(_['CidrIp'] == "0.0.0.0/0" || _['CidrIpv6'] == "::/0")
       )
   - uid: mondoo-aws-security-secgroup-restricted-oracle
@@ -70833,18 +70944,18 @@ queries:
     filters: asset.platform == "terraform-hcl" && terraform.resources.where(nameLabel == "aws_security_group" || nameLabel == "aws_vpc_security_group_ingress_rule" || nameLabel == "aws_security_group_rule") != empty
     mql: |
       terraform.resources("aws_security_group").all(
-        blocks.where(type == "ingress" && arguments.from_port <= 1521 && arguments.to_port >= 1521).none(
+        blocks.where(type == "ingress" && arguments.protocol == "-1" || type == "ingress" && arguments.from_port <= 1521 && arguments.to_port >= 1521).none(
           arguments.cidr_blocks.contains("0.0.0.0/0") || arguments.ipv6_cidr_blocks.contains("::/0")
         )
       ) &&
       terraform.resources("aws_vpc_security_group_ingress_rule")
-        .where(arguments.from_port <= 1521 && arguments.to_port >= 1521)
+        .where(arguments.ip_protocol == "-1" || arguments.ip_protocol == "all" || arguments.from_port <= 1521 && arguments.to_port >= 1521)
         .all(
           arguments.cidr_ipv4 != "0.0.0.0/0" && arguments.cidr_ipv6 != "::/0"
         ) &&
       terraform.resources("aws_security_group").all(
         arguments["ingress"] == empty ||
-        arguments["ingress"].where(_["from_port"] <= 1521 && _["to_port"] >= 1521).none(
+        arguments["ingress"].where(_["protocol"] == "-1" || _["from_port"] <= 1521 && _["to_port"] >= 1521).none(
           _["cidr_blocks"].contains("0.0.0.0/0") || _["ipv6_cidr_blocks"].contains("::/0")
         )
       ) &&
@@ -70854,37 +70965,51 @@ queries:
           arguments["from_port"] != /^(var|local|module|data|each)\./ &&
           arguments["to_port"] != /^(var|local|module|data|each)\./
         )
-        .where(arguments["from_port"] <= 1521 && arguments["to_port"] >= 1521)
+        .where(arguments["protocol"] == "-1" || arguments["protocol"] == "all" || arguments["from_port"] <= 1521 && arguments["to_port"] >= 1521)
         .none(
           arguments["cidr_blocks"].contains("0.0.0.0/0") || arguments["ipv6_cidr_blocks"].contains("::/0")
         )
   - uid: mondoo-aws-security-secgroup-restricted-oracle-terraform-plan
-    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.where(type == "aws_security_group" || type == "aws_vpc_security_group_ingress_rule") != empty
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.where(type == "aws_security_group" || type == "aws_vpc_security_group_ingress_rule" || type == "aws_security_group_rule") != empty
     mql: |
       terraform.plan.resourceChanges.where(type == "aws_security_group").all(
-        change.after["ingress"].where(_["from_port"] <= 1521 && _["to_port"] >= 1521).none(
+        change.after["ingress"] == empty ||
+        change.after["ingress"].where(_["protocol"] == "-1" || _["from_port"] <= 1521 && _["to_port"] >= 1521).none(
           _["cidr_blocks"].contains("0.0.0.0/0") || _["ipv6_cidr_blocks"].contains("::/0")
         )
       ) &&
       terraform.plan.resourceChanges
         .where(type == "aws_vpc_security_group_ingress_rule")
-        .where(change.after["from_port"] <= 1521 && change.after["to_port"] >= 1521)
+        .where(change.after["ip_protocol"] == "-1" || change.after["ip_protocol"] == "all" || change.after["from_port"] <= 1521 && change.after["to_port"] >= 1521)
         .all(
           change.after["cidr_ipv4"] != "0.0.0.0/0" && change.after["cidr_ipv6"] != "::/0"
+        ) &&
+      terraform.plan.resourceChanges
+        .where(type == "aws_security_group_rule" && change.after["type"] == "ingress")
+        .where(change.after["protocol"] == "-1" || change.after["protocol"] == "all" || change.after["from_port"] <= 1521 && change.after["to_port"] >= 1521)
+        .none(
+          change.after["cidr_blocks"].contains("0.0.0.0/0") || change.after["ipv6_cidr_blocks"].contains("::/0")
         )
   - uid: mondoo-aws-security-secgroup-restricted-oracle-terraform-state
-    filters: asset.platform == "terraform-state" && terraform.state.resources.where(type == "aws_security_group" || type == "aws_vpc_security_group_ingress_rule") != empty
+    filters: asset.platform == "terraform-state" && terraform.state.resources.where(type == "aws_security_group" || type == "aws_vpc_security_group_ingress_rule" || type == "aws_security_group_rule") != empty
     mql: |
       terraform.state.resources.where(type == "aws_security_group").all(
-        values["ingress"].where(_["from_port"] <= 1521 && _["to_port"] >= 1521).none(
+        values["ingress"] == empty ||
+        values["ingress"].where(_["protocol"] == "-1" || _["from_port"] <= 1521 && _["to_port"] >= 1521).none(
           _["cidr_blocks"].contains("0.0.0.0/0") || _["ipv6_cidr_blocks"].contains("::/0")
         )
       ) &&
       terraform.state.resources
         .where(type == "aws_vpc_security_group_ingress_rule")
-        .where(values["from_port"] <= 1521 && values["to_port"] >= 1521)
+        .where(values["ip_protocol"] == "-1" || values["ip_protocol"] == "all" || values["from_port"] <= 1521 && values["to_port"] >= 1521)
         .all(
           values["cidr_ipv4"] != "0.0.0.0/0" && values["cidr_ipv6"] != "::/0"
+        ) &&
+      terraform.state.resources
+        .where(type == "aws_security_group_rule" && values["type"] == "ingress")
+        .where(values["protocol"] == "-1" || values["protocol"] == "all" || values["from_port"] <= 1521 && values["to_port"] >= 1521)
+        .none(
+          values["cidr_blocks"].contains("0.0.0.0/0") || values["ipv6_cidr_blocks"].contains("::/0")
         )
   - uid: mondoo-aws-security-secgroup-restricted-oracle-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::EC2::SecurityGroup")
@@ -70892,7 +71017,7 @@ queries:
       cloudformation.template.resources.where(type == "AWS::EC2::SecurityGroup").all(
         properties['SecurityGroupIngress'] == empty ||
         properties['SecurityGroupIngress']
-          .where(_['FromPort'] <= 1521 && _['ToPort'] >= 1521)
+          .where(_['IpProtocol'] == "-1" || _['FromPort'] <= 1521 && _['ToPort'] >= 1521)
           .none(_['CidrIp'] == "0.0.0.0/0" || _['CidrIpv6'] == "::/0")
       )
   - uid: mondoo-aws-security-secgroup-restricted-mongodb
@@ -71036,19 +71161,19 @@ queries:
     mql: |
       terraform.resources("aws_security_group").all(
         blocks.where(
-          type == "ingress" && arguments.from_port <= 27017 && arguments.to_port >= 27017
+          type == "ingress" && arguments.protocol == "-1" || type == "ingress" && arguments.from_port <= 27017 && arguments.to_port >= 27017
         ).none(
           arguments.cidr_blocks.contains("0.0.0.0/0") || arguments.ipv6_cidr_blocks.contains("::/0")
         )
       ) &&
       terraform.resources("aws_vpc_security_group_ingress_rule")
-        .where(arguments.from_port <= 27017 && arguments.to_port >= 27017)
+        .where(arguments.ip_protocol == "-1" || arguments.ip_protocol == "all" || arguments.from_port <= 27017 && arguments.to_port >= 27017)
         .all(
           arguments.cidr_ipv4 != "0.0.0.0/0" && arguments.cidr_ipv6 != "::/0"
         ) &&
       terraform.resources("aws_security_group").all(
         arguments["ingress"] == empty ||
-        arguments["ingress"].where(_["from_port"] <= 27017 && _["to_port"] >= 27017).none(
+        arguments["ingress"].where(_["protocol"] == "-1" || _["from_port"] <= 27017 && _["to_port"] >= 27017).none(
           _["cidr_blocks"].contains("0.0.0.0/0") || _["ipv6_cidr_blocks"].contains("::/0")
         )
       ) &&
@@ -71058,37 +71183,51 @@ queries:
           arguments["from_port"] != /^(var|local|module|data|each)\./ &&
           arguments["to_port"] != /^(var|local|module|data|each)\./
         )
-        .where(arguments["from_port"] <= 27017 && arguments["to_port"] >= 27017)
+        .where(arguments["protocol"] == "-1" || arguments["protocol"] == "all" || arguments["from_port"] <= 27017 && arguments["to_port"] >= 27017)
         .none(
           arguments["cidr_blocks"].contains("0.0.0.0/0") || arguments["ipv6_cidr_blocks"].contains("::/0")
         )
   - uid: mondoo-aws-security-secgroup-restricted-mongodb-terraform-plan
-    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.where(type == "aws_security_group" || type == "aws_vpc_security_group_ingress_rule") != empty
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.where(type == "aws_security_group" || type == "aws_vpc_security_group_ingress_rule" || type == "aws_security_group_rule") != empty
     mql: |
       terraform.plan.resourceChanges.where(type == "aws_security_group").all(
-        change.after["ingress"].where(_["from_port"] <= 27017 && _["to_port"] >= 27017).none(
+        change.after["ingress"] == empty ||
+        change.after["ingress"].where(_["protocol"] == "-1" || _["from_port"] <= 27017 && _["to_port"] >= 27017).none(
           _["cidr_blocks"].contains("0.0.0.0/0") || _["ipv6_cidr_blocks"].contains("::/0")
         )
       ) &&
       terraform.plan.resourceChanges
         .where(type == "aws_vpc_security_group_ingress_rule")
-        .where(change.after["from_port"] <= 27017 && change.after["to_port"] >= 27017)
+        .where(change.after["ip_protocol"] == "-1" || change.after["ip_protocol"] == "all" || change.after["from_port"] <= 27017 && change.after["to_port"] >= 27017)
         .all(
           change.after["cidr_ipv4"] != "0.0.0.0/0" && change.after["cidr_ipv6"] != "::/0"
+        ) &&
+      terraform.plan.resourceChanges
+        .where(type == "aws_security_group_rule" && change.after["type"] == "ingress")
+        .where(change.after["protocol"] == "-1" || change.after["protocol"] == "all" || change.after["from_port"] <= 27017 && change.after["to_port"] >= 27017)
+        .none(
+          change.after["cidr_blocks"].contains("0.0.0.0/0") || change.after["ipv6_cidr_blocks"].contains("::/0")
         )
   - uid: mondoo-aws-security-secgroup-restricted-mongodb-terraform-state
-    filters: asset.platform == "terraform-state" && terraform.state.resources.where(type == "aws_security_group" || type == "aws_vpc_security_group_ingress_rule") != empty
+    filters: asset.platform == "terraform-state" && terraform.state.resources.where(type == "aws_security_group" || type == "aws_vpc_security_group_ingress_rule" || type == "aws_security_group_rule") != empty
     mql: |
       terraform.state.resources.where(type == "aws_security_group").all(
-        values["ingress"].where(_["from_port"] <= 27017 && _["to_port"] >= 27017).none(
+        values["ingress"] == empty ||
+        values["ingress"].where(_["protocol"] == "-1" || _["from_port"] <= 27017 && _["to_port"] >= 27017).none(
           _["cidr_blocks"].contains("0.0.0.0/0") || _["ipv6_cidr_blocks"].contains("::/0")
         )
       ) &&
       terraform.state.resources
         .where(type == "aws_vpc_security_group_ingress_rule")
-        .where(values["from_port"] <= 27017 && values["to_port"] >= 27017)
+        .where(values["ip_protocol"] == "-1" || values["ip_protocol"] == "all" || values["from_port"] <= 27017 && values["to_port"] >= 27017)
         .all(
           values["cidr_ipv4"] != "0.0.0.0/0" && values["cidr_ipv6"] != "::/0"
+        ) &&
+      terraform.state.resources
+        .where(type == "aws_security_group_rule" && values["type"] == "ingress")
+        .where(values["protocol"] == "-1" || values["protocol"] == "all" || values["from_port"] <= 27017 && values["to_port"] >= 27017)
+        .none(
+          values["cidr_blocks"].contains("0.0.0.0/0") || values["ipv6_cidr_blocks"].contains("::/0")
         )
   - uid: mondoo-aws-security-secgroup-restricted-mongodb-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::EC2::SecurityGroup")
@@ -71096,7 +71235,7 @@ queries:
       cloudformation.template.resources.where(type == "AWS::EC2::SecurityGroup").all(
         properties['SecurityGroupIngress'] == empty ||
         properties['SecurityGroupIngress']
-          .where(_['FromPort'] <= 27017 && _['ToPort'] >= 27017)
+          .where(_['IpProtocol'] == "-1" || _['FromPort'] <= 27017 && _['ToPort'] >= 27017)
           .none(_['CidrIp'] == "0.0.0.0/0" || _['CidrIpv6'] == "::/0")
       )
   - uid: mondoo-aws-security-secgroup-restricted-redis
@@ -71239,18 +71378,18 @@ queries:
     filters: asset.platform == "terraform-hcl" && terraform.resources.where(nameLabel == "aws_security_group" || nameLabel == "aws_vpc_security_group_ingress_rule" || nameLabel == "aws_security_group_rule") != empty
     mql: |
       terraform.resources("aws_security_group").all(
-        blocks.where(type == "ingress" && arguments.from_port <= 6379 && arguments.to_port >= 6379).none(
+        blocks.where(type == "ingress" && arguments.protocol == "-1" || type == "ingress" && arguments.from_port <= 6379 && arguments.to_port >= 6379).none(
           arguments.cidr_blocks.contains("0.0.0.0/0") || arguments.ipv6_cidr_blocks.contains("::/0")
         )
       ) &&
       terraform.resources("aws_vpc_security_group_ingress_rule")
-        .where(arguments.from_port <= 6379 && arguments.to_port >= 6379)
+        .where(arguments.ip_protocol == "-1" || arguments.ip_protocol == "all" || arguments.from_port <= 6379 && arguments.to_port >= 6379)
         .all(
           arguments.cidr_ipv4 != "0.0.0.0/0" && arguments.cidr_ipv6 != "::/0"
         ) &&
       terraform.resources("aws_security_group").all(
         arguments["ingress"] == empty ||
-        arguments["ingress"].where(_["from_port"] <= 6379 && _["to_port"] >= 6379).none(
+        arguments["ingress"].where(_["protocol"] == "-1" || _["from_port"] <= 6379 && _["to_port"] >= 6379).none(
           _["cidr_blocks"].contains("0.0.0.0/0") || _["ipv6_cidr_blocks"].contains("::/0")
         )
       ) &&
@@ -71260,37 +71399,51 @@ queries:
           arguments["from_port"] != /^(var|local|module|data|each)\./ &&
           arguments["to_port"] != /^(var|local|module|data|each)\./
         )
-        .where(arguments["from_port"] <= 6379 && arguments["to_port"] >= 6379)
+        .where(arguments["protocol"] == "-1" || arguments["protocol"] == "all" || arguments["from_port"] <= 6379 && arguments["to_port"] >= 6379)
         .none(
           arguments["cidr_blocks"].contains("0.0.0.0/0") || arguments["ipv6_cidr_blocks"].contains("::/0")
         )
   - uid: mondoo-aws-security-secgroup-restricted-redis-terraform-plan
-    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.where(type == "aws_security_group" || type == "aws_vpc_security_group_ingress_rule") != empty
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.where(type == "aws_security_group" || type == "aws_vpc_security_group_ingress_rule" || type == "aws_security_group_rule") != empty
     mql: |
       terraform.plan.resourceChanges.where(type == "aws_security_group").all(
-        change.after["ingress"].where(_["from_port"] <= 6379 && _["to_port"] >= 6379).none(
+        change.after["ingress"] == empty ||
+        change.after["ingress"].where(_["protocol"] == "-1" || _["from_port"] <= 6379 && _["to_port"] >= 6379).none(
           _["cidr_blocks"].contains("0.0.0.0/0") || _["ipv6_cidr_blocks"].contains("::/0")
         )
       ) &&
       terraform.plan.resourceChanges
         .where(type == "aws_vpc_security_group_ingress_rule")
-        .where(change.after["from_port"] <= 6379 && change.after["to_port"] >= 6379)
+        .where(change.after["ip_protocol"] == "-1" || change.after["ip_protocol"] == "all" || change.after["from_port"] <= 6379 && change.after["to_port"] >= 6379)
         .all(
           change.after["cidr_ipv4"] != "0.0.0.0/0" && change.after["cidr_ipv6"] != "::/0"
+        ) &&
+      terraform.plan.resourceChanges
+        .where(type == "aws_security_group_rule" && change.after["type"] == "ingress")
+        .where(change.after["protocol"] == "-1" || change.after["protocol"] == "all" || change.after["from_port"] <= 6379 && change.after["to_port"] >= 6379)
+        .none(
+          change.after["cidr_blocks"].contains("0.0.0.0/0") || change.after["ipv6_cidr_blocks"].contains("::/0")
         )
   - uid: mondoo-aws-security-secgroup-restricted-redis-terraform-state
-    filters: asset.platform == "terraform-state" && terraform.state.resources.where(type == "aws_security_group" || type == "aws_vpc_security_group_ingress_rule") != empty
+    filters: asset.platform == "terraform-state" && terraform.state.resources.where(type == "aws_security_group" || type == "aws_vpc_security_group_ingress_rule" || type == "aws_security_group_rule") != empty
     mql: |
       terraform.state.resources.where(type == "aws_security_group").all(
-        values["ingress"].where(_["from_port"] <= 6379 && _["to_port"] >= 6379).none(
+        values["ingress"] == empty ||
+        values["ingress"].where(_["protocol"] == "-1" || _["from_port"] <= 6379 && _["to_port"] >= 6379).none(
           _["cidr_blocks"].contains("0.0.0.0/0") || _["ipv6_cidr_blocks"].contains("::/0")
         )
       ) &&
       terraform.state.resources
         .where(type == "aws_vpc_security_group_ingress_rule")
-        .where(values["from_port"] <= 6379 && values["to_port"] >= 6379)
+        .where(values["ip_protocol"] == "-1" || values["ip_protocol"] == "all" || values["from_port"] <= 6379 && values["to_port"] >= 6379)
         .all(
           values["cidr_ipv4"] != "0.0.0.0/0" && values["cidr_ipv6"] != "::/0"
+        ) &&
+      terraform.state.resources
+        .where(type == "aws_security_group_rule" && values["type"] == "ingress")
+        .where(values["protocol"] == "-1" || values["protocol"] == "all" || values["from_port"] <= 6379 && values["to_port"] >= 6379)
+        .none(
+          values["cidr_blocks"].contains("0.0.0.0/0") || values["ipv6_cidr_blocks"].contains("::/0")
         )
   - uid: mondoo-aws-security-secgroup-restricted-redis-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::EC2::SecurityGroup")
@@ -71298,7 +71451,7 @@ queries:
       cloudformation.template.resources.where(type == "AWS::EC2::SecurityGroup").all(
         properties['SecurityGroupIngress'] == empty ||
         properties['SecurityGroupIngress']
-          .where(_['FromPort'] <= 6379 && _['ToPort'] >= 6379)
+          .where(_['IpProtocol'] == "-1" || _['FromPort'] <= 6379 && _['ToPort'] >= 6379)
           .none(_['CidrIp'] == "0.0.0.0/0" || _['CidrIpv6'] == "::/0")
       )
   - uid: mondoo-aws-security-secgroup-restricted-memcached
@@ -71446,19 +71599,19 @@ queries:
     mql: |
       terraform.resources("aws_security_group").all(
         blocks.where(
-          type == "ingress" && arguments.from_port <= 11211 && arguments.to_port >= 11211
+          type == "ingress" && arguments.protocol == "-1" || type == "ingress" && arguments.from_port <= 11211 && arguments.to_port >= 11211
         ).none(
           arguments.cidr_blocks.contains("0.0.0.0/0") || arguments.ipv6_cidr_blocks.contains("::/0")
         )
       ) &&
       terraform.resources("aws_vpc_security_group_ingress_rule")
-        .where(arguments.from_port <= 11211 && arguments.to_port >= 11211)
+        .where(arguments.ip_protocol == "-1" || arguments.ip_protocol == "all" || arguments.from_port <= 11211 && arguments.to_port >= 11211)
         .all(
           arguments.cidr_ipv4 != "0.0.0.0/0" && arguments.cidr_ipv6 != "::/0"
         ) &&
       terraform.resources("aws_security_group").all(
         arguments["ingress"] == empty ||
-        arguments["ingress"].where(_["from_port"] <= 11211 && _["to_port"] >= 11211).none(
+        arguments["ingress"].where(_["protocol"] == "-1" || _["from_port"] <= 11211 && _["to_port"] >= 11211).none(
           _["cidr_blocks"].contains("0.0.0.0/0") || _["ipv6_cidr_blocks"].contains("::/0")
         )
       ) &&
@@ -71468,37 +71621,51 @@ queries:
           arguments["from_port"] != /^(var|local|module|data|each)\./ &&
           arguments["to_port"] != /^(var|local|module|data|each)\./
         )
-        .where(arguments["from_port"] <= 11211 && arguments["to_port"] >= 11211)
+        .where(arguments["protocol"] == "-1" || arguments["protocol"] == "all" || arguments["from_port"] <= 11211 && arguments["to_port"] >= 11211)
         .none(
           arguments["cidr_blocks"].contains("0.0.0.0/0") || arguments["ipv6_cidr_blocks"].contains("::/0")
         )
   - uid: mondoo-aws-security-secgroup-restricted-memcached-terraform-plan
-    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.where(type == "aws_security_group" || type == "aws_vpc_security_group_ingress_rule") != empty
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.where(type == "aws_security_group" || type == "aws_vpc_security_group_ingress_rule" || type == "aws_security_group_rule") != empty
     mql: |
       terraform.plan.resourceChanges.where(type == "aws_security_group").all(
-        change.after["ingress"].where(_["from_port"] <= 11211 && _["to_port"] >= 11211).none(
+        change.after["ingress"] == empty ||
+        change.after["ingress"].where(_["protocol"] == "-1" || _["from_port"] <= 11211 && _["to_port"] >= 11211).none(
           _["cidr_blocks"].contains("0.0.0.0/0") || _["ipv6_cidr_blocks"].contains("::/0")
         )
       ) &&
       terraform.plan.resourceChanges
         .where(type == "aws_vpc_security_group_ingress_rule")
-        .where(change.after["from_port"] <= 11211 && change.after["to_port"] >= 11211)
+        .where(change.after["ip_protocol"] == "-1" || change.after["ip_protocol"] == "all" || change.after["from_port"] <= 11211 && change.after["to_port"] >= 11211)
         .all(
           change.after["cidr_ipv4"] != "0.0.0.0/0" && change.after["cidr_ipv6"] != "::/0"
+        ) &&
+      terraform.plan.resourceChanges
+        .where(type == "aws_security_group_rule" && change.after["type"] == "ingress")
+        .where(change.after["protocol"] == "-1" || change.after["protocol"] == "all" || change.after["from_port"] <= 11211 && change.after["to_port"] >= 11211)
+        .none(
+          change.after["cidr_blocks"].contains("0.0.0.0/0") || change.after["ipv6_cidr_blocks"].contains("::/0")
         )
   - uid: mondoo-aws-security-secgroup-restricted-memcached-terraform-state
-    filters: asset.platform == "terraform-state" && terraform.state.resources.where(type == "aws_security_group" || type == "aws_vpc_security_group_ingress_rule") != empty
+    filters: asset.platform == "terraform-state" && terraform.state.resources.where(type == "aws_security_group" || type == "aws_vpc_security_group_ingress_rule" || type == "aws_security_group_rule") != empty
     mql: |
       terraform.state.resources.where(type == "aws_security_group").all(
-        values["ingress"].where(_["from_port"] <= 11211 && _["to_port"] >= 11211).none(
+        values["ingress"] == empty ||
+        values["ingress"].where(_["protocol"] == "-1" || _["from_port"] <= 11211 && _["to_port"] >= 11211).none(
           _["cidr_blocks"].contains("0.0.0.0/0") || _["ipv6_cidr_blocks"].contains("::/0")
         )
       ) &&
       terraform.state.resources
         .where(type == "aws_vpc_security_group_ingress_rule")
-        .where(values["from_port"] <= 11211 && values["to_port"] >= 11211)
+        .where(values["ip_protocol"] == "-1" || values["ip_protocol"] == "all" || values["from_port"] <= 11211 && values["to_port"] >= 11211)
         .all(
           values["cidr_ipv4"] != "0.0.0.0/0" && values["cidr_ipv6"] != "::/0"
+        ) &&
+      terraform.state.resources
+        .where(type == "aws_security_group_rule" && values["type"] == "ingress")
+        .where(values["protocol"] == "-1" || values["protocol"] == "all" || values["from_port"] <= 11211 && values["to_port"] >= 11211)
+        .none(
+          values["cidr_blocks"].contains("0.0.0.0/0") || values["ipv6_cidr_blocks"].contains("::/0")
         )
   - uid: mondoo-aws-security-secgroup-restricted-memcached-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::EC2::SecurityGroup")
@@ -71506,7 +71673,7 @@ queries:
       cloudformation.template.resources.where(type == "AWS::EC2::SecurityGroup").all(
         properties['SecurityGroupIngress'] == empty ||
         properties['SecurityGroupIngress']
-          .where(_['FromPort'] <= 11211 && _['ToPort'] >= 11211)
+          .where(_['IpProtocol'] == "-1" || _['FromPort'] <= 11211 && _['ToPort'] >= 11211)
           .none(_['CidrIp'] == "0.0.0.0/0" || _['CidrIpv6'] == "::/0")
       )
   - uid: mondoo-aws-security-secgroup-restricted-elasticsearch
@@ -71649,18 +71816,18 @@ queries:
     filters: asset.platform == "terraform-hcl" && terraform.resources.where(nameLabel == "aws_security_group" || nameLabel == "aws_security_group_rule" || nameLabel == "aws_vpc_security_group_ingress_rule") != empty
     mql: |
       terraform.resources("aws_security_group").all(
-        blocks.where(type == "ingress" && arguments.from_port <= 9300 && arguments.to_port >= 9200).none(
+        blocks.where(type == "ingress" && arguments.protocol == "-1" || type == "ingress" && arguments.from_port <= 9300 && arguments.to_port >= 9200).none(
           arguments.cidr_blocks.contains("0.0.0.0/0") || arguments.ipv6_cidr_blocks.contains("::/0")
         )
       ) &&
       terraform.resources("aws_vpc_security_group_ingress_rule")
-        .where(arguments.from_port <= 9300 && arguments.to_port >= 9200)
+        .where(arguments.ip_protocol == "-1" || arguments.ip_protocol == "all" || arguments.from_port <= 9300 && arguments.to_port >= 9200)
         .all(
           arguments.cidr_ipv4 != "0.0.0.0/0" && arguments.cidr_ipv6 != "::/0"
         ) &&
       terraform.resources("aws_security_group").all(
         arguments["ingress"] == empty ||
-        arguments["ingress"].where(_["from_port"] <= 9300 && _["to_port"] >= 9200).none(
+        arguments["ingress"].where(_["protocol"] == "-1" || _["from_port"] <= 9300 && _["to_port"] >= 9200).none(
           _["cidr_blocks"].contains("0.0.0.0/0") || _["ipv6_cidr_blocks"].contains("::/0")
         )
       ) &&
@@ -71670,37 +71837,51 @@ queries:
           arguments["from_port"] != /^(var|local|module|data|each)\./ &&
           arguments["to_port"] != /^(var|local|module|data|each)\./
         )
-        .where(arguments["from_port"] <= 9300 && arguments["to_port"] >= 9200)
+        .where(arguments["protocol"] == "-1" || arguments["protocol"] == "all" || arguments["from_port"] <= 9300 && arguments["to_port"] >= 9200)
         .none(
           arguments["cidr_blocks"].contains("0.0.0.0/0") || arguments["ipv6_cidr_blocks"].contains("::/0")
         )
   - uid: mondoo-aws-security-secgroup-restricted-elasticsearch-terraform-plan
-    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.where(type == "aws_security_group" || type == "aws_vpc_security_group_ingress_rule") != empty
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.where(type == "aws_security_group" || type == "aws_vpc_security_group_ingress_rule" || type == "aws_security_group_rule") != empty
     mql: |
       terraform.plan.resourceChanges.where(type == "aws_security_group").all(
-        change.after["ingress"].where(_["from_port"] <= 9300 && _["to_port"] >= 9200).none(
+        change.after["ingress"] == empty ||
+        change.after["ingress"].where(_["protocol"] == "-1" || _["from_port"] <= 9300 && _["to_port"] >= 9200).none(
           _["cidr_blocks"].contains("0.0.0.0/0") || _["ipv6_cidr_blocks"].contains("::/0")
         )
       ) &&
       terraform.plan.resourceChanges
         .where(type == "aws_vpc_security_group_ingress_rule")
-        .where(change.after["from_port"] <= 9300 && change.after["to_port"] >= 9200)
+        .where(change.after["ip_protocol"] == "-1" || change.after["ip_protocol"] == "all" || change.after["from_port"] <= 9300 && change.after["to_port"] >= 9200)
         .all(
           change.after["cidr_ipv4"] != "0.0.0.0/0" && change.after["cidr_ipv6"] != "::/0"
+        ) &&
+      terraform.plan.resourceChanges
+        .where(type == "aws_security_group_rule" && change.after["type"] == "ingress")
+        .where(change.after["protocol"] == "-1" || change.after["protocol"] == "all" || change.after["from_port"] <= 9300 && change.after["to_port"] >= 9200)
+        .none(
+          change.after["cidr_blocks"].contains("0.0.0.0/0") || change.after["ipv6_cidr_blocks"].contains("::/0")
         )
   - uid: mondoo-aws-security-secgroup-restricted-elasticsearch-terraform-state
-    filters: asset.platform == "terraform-state" && terraform.state.resources.where(type == "aws_security_group" || type == "aws_vpc_security_group_ingress_rule") != empty
+    filters: asset.platform == "terraform-state" && terraform.state.resources.where(type == "aws_security_group" || type == "aws_vpc_security_group_ingress_rule" || type == "aws_security_group_rule") != empty
     mql: |
       terraform.state.resources.where(type == "aws_security_group").all(
-        values["ingress"].where(_["from_port"] <= 9300 && _["to_port"] >= 9200).none(
+        values["ingress"] == empty ||
+        values["ingress"].where(_["protocol"] == "-1" || _["from_port"] <= 9300 && _["to_port"] >= 9200).none(
           _["cidr_blocks"].contains("0.0.0.0/0") || _["ipv6_cidr_blocks"].contains("::/0")
         )
       ) &&
       terraform.state.resources
         .where(type == "aws_vpc_security_group_ingress_rule")
-        .where(values["from_port"] <= 9300 && values["to_port"] >= 9200)
+        .where(values["ip_protocol"] == "-1" || values["ip_protocol"] == "all" || values["from_port"] <= 9300 && values["to_port"] >= 9200)
         .all(
           values["cidr_ipv4"] != "0.0.0.0/0" && values["cidr_ipv6"] != "::/0"
+        ) &&
+      terraform.state.resources
+        .where(type == "aws_security_group_rule" && values["type"] == "ingress")
+        .where(values["protocol"] == "-1" || values["protocol"] == "all" || values["from_port"] <= 9300 && values["to_port"] >= 9200)
+        .none(
+          values["cidr_blocks"].contains("0.0.0.0/0") || values["ipv6_cidr_blocks"].contains("::/0")
         )
   - uid: mondoo-aws-security-secgroup-restricted-elasticsearch-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::EC2::SecurityGroup")
@@ -71708,7 +71889,7 @@ queries:
       cloudformation.template.resources.where(type == "AWS::EC2::SecurityGroup").all(
         properties['SecurityGroupIngress'] == empty ||
         properties['SecurityGroupIngress']
-          .where(_['FromPort'] <= 9300 && _['ToPort'] >= 9200)
+          .where(_['IpProtocol'] == "-1" || _['FromPort'] <= 9300 && _['ToPort'] >= 9200)
           .none(_['CidrIp'] == "0.0.0.0/0" || _['CidrIpv6'] == "::/0")
       )
   - uid: mondoo-aws-security-secgroup-restricted-winrm
@@ -71851,18 +72032,18 @@ queries:
     filters: asset.platform == "terraform-hcl" && terraform.resources.where(nameLabel == "aws_security_group" || nameLabel == "aws_vpc_security_group_ingress_rule" || nameLabel == "aws_security_group_rule") != empty
     mql: |
       terraform.resources("aws_security_group").all(
-        blocks.where(type == "ingress" && arguments.from_port <= 5986 && arguments.to_port >= 5985).none(
+        blocks.where(type == "ingress" && arguments.protocol == "-1" || type == "ingress" && arguments.from_port <= 5986 && arguments.to_port >= 5985).none(
           arguments.cidr_blocks.contains("0.0.0.0/0") || arguments.ipv6_cidr_blocks.contains("::/0")
         )
       ) &&
       terraform.resources("aws_vpc_security_group_ingress_rule")
-        .where(arguments.from_port <= 5986 && arguments.to_port >= 5985)
+        .where(arguments.ip_protocol == "-1" || arguments.ip_protocol == "all" || arguments.from_port <= 5986 && arguments.to_port >= 5985)
         .all(
           arguments.cidr_ipv4 != "0.0.0.0/0" && arguments.cidr_ipv6 != "::/0"
         ) &&
       terraform.resources("aws_security_group").all(
         arguments["ingress"] == empty ||
-        arguments["ingress"].where(_["from_port"] <= 5986 && _["to_port"] >= 5985).none(
+        arguments["ingress"].where(_["protocol"] == "-1" || _["from_port"] <= 5986 && _["to_port"] >= 5985).none(
           _["cidr_blocks"].contains("0.0.0.0/0") || _["ipv6_cidr_blocks"].contains("::/0")
         )
       ) &&
@@ -71872,37 +72053,51 @@ queries:
           arguments["from_port"] != /^(var|local|module|data|each)\./ &&
           arguments["to_port"] != /^(var|local|module|data|each)\./
         )
-        .where(arguments["from_port"] <= 5986 && arguments["to_port"] >= 5985)
+        .where(arguments["protocol"] == "-1" || arguments["protocol"] == "all" || arguments["from_port"] <= 5986 && arguments["to_port"] >= 5985)
         .none(
           arguments["cidr_blocks"].contains("0.0.0.0/0") || arguments["ipv6_cidr_blocks"].contains("::/0")
         )
   - uid: mondoo-aws-security-secgroup-restricted-winrm-terraform-plan
-    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.where(type == "aws_security_group" || type == "aws_vpc_security_group_ingress_rule") != empty
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.where(type == "aws_security_group" || type == "aws_vpc_security_group_ingress_rule" || type == "aws_security_group_rule") != empty
     mql: |
       terraform.plan.resourceChanges.where(type == "aws_security_group").all(
-        change.after["ingress"].where(_["from_port"] <= 5986 && _["to_port"] >= 5985).none(
+        change.after["ingress"] == empty ||
+        change.after["ingress"].where(_["protocol"] == "-1" || _["from_port"] <= 5986 && _["to_port"] >= 5985).none(
           _["cidr_blocks"].contains("0.0.0.0/0") || _["ipv6_cidr_blocks"].contains("::/0")
         )
       ) &&
       terraform.plan.resourceChanges
         .where(type == "aws_vpc_security_group_ingress_rule")
-        .where(change.after["from_port"] <= 5986 && change.after["to_port"] >= 5985)
+        .where(change.after["ip_protocol"] == "-1" || change.after["ip_protocol"] == "all" || change.after["from_port"] <= 5986 && change.after["to_port"] >= 5985)
         .all(
           change.after["cidr_ipv4"] != "0.0.0.0/0" && change.after["cidr_ipv6"] != "::/0"
+        ) &&
+      terraform.plan.resourceChanges
+        .where(type == "aws_security_group_rule" && change.after["type"] == "ingress")
+        .where(change.after["protocol"] == "-1" || change.after["protocol"] == "all" || change.after["from_port"] <= 5986 && change.after["to_port"] >= 5985)
+        .none(
+          change.after["cidr_blocks"].contains("0.0.0.0/0") || change.after["ipv6_cidr_blocks"].contains("::/0")
         )
   - uid: mondoo-aws-security-secgroup-restricted-winrm-terraform-state
-    filters: asset.platform == "terraform-state" && terraform.state.resources.where(type == "aws_security_group" || type == "aws_vpc_security_group_ingress_rule") != empty
+    filters: asset.platform == "terraform-state" && terraform.state.resources.where(type == "aws_security_group" || type == "aws_vpc_security_group_ingress_rule" || type == "aws_security_group_rule") != empty
     mql: |
       terraform.state.resources.where(type == "aws_security_group").all(
-        values["ingress"].where(_["from_port"] <= 5986 && _["to_port"] >= 5985).none(
+        values["ingress"] == empty ||
+        values["ingress"].where(_["protocol"] == "-1" || _["from_port"] <= 5986 && _["to_port"] >= 5985).none(
           _["cidr_blocks"].contains("0.0.0.0/0") || _["ipv6_cidr_blocks"].contains("::/0")
         )
       ) &&
       terraform.state.resources
         .where(type == "aws_vpc_security_group_ingress_rule")
-        .where(values["from_port"] <= 5986 && values["to_port"] >= 5985)
+        .where(values["ip_protocol"] == "-1" || values["ip_protocol"] == "all" || values["from_port"] <= 5986 && values["to_port"] >= 5985)
         .all(
           values["cidr_ipv4"] != "0.0.0.0/0" && values["cidr_ipv6"] != "::/0"
+        ) &&
+      terraform.state.resources
+        .where(type == "aws_security_group_rule" && values["type"] == "ingress")
+        .where(values["protocol"] == "-1" || values["protocol"] == "all" || values["from_port"] <= 5986 && values["to_port"] >= 5985)
+        .none(
+          values["cidr_blocks"].contains("0.0.0.0/0") || values["ipv6_cidr_blocks"].contains("::/0")
         )
   - uid: mondoo-aws-security-secgroup-restricted-winrm-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::EC2::SecurityGroup")
@@ -71910,7 +72105,7 @@ queries:
       cloudformation.template.resources.where(type == "AWS::EC2::SecurityGroup").all(
         properties['SecurityGroupIngress'] == empty ||
         properties['SecurityGroupIngress']
-          .where(_['FromPort'] <= 5986 && _['ToPort'] >= 5985)
+          .where(_['IpProtocol'] == "-1" || _['FromPort'] <= 5986 && _['ToPort'] >= 5985)
           .none(_['CidrIp'] == "0.0.0.0/0" || _['CidrIpv6'] == "::/0")
       )
   - uid: mondoo-aws-security-secgroup-restricted-docker-daemon
@@ -72055,18 +72250,18 @@ queries:
     filters: asset.platform == "terraform-hcl" && terraform.resources.where(nameLabel == "aws_security_group" || nameLabel == "aws_security_group_rule" || nameLabel == "aws_vpc_security_group_ingress_rule") != empty
     mql: |
       terraform.resources("aws_security_group").all(
-        blocks.where(type == "ingress" && arguments.from_port <= 2376 && arguments.to_port >= 2375).none(
+        blocks.where(type == "ingress" && arguments.protocol == "-1" || type == "ingress" && arguments.from_port <= 2376 && arguments.to_port >= 2375).none(
           arguments.cidr_blocks.contains("0.0.0.0/0") || arguments.ipv6_cidr_blocks.contains("::/0")
         )
       ) &&
       terraform.resources("aws_vpc_security_group_ingress_rule")
-        .where(arguments.from_port <= 2376 && arguments.to_port >= 2375)
+        .where(arguments.ip_protocol == "-1" || arguments.ip_protocol == "all" || arguments.from_port <= 2376 && arguments.to_port >= 2375)
         .all(
           arguments.cidr_ipv4 != "0.0.0.0/0" && arguments.cidr_ipv6 != "::/0"
         ) &&
       terraform.resources("aws_security_group").all(
         arguments["ingress"] == empty ||
-        arguments["ingress"].where(_["from_port"] <= 2376 && _["to_port"] >= 2375).none(
+        arguments["ingress"].where(_["protocol"] == "-1" || _["from_port"] <= 2376 && _["to_port"] >= 2375).none(
           _["cidr_blocks"].contains("0.0.0.0/0") || _["ipv6_cidr_blocks"].contains("::/0")
         )
       ) &&
@@ -72076,37 +72271,51 @@ queries:
           arguments["from_port"] != /^(var|local|module|data|each)\./ &&
           arguments["to_port"] != /^(var|local|module|data|each)\./
         )
-        .where(arguments["from_port"] <= 2376 && arguments["to_port"] >= 2375)
+        .where(arguments["protocol"] == "-1" || arguments["protocol"] == "all" || arguments["from_port"] <= 2376 && arguments["to_port"] >= 2375)
         .none(
           arguments["cidr_blocks"].contains("0.0.0.0/0") || arguments["ipv6_cidr_blocks"].contains("::/0")
         )
   - uid: mondoo-aws-security-secgroup-restricted-docker-daemon-terraform-plan
-    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.where(type == "aws_security_group" || type == "aws_vpc_security_group_ingress_rule") != empty
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.where(type == "aws_security_group" || type == "aws_vpc_security_group_ingress_rule" || type == "aws_security_group_rule") != empty
     mql: |
       terraform.plan.resourceChanges.where(type == "aws_security_group").all(
-        change.after["ingress"].where(_["from_port"] <= 2376 && _["to_port"] >= 2375).none(
+        change.after["ingress"] == empty ||
+        change.after["ingress"].where(_["protocol"] == "-1" || _["from_port"] <= 2376 && _["to_port"] >= 2375).none(
           _["cidr_blocks"].contains("0.0.0.0/0") || _["ipv6_cidr_blocks"].contains("::/0")
         )
       ) &&
       terraform.plan.resourceChanges
         .where(type == "aws_vpc_security_group_ingress_rule")
-        .where(change.after["from_port"] <= 2376 && change.after["to_port"] >= 2375)
+        .where(change.after["ip_protocol"] == "-1" || change.after["ip_protocol"] == "all" || change.after["from_port"] <= 2376 && change.after["to_port"] >= 2375)
         .all(
           change.after["cidr_ipv4"] != "0.0.0.0/0" && change.after["cidr_ipv6"] != "::/0"
+        ) &&
+      terraform.plan.resourceChanges
+        .where(type == "aws_security_group_rule" && change.after["type"] == "ingress")
+        .where(change.after["protocol"] == "-1" || change.after["protocol"] == "all" || change.after["from_port"] <= 2376 && change.after["to_port"] >= 2375)
+        .none(
+          change.after["cidr_blocks"].contains("0.0.0.0/0") || change.after["ipv6_cidr_blocks"].contains("::/0")
         )
   - uid: mondoo-aws-security-secgroup-restricted-docker-daemon-terraform-state
-    filters: asset.platform == "terraform-state" && terraform.state.resources.where(type == "aws_security_group" || type == "aws_vpc_security_group_ingress_rule") != empty
+    filters: asset.platform == "terraform-state" && terraform.state.resources.where(type == "aws_security_group" || type == "aws_vpc_security_group_ingress_rule" || type == "aws_security_group_rule") != empty
     mql: |
       terraform.state.resources.where(type == "aws_security_group").all(
-        values["ingress"].where(_["from_port"] <= 2376 && _["to_port"] >= 2375).none(
+        values["ingress"] == empty ||
+        values["ingress"].where(_["protocol"] == "-1" || _["from_port"] <= 2376 && _["to_port"] >= 2375).none(
           _["cidr_blocks"].contains("0.0.0.0/0") || _["ipv6_cidr_blocks"].contains("::/0")
         )
       ) &&
       terraform.state.resources
         .where(type == "aws_vpc_security_group_ingress_rule")
-        .where(values["from_port"] <= 2376 && values["to_port"] >= 2375)
+        .where(values["ip_protocol"] == "-1" || values["ip_protocol"] == "all" || values["from_port"] <= 2376 && values["to_port"] >= 2375)
         .all(
           values["cidr_ipv4"] != "0.0.0.0/0" && values["cidr_ipv6"] != "::/0"
+        ) &&
+      terraform.state.resources
+        .where(type == "aws_security_group_rule" && values["type"] == "ingress")
+        .where(values["protocol"] == "-1" || values["protocol"] == "all" || values["from_port"] <= 2376 && values["to_port"] >= 2375)
+        .none(
+          values["cidr_blocks"].contains("0.0.0.0/0") || values["ipv6_cidr_blocks"].contains("::/0")
         )
   - uid: mondoo-aws-security-secgroup-restricted-docker-daemon-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::EC2::SecurityGroup")
@@ -72114,7 +72323,7 @@ queries:
       cloudformation.template.resources.where(type == "AWS::EC2::SecurityGroup").all(
         properties['SecurityGroupIngress'] == empty ||
         properties['SecurityGroupIngress']
-          .where(_['FromPort'] <= 2376 && _['ToPort'] >= 2375)
+          .where(_['IpProtocol'] == "-1" || _['FromPort'] <= 2376 && _['ToPort'] >= 2375)
           .none(_['CidrIp'] == "0.0.0.0/0" || _['CidrIpv6'] == "::/0")
       )
   - uid: mondoo-aws-security-secgroup-restricted-kubernetes-api
@@ -72259,18 +72468,18 @@ queries:
     filters: asset.platform == "terraform-hcl" && terraform.resources.where(nameLabel == "aws_security_group" || nameLabel == "aws_security_group_rule" || nameLabel == "aws_vpc_security_group_ingress_rule") != empty
     mql: |
       terraform.resources("aws_security_group").all(
-        blocks.where(type == "ingress" && arguments.from_port <= 6443 && arguments.to_port >= 6443).none(
+        blocks.where(type == "ingress" && arguments.protocol == "-1" || type == "ingress" && arguments.from_port <= 6443 && arguments.to_port >= 6443).none(
           arguments.cidr_blocks.contains("0.0.0.0/0") || arguments.ipv6_cidr_blocks.contains("::/0")
         )
       ) &&
       terraform.resources("aws_vpc_security_group_ingress_rule")
-        .where(arguments.from_port <= 6443 && arguments.to_port >= 6443)
+        .where(arguments.ip_protocol == "-1" || arguments.ip_protocol == "all" || arguments.from_port <= 6443 && arguments.to_port >= 6443)
         .all(
           arguments.cidr_ipv4 != "0.0.0.0/0" && arguments.cidr_ipv6 != "::/0"
         ) &&
       terraform.resources("aws_security_group").all(
         arguments["ingress"] == empty ||
-        arguments["ingress"].where(_["from_port"] <= 6443 && _["to_port"] >= 6443).none(
+        arguments["ingress"].where(_["protocol"] == "-1" || _["from_port"] <= 6443 && _["to_port"] >= 6443).none(
           _["cidr_blocks"].contains("0.0.0.0/0") || _["ipv6_cidr_blocks"].contains("::/0")
         )
       ) &&
@@ -72280,37 +72489,51 @@ queries:
           arguments["from_port"] != /^(var|local|module|data|each)\./ &&
           arguments["to_port"] != /^(var|local|module|data|each)\./
         )
-        .where(arguments["from_port"] <= 6443 && arguments["to_port"] >= 6443)
+        .where(arguments["protocol"] == "-1" || arguments["protocol"] == "all" || arguments["from_port"] <= 6443 && arguments["to_port"] >= 6443)
         .none(
           arguments["cidr_blocks"].contains("0.0.0.0/0") || arguments["ipv6_cidr_blocks"].contains("::/0")
         )
   - uid: mondoo-aws-security-secgroup-restricted-kubernetes-api-terraform-plan
-    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.where(type == "aws_security_group" || type == "aws_vpc_security_group_ingress_rule") != empty
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.where(type == "aws_security_group" || type == "aws_vpc_security_group_ingress_rule" || type == "aws_security_group_rule") != empty
     mql: |
       terraform.plan.resourceChanges.where(type == "aws_security_group").all(
-        change.after["ingress"].where(_["from_port"] <= 6443 && _["to_port"] >= 6443).none(
+        change.after["ingress"] == empty ||
+        change.after["ingress"].where(_["protocol"] == "-1" || _["from_port"] <= 6443 && _["to_port"] >= 6443).none(
           _["cidr_blocks"].contains("0.0.0.0/0") || _["ipv6_cidr_blocks"].contains("::/0")
         )
       ) &&
       terraform.plan.resourceChanges
         .where(type == "aws_vpc_security_group_ingress_rule")
-        .where(change.after["from_port"] <= 6443 && change.after["to_port"] >= 6443)
+        .where(change.after["ip_protocol"] == "-1" || change.after["ip_protocol"] == "all" || change.after["from_port"] <= 6443 && change.after["to_port"] >= 6443)
         .all(
           change.after["cidr_ipv4"] != "0.0.0.0/0" && change.after["cidr_ipv6"] != "::/0"
+        ) &&
+      terraform.plan.resourceChanges
+        .where(type == "aws_security_group_rule" && change.after["type"] == "ingress")
+        .where(change.after["protocol"] == "-1" || change.after["protocol"] == "all" || change.after["from_port"] <= 6443 && change.after["to_port"] >= 6443)
+        .none(
+          change.after["cidr_blocks"].contains("0.0.0.0/0") || change.after["ipv6_cidr_blocks"].contains("::/0")
         )
   - uid: mondoo-aws-security-secgroup-restricted-kubernetes-api-terraform-state
-    filters: asset.platform == "terraform-state" && terraform.state.resources.where(type == "aws_security_group" || type == "aws_vpc_security_group_ingress_rule") != empty
+    filters: asset.platform == "terraform-state" && terraform.state.resources.where(type == "aws_security_group" || type == "aws_vpc_security_group_ingress_rule" || type == "aws_security_group_rule") != empty
     mql: |
       terraform.state.resources.where(type == "aws_security_group").all(
-        values["ingress"].where(_["from_port"] <= 6443 && _["to_port"] >= 6443).none(
+        values["ingress"] == empty ||
+        values["ingress"].where(_["protocol"] == "-1" || _["from_port"] <= 6443 && _["to_port"] >= 6443).none(
           _["cidr_blocks"].contains("0.0.0.0/0") || _["ipv6_cidr_blocks"].contains("::/0")
         )
       ) &&
       terraform.state.resources
         .where(type == "aws_vpc_security_group_ingress_rule")
-        .where(values["from_port"] <= 6443 && values["to_port"] >= 6443)
+        .where(values["ip_protocol"] == "-1" || values["ip_protocol"] == "all" || values["from_port"] <= 6443 && values["to_port"] >= 6443)
         .all(
           values["cidr_ipv4"] != "0.0.0.0/0" && values["cidr_ipv6"] != "::/0"
+        ) &&
+      terraform.state.resources
+        .where(type == "aws_security_group_rule" && values["type"] == "ingress")
+        .where(values["protocol"] == "-1" || values["protocol"] == "all" || values["from_port"] <= 6443 && values["to_port"] >= 6443)
+        .none(
+          values["cidr_blocks"].contains("0.0.0.0/0") || values["ipv6_cidr_blocks"].contains("::/0")
         )
   - uid: mondoo-aws-security-secgroup-restricted-kubernetes-api-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::EC2::SecurityGroup")
@@ -72318,7 +72541,7 @@ queries:
       cloudformation.template.resources.where(type == "AWS::EC2::SecurityGroup").all(
         properties['SecurityGroupIngress'] == empty ||
         properties['SecurityGroupIngress']
-          .where(_['FromPort'] <= 6443 && _['ToPort'] >= 6443)
+          .where(_['IpProtocol'] == "-1" || _['FromPort'] <= 6443 && _['ToPort'] >= 6443)
           .none(_['CidrIp'] == "0.0.0.0/0" || _['CidrIpv6'] == "::/0")
       )
   - uid: mondoo-aws-security-secgroup-restricted-kubelet
@@ -72462,19 +72685,19 @@ queries:
     mql: |
       terraform.resources("aws_security_group").all(
         blocks.where(
-          type == "ingress" && arguments.from_port <= 10255 && arguments.to_port >= 10250
+          type == "ingress" && arguments.protocol == "-1" || type == "ingress" && arguments.from_port <= 10255 && arguments.to_port >= 10250
         ).none(
           arguments.cidr_blocks.contains("0.0.0.0/0") || arguments.ipv6_cidr_blocks.contains("::/0")
         )
       ) &&
       terraform.resources("aws_vpc_security_group_ingress_rule")
-        .where(arguments.from_port <= 10255 && arguments.to_port >= 10250)
+        .where(arguments.ip_protocol == "-1" || arguments.ip_protocol == "all" || arguments.from_port <= 10255 && arguments.to_port >= 10250)
         .all(
           arguments.cidr_ipv4 != "0.0.0.0/0" && arguments.cidr_ipv6 != "::/0"
         ) &&
       terraform.resources("aws_security_group").all(
         arguments["ingress"] == empty ||
-        arguments["ingress"].where(_["from_port"] <= 10255 && _["to_port"] >= 10250).none(
+        arguments["ingress"].where(_["protocol"] == "-1" || _["from_port"] <= 10255 && _["to_port"] >= 10250).none(
           _["cidr_blocks"].contains("0.0.0.0/0") || _["ipv6_cidr_blocks"].contains("::/0")
         )
       ) &&
@@ -72484,37 +72707,51 @@ queries:
           arguments["from_port"] != /^(var|local|module|data|each)\./ &&
           arguments["to_port"] != /^(var|local|module|data|each)\./
         )
-        .where(arguments["from_port"] <= 10255 && arguments["to_port"] >= 10250)
+        .where(arguments["protocol"] == "-1" || arguments["protocol"] == "all" || arguments["from_port"] <= 10255 && arguments["to_port"] >= 10250)
         .none(
           arguments["cidr_blocks"].contains("0.0.0.0/0") || arguments["ipv6_cidr_blocks"].contains("::/0")
         )
   - uid: mondoo-aws-security-secgroup-restricted-kubelet-terraform-plan
-    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.where(type == "aws_security_group" || type == "aws_vpc_security_group_ingress_rule") != empty
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.where(type == "aws_security_group" || type == "aws_vpc_security_group_ingress_rule" || type == "aws_security_group_rule") != empty
     mql: |
       terraform.plan.resourceChanges.where(type == "aws_security_group").all(
-        change.after["ingress"].where(_["from_port"] <= 10255 && _["to_port"] >= 10250).none(
+        change.after["ingress"] == empty ||
+        change.after["ingress"].where(_["protocol"] == "-1" || _["from_port"] <= 10255 && _["to_port"] >= 10250).none(
           _["cidr_blocks"].contains("0.0.0.0/0") || _["ipv6_cidr_blocks"].contains("::/0")
         )
       ) &&
       terraform.plan.resourceChanges
         .where(type == "aws_vpc_security_group_ingress_rule")
-        .where(change.after["from_port"] <= 10255 && change.after["to_port"] >= 10250)
+        .where(change.after["ip_protocol"] == "-1" || change.after["ip_protocol"] == "all" || change.after["from_port"] <= 10255 && change.after["to_port"] >= 10250)
         .all(
           change.after["cidr_ipv4"] != "0.0.0.0/0" && change.after["cidr_ipv6"] != "::/0"
+        ) &&
+      terraform.plan.resourceChanges
+        .where(type == "aws_security_group_rule" && change.after["type"] == "ingress")
+        .where(change.after["protocol"] == "-1" || change.after["protocol"] == "all" || change.after["from_port"] <= 10255 && change.after["to_port"] >= 10250)
+        .none(
+          change.after["cidr_blocks"].contains("0.0.0.0/0") || change.after["ipv6_cidr_blocks"].contains("::/0")
         )
   - uid: mondoo-aws-security-secgroup-restricted-kubelet-terraform-state
-    filters: asset.platform == "terraform-state" && terraform.state.resources.where(type == "aws_security_group" || type == "aws_vpc_security_group_ingress_rule") != empty
+    filters: asset.platform == "terraform-state" && terraform.state.resources.where(type == "aws_security_group" || type == "aws_vpc_security_group_ingress_rule" || type == "aws_security_group_rule") != empty
     mql: |
       terraform.state.resources.where(type == "aws_security_group").all(
-        values["ingress"].where(_["from_port"] <= 10255 && _["to_port"] >= 10250).none(
+        values["ingress"] == empty ||
+        values["ingress"].where(_["protocol"] == "-1" || _["from_port"] <= 10255 && _["to_port"] >= 10250).none(
           _["cidr_blocks"].contains("0.0.0.0/0") || _["ipv6_cidr_blocks"].contains("::/0")
         )
       ) &&
       terraform.state.resources
         .where(type == "aws_vpc_security_group_ingress_rule")
-        .where(values["from_port"] <= 10255 && values["to_port"] >= 10250)
+        .where(values["ip_protocol"] == "-1" || values["ip_protocol"] == "all" || values["from_port"] <= 10255 && values["to_port"] >= 10250)
         .all(
           values["cidr_ipv4"] != "0.0.0.0/0" && values["cidr_ipv6"] != "::/0"
+        ) &&
+      terraform.state.resources
+        .where(type == "aws_security_group_rule" && values["type"] == "ingress")
+        .where(values["protocol"] == "-1" || values["protocol"] == "all" || values["from_port"] <= 10255 && values["to_port"] >= 10250)
+        .none(
+          values["cidr_blocks"].contains("0.0.0.0/0") || values["ipv6_cidr_blocks"].contains("::/0")
         )
   - uid: mondoo-aws-security-secgroup-restricted-kubelet-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::EC2::SecurityGroup")
@@ -72522,7 +72759,7 @@ queries:
       cloudformation.template.resources.where(type == "AWS::EC2::SecurityGroup").all(
         properties['SecurityGroupIngress'] == empty ||
         properties['SecurityGroupIngress']
-          .where(_['FromPort'] <= 10255 && _['ToPort'] >= 10250)
+          .where(_['IpProtocol'] == "-1" || _['FromPort'] <= 10255 && _['ToPort'] >= 10250)
           .none(_['CidrIp'] == "0.0.0.0/0" || _['CidrIpv6'] == "::/0")
       )
   - uid: mondoo-aws-security-secgroup-restricted-etcd
@@ -72665,18 +72902,18 @@ queries:
     filters: asset.platform == "terraform-hcl" && terraform.resources.where(nameLabel == "aws_security_group" || nameLabel == "aws_security_group_rule" || nameLabel == "aws_vpc_security_group_ingress_rule") != empty
     mql: |
       terraform.resources("aws_security_group").all(
-        blocks.where(type == "ingress" && arguments.from_port <= 2380 && arguments.to_port >= 2379).none(
+        blocks.where(type == "ingress" && arguments.protocol == "-1" || type == "ingress" && arguments.from_port <= 2380 && arguments.to_port >= 2379).none(
           arguments.cidr_blocks.contains("0.0.0.0/0") || arguments.ipv6_cidr_blocks.contains("::/0")
         )
       ) &&
       terraform.resources("aws_vpc_security_group_ingress_rule")
-        .where(arguments.from_port <= 2380 && arguments.to_port >= 2379)
+        .where(arguments.ip_protocol == "-1" || arguments.ip_protocol == "all" || arguments.from_port <= 2380 && arguments.to_port >= 2379)
         .all(
           arguments.cidr_ipv4 != "0.0.0.0/0" && arguments.cidr_ipv6 != "::/0"
         ) &&
       terraform.resources("aws_security_group").all(
         arguments["ingress"] == empty ||
-        arguments["ingress"].where(_["from_port"] <= 2380 && _["to_port"] >= 2379).none(
+        arguments["ingress"].where(_["protocol"] == "-1" || _["from_port"] <= 2380 && _["to_port"] >= 2379).none(
           _["cidr_blocks"].contains("0.0.0.0/0") || _["ipv6_cidr_blocks"].contains("::/0")
         )
       ) &&
@@ -72686,37 +72923,51 @@ queries:
           arguments["from_port"] != /^(var|local|module|data|each)\./ &&
           arguments["to_port"] != /^(var|local|module|data|each)\./
         )
-        .where(arguments["from_port"] <= 2380 && arguments["to_port"] >= 2379)
+        .where(arguments["protocol"] == "-1" || arguments["protocol"] == "all" || arguments["from_port"] <= 2380 && arguments["to_port"] >= 2379)
         .none(
           arguments["cidr_blocks"].contains("0.0.0.0/0") || arguments["ipv6_cidr_blocks"].contains("::/0")
         )
   - uid: mondoo-aws-security-secgroup-restricted-etcd-terraform-plan
-    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.where(type == "aws_security_group" || type == "aws_vpc_security_group_ingress_rule") != empty
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.where(type == "aws_security_group" || type == "aws_vpc_security_group_ingress_rule" || type == "aws_security_group_rule") != empty
     mql: |
       terraform.plan.resourceChanges.where(type == "aws_security_group").all(
-        change.after["ingress"].where(_["from_port"] <= 2380 && _["to_port"] >= 2379).none(
+        change.after["ingress"] == empty ||
+        change.after["ingress"].where(_["protocol"] == "-1" || _["from_port"] <= 2380 && _["to_port"] >= 2379).none(
           _["cidr_blocks"].contains("0.0.0.0/0") || _["ipv6_cidr_blocks"].contains("::/0")
         )
       ) &&
       terraform.plan.resourceChanges
         .where(type == "aws_vpc_security_group_ingress_rule")
-        .where(change.after["from_port"] <= 2380 && change.after["to_port"] >= 2379)
+        .where(change.after["ip_protocol"] == "-1" || change.after["ip_protocol"] == "all" || change.after["from_port"] <= 2380 && change.after["to_port"] >= 2379)
         .all(
           change.after["cidr_ipv4"] != "0.0.0.0/0" && change.after["cidr_ipv6"] != "::/0"
+        ) &&
+      terraform.plan.resourceChanges
+        .where(type == "aws_security_group_rule" && change.after["type"] == "ingress")
+        .where(change.after["protocol"] == "-1" || change.after["protocol"] == "all" || change.after["from_port"] <= 2380 && change.after["to_port"] >= 2379)
+        .none(
+          change.after["cidr_blocks"].contains("0.0.0.0/0") || change.after["ipv6_cidr_blocks"].contains("::/0")
         )
   - uid: mondoo-aws-security-secgroup-restricted-etcd-terraform-state
-    filters: asset.platform == "terraform-state" && terraform.state.resources.where(type == "aws_security_group" || type == "aws_vpc_security_group_ingress_rule") != empty
+    filters: asset.platform == "terraform-state" && terraform.state.resources.where(type == "aws_security_group" || type == "aws_vpc_security_group_ingress_rule" || type == "aws_security_group_rule") != empty
     mql: |
       terraform.state.resources.where(type == "aws_security_group").all(
-        values["ingress"].where(_["from_port"] <= 2380 && _["to_port"] >= 2379).none(
+        values["ingress"] == empty ||
+        values["ingress"].where(_["protocol"] == "-1" || _["from_port"] <= 2380 && _["to_port"] >= 2379).none(
           _["cidr_blocks"].contains("0.0.0.0/0") || _["ipv6_cidr_blocks"].contains("::/0")
         )
       ) &&
       terraform.state.resources
         .where(type == "aws_vpc_security_group_ingress_rule")
-        .where(values["from_port"] <= 2380 && values["to_port"] >= 2379)
+        .where(values["ip_protocol"] == "-1" || values["ip_protocol"] == "all" || values["from_port"] <= 2380 && values["to_port"] >= 2379)
         .all(
           values["cidr_ipv4"] != "0.0.0.0/0" && values["cidr_ipv6"] != "::/0"
+        ) &&
+      terraform.state.resources
+        .where(type == "aws_security_group_rule" && values["type"] == "ingress")
+        .where(values["protocol"] == "-1" || values["protocol"] == "all" || values["from_port"] <= 2380 && values["to_port"] >= 2379)
+        .none(
+          values["cidr_blocks"].contains("0.0.0.0/0") || values["ipv6_cidr_blocks"].contains("::/0")
         )
   - uid: mondoo-aws-security-secgroup-restricted-etcd-cloudformation
     filters: asset.platform == "cloudformation" && cloudformation.template.resources.contains(type == "AWS::EC2::SecurityGroup")
@@ -72724,7 +72975,7 @@ queries:
       cloudformation.template.resources.where(type == "AWS::EC2::SecurityGroup").all(
         properties['SecurityGroupIngress'] == empty ||
         properties['SecurityGroupIngress']
-          .where(_['FromPort'] <= 2380 && _['ToPort'] >= 2379)
+          .where(_['IpProtocol'] == "-1" || _['FromPort'] <= 2380 && _['ToPort'] >= 2379)
           .none(_['CidrIp'] == "0.0.0.0/0" || _['CidrIpv6'] == "::/0")
       )
   # No CloudFormation variant: the internet-facing part of this check is the runtime correlation between a security
