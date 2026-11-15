@@ -96,10 +96,12 @@ def _xform_name(name: str, sep: str = "_") -> str:
 
 def _load_aws_service_ops(
     service_dir: Path,
-) -> tuple[list[str], dict[str, list[str]], dict[str, list[str]]]:
+) -> tuple[list[str], dict[str, list[str]], dict[str, list[str]], dict[str, list[str]]]:
     """Parse `<service>/<api-version>/service-2.json` and return
-    (subcommands, {subcommand: flags}, {subcommand: required flags}) exactly as
-    the AWS CLI exposes them.
+    (subcommands, {subcommand: flags}, {subcommand: required flags},
+    {subcommand: boolean flags}) exactly as the AWS CLI exposes them.
+
+    A boolean member becomes a `--name`/`--no-name` pair that takes no value.
 
     A member listed in the input shape's `required` array is one the CLI refuses
     to run without, so a snippet that omits it fails argument parsing before it
@@ -109,17 +111,19 @@ def _load_aws_service_ops(
     """
     candidates = sorted(service_dir.glob("*/service-2.json"))
     if not candidates:
-        return [], {}, {}
+        return [], {}, {}, {}
     data = json.loads(candidates[-1].read_text())
     shapes = data.get("shapes", {})
     subcommands: list[str] = []
     flag_map: dict[str, list[str]] = {}
     required_map: dict[str, list[str]] = {}
+    boolean_map: dict[str, list[str]] = {}
     for op_name, op in data.get("operations", {}).items():
         subcmd = _xform_name(op_name).replace("_", "-")
         subcommands.append(subcmd)
         flags: list[str] = []
         required: list[str] = []
+        booleans: list[str] = []
         input_ref = op.get("input")
         if input_ref:
             input_shape = shapes.get(input_ref.get("shape", ""), {})
@@ -130,11 +134,13 @@ def _load_aws_service_ops(
                 m_shape = shapes.get(m_ref.get("shape", ""), {})
                 if m_shape.get("type") == "boolean":
                     flags.append(f"--no-{kebab}")
+                    booleans += [f"--{kebab}", f"--no-{kebab}"]
                 if m_name in required_members and not m_ref.get("idempotencyToken"):
                     required.append(f"--{kebab}")
         flag_map[subcmd] = sorted(set(flags))
         required_map[subcmd] = sorted(set(required))
-    return sorted(subcommands), flag_map, required_map
+        boolean_map[subcmd] = sorted(set(booleans))
+    return sorted(subcommands), flag_map, required_map, boolean_map
 
 
 def detect_aws_services_from_policy() -> list[str]:
@@ -190,19 +196,22 @@ def find_aws_botocore_data_dir() -> Path | None:
     return None
 
 
-def build_aws_commands_db() -> tuple[dict[str, list[str]], dict[str, list[str]]]:
+def build_aws_commands_db() -> tuple[
+    dict[str, list[str]], dict[str, list[str]], dict[str, list[str]]
+]:
     """Build an in-memory AWS commands database by parsing the botocore
     service-2.json files bundled with AWS CLI v2, scoped to services used
     in the AWS policy.
 
     Returns ({"<service>": [subcommands], "<service> <subcommand>": [flags]},
-    {"<service> <subcommand>": [required flags]}). Both are empty if the policy
+    {"<service> <subcommand>": [required flags]},
+    {"<service> <subcommand>": [boolean flags]}). All are empty if the policy
     file has no aws commands. Exits with a helpful error if the AWS CLI v2 is
     not installed.
     """
     services = detect_aws_services_from_policy()
     if not services:
-        return {}, {}
+        return {}, {}, {}
 
     data_dir = find_aws_botocore_data_dir()
     if not data_dir:
@@ -231,6 +240,7 @@ def build_aws_commands_db() -> tuple[dict[str, list[str]], dict[str, list[str]]]
 
     commands: dict[str, list[str]] = {}
     required: dict[str, list[str]] = {}
+    booleans: dict[str, list[str]] = {}
     for cli_name in services:
         botocore_name = AWS_CLI_TO_BOTOCORE.get(cli_name, cli_name)
         service_dir = data_dir / botocore_name
@@ -240,13 +250,15 @@ def build_aws_commands_db() -> tuple[dict[str, list[str]], dict[str, list[str]]]
                 file=sys.stderr,
             )
             continue
-        subcommands, flag_map, required_map = _load_aws_service_ops(service_dir)
+        subcommands, flag_map, required_map, boolean_map = _load_aws_service_ops(service_dir)
         commands[cli_name] = subcommands
         for subcmd, flags in flag_map.items():
             commands[f"{cli_name} {subcmd}"] = sorted(set(flags + AWS_GLOBAL_FLAGS))
         for subcmd, req in required_map.items():
             required[f"{cli_name} {subcmd}"] = req
-    return commands, required
+        for subcmd, flags in boolean_map.items():
+            booleans[f"{cli_name} {subcmd}"] = flags
+    return commands, required, booleans
 
 
 def parse_aws_command(cmd: str) -> tuple[str, str, list[str]]:
@@ -349,6 +361,52 @@ AWS_CLI_DEFAULTED_PARAMS = {
     "ec2 run-instances": ["--min-count", "--max-count"],
 }
 
+# Global flags that take no value.
+AWS_GLOBAL_BOOLEAN_FLAGS = {
+    "--cli-auto-prompt",
+    "--debug",
+    "--no-cli-auto-prompt",
+    "--no-cli-pager",
+    "--no-paginate",
+    "--no-sign-request",
+    "--no-verify-ssl",
+    "--version",
+}
+
+# Tokens that end the aws command itself: what follows belongs to the shell.
+_SHELL_OPERATORS = {"|", "||", "&&", ";", "&", ">", ">>", "<", "2>", "2>&1", ")"}
+
+
+def boolean_flag_value_errors(cmd: str, boolean_flags: set[str]) -> list[str]:
+    """Return an error for each boolean flag that is given a value.
+
+    A boolean parameter is `--name` or `--no-name` and takes no value, so
+    `--include-shadow-trails false` leaves `false` as a stray argument and the
+    CLI exits with `Unknown options: false`, and `--name=false` is rejected as
+    an explicit argument. Neither shows up as an unknown flag, which is all the
+    flag check looks at.
+    """
+    try:
+        tokens = shlex.split(cmd)
+    except ValueError:
+        tokens = cmd.split()
+    errors = []
+    for i, token in enumerate(tokens):
+        if not token.startswith("--"):
+            continue
+        name, eq, value = token.partition("=")
+        if name not in boolean_flags:
+            continue
+        if eq:
+            errors.append(f"boolean flag '{name}' takes no value, got '{value}'")
+            continue
+        if i + 1 < len(tokens):
+            nxt = tokens[i + 1]
+            if not nxt.startswith("-") and nxt not in _SHELL_OPERATORS:
+                errors.append(f"boolean flag '{name}' takes no value, got '{nxt}'")
+    return errors
+
+
 # Supplying either of these replaces the whole argument list, so no individual
 # parameter is required alongside them.
 AWS_CLI_WHOLE_INPUT_FLAGS = {"--cli-input-json", "--cli-input-yaml", "--generate-cli-skeleton"}
@@ -441,7 +499,7 @@ def validate_aws() -> tuple[int, int]:
         print(f"Error: Policy file not found: {AWS_POLICY_FILE}", file=sys.stderr)
         sys.exit(1)
 
-    commands_db, required_db = build_aws_commands_db()
+    commands_db, required_db, boolean_db = build_aws_commands_db()
     if not commands_db:
         return 0, 0
 
@@ -472,6 +530,18 @@ def validate_aws() -> tuple[int, int]:
                 # checked, which is the point.
                 {} if from_prose else required_db,
             )
+            key = f"{service} {subcommand}"
+            # boolean_db holds every botocore operation, and those take no
+            # positional arguments, so a bare word after a boolean flag can only
+            # be a stray value. CLI customizations such as `aws s3 cp` are not in
+            # it and do take positionals, so they are left out on purpose.
+            if key in boolean_db:
+                bool_errors = boolean_flag_value_errors(
+                    cmd, set(boolean_db[key]) | AWS_GLOBAL_BOOLEAN_FLAGS
+                )
+                if bool_errors:
+                    is_valid = False
+                    errors = errors + bool_errors
 
             if is_valid:
                 print(f"[PASS] {uid}")
