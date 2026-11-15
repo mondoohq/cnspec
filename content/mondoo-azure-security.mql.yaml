@@ -192,7 +192,6 @@ policies:
           - uid: mondoo-azure-security-defender-for-keyvault-enabled
           - uid: mondoo-azure-security-defender-for-containers-enabled
           - uid: mondoo-azure-security-defender-for-resource-manager-enabled
-          - uid: mondoo-azure-security-defender-auto-provisioning-enabled
           - uid: mondoo-azure-security-defender-for-cosmosdb-enabled
           - uid: mondoo-azure-security-defender-for-open-source-databases-enabled
           - uid: mondoo-azure-security-defender-cspm-enabled
@@ -527,7 +526,7 @@ queries:
       desc: |
         This check verifies that the key protecting a virtual machine's OS disk is one your organization owns and can revoke, rather than the platform-managed key Azure applies by default.
 
-        Managed disks are always encrypted at rest, but the key behind that encryption is selected per disk. Attaching a disk encryption set backed by an Azure Key Vault key sets the OS disk's encryption type to `EncryptionAtRestWithCustomerKey`, which is the value this check requires. In the portal the control is the Encryption section of the disk, where Encryption type becomes Customer-managed keys and a key vault and key are chosen. From the command line the change is `az disk update --disk-encryption-set`, and the machine must be deallocated first. In Terraform the argument is `disk_encryption_set_id` inside the `os_disk` block; in Bicep it is the `diskEncryptionSet` reference under the OS disk's `managedDisk`.
+        Managed disks are always encrypted at rest, but the key behind that encryption is selected per disk. Attaching a disk encryption set backed by an Azure Key Vault key sets the OS disk's encryption type to `EncryptionAtRestWithCustomerKey`, which is what this check requires. Double encryption, `EncryptionAtRestWithPlatformAndCustomerKeys`, also uses the customer-managed key and passes. In the portal the control is the Encryption section of the disk, where Encryption type becomes Customer-managed keys and a key vault and key are chosen. From the command line the change is `az disk update --disk-encryption-set`, and the machine must be deallocated first. In Terraform the argument is `disk_encryption_set_id` inside the `os_disk` block; in Bicep it is the `diskEncryptionSet` reference under the OS disk's `managedDisk`.
 
         **Why this matters**
 
@@ -545,19 +544,19 @@ queries:
 
         **Automated Audit with Azure CLI:**
 
-        List and check the encryption settings for all disks in a specific resource group:
+        List the encryption type of the OS disks in a specific resource group:
 
         ```bash
-        az disk list --resource-group "yourResourceGroupName" --query "[].{Name:name, ResourceGroupName:resourceGroup, EncryptionSettings:encryptionSettingsCollection}" -o table
+        az disk list --resource-group "yourResourceGroupName" --query "[?osType!=null].{Name:name, ResourceGroupName:resourceGroup, EncryptionType:encryption.type}" -o table
         ```
 
         **Automated Audit with PowerShell:**
 
         ```powershell
-        Get-AzDisk -ResourceGroupName "yourResourceGroupName" | Select-Object Name, ResourceGroupName, EncryptionSettingsCollection
+        Get-AzDisk -ResourceGroupName "yourResourceGroupName" | Where-Object { $_.OsType } | Select-Object Name, ResourceGroupName, @{Name = "EncryptionType"; Expression = { $_.Encryption.Type }}
         ```
 
-        Ensure the EncryptionType is set to EncryptionAtRestWithCustomerKey for OS disks.
+        Ensure the encryption type is `EncryptionAtRestWithCustomerKey` or `EncryptionAtRestWithPlatformAndCustomerKeys` for every OS disk.
       remediation:
         - id: portal
           desc: |
@@ -694,7 +693,7 @@ queries:
     filters: |
       asset.platform == "azure-compute-vm-api"
     mql: |
-      azure.subscription.compute.vm.osDisk.properties.encryption.type == "EncryptionAtRestWithCustomerKey"
+      azure.subscription.compute.vm.osDisk.properties.encryption.type.in(["EncryptionAtRestWithCustomerKey", "EncryptionAtRestWithPlatformAndCustomerKeys"])
   - uid: mondoo-azure-security-ensure-os-disk-are-encrypted-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == /azurerm_(linux|windows)_virtual_machine/)
     mql: |
@@ -3299,7 +3298,7 @@ queries:
       desc: |
         This check verifies that the vault emits its audit records to a destination where they can be retained and searched.
 
-        Key Vault produces no diagnostic logs until a diagnostic setting is created, so key, secret, and certificate operations are invisible to monitoring by default. Add a diagnostic setting under Monitoring in the Azure portal with both the `audit` and `allLogs` category groups enabled, pointed at a Log Analytics workspace, a storage account, or an event hub. From the CLI, `az monitor diagnostic-settings create` takes a `--logs` array naming both category groups along with the chosen destination.
+        Key Vault produces no diagnostic logs until a diagnostic setting is created, so key, secret, and certificate operations are invisible to monitoring by default. Add a diagnostic setting under Monitoring in the Azure portal with both the `audit` and `allLogs` category groups enabled, pointed at a Log Analytics workspace, a storage account, or an event hub. From the CLI, `az monitor diagnostic-settings create` takes a `--logs` array naming both category groups along with the chosen destination. The check passes when one setting enables the `audit` group, the `allLogs` group, or the `AuditEvent` category, any of which carries the vault's audit records, and sends it to a workspace or storage account that still exists or to an event hub. A setting whose workspace or storage account has been deleted is still listed on the vault but delivers nothing, so it does not count.
 
         **Why this matters**
 
@@ -3453,12 +3452,9 @@ queries:
     filters: |
       asset.platform == "azure-keyvault-vault"
     mql: |
-      azure.subscription.keyVault.vault.diagnosticSettings.any(
-        properties.logs.where(categoryGroup == "audit").any(enabled == true)
-      )
-      azure.subscription.keyVault.vault.diagnosticSettings.any(
-        properties.logs.where(categoryGroup == "allLogs").any(enabled == true)
-      )
+      azure.subscription.keyVault.vault.diagnosticSettings
+        .where(workspace != empty || storageAccount != empty || eventHubAuthorizationRuleId != empty)
+        .any(enabledLogCategories.any(_ == "audit" || _ == "allLogs" || _ == "AuditEvent"))
   - uid: mondoo-azure-security-ensure-logging-enabled-kv-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_monitor_diagnostic_setting")
     mql: |
@@ -3526,7 +3522,7 @@ queries:
       desc: |
         This check verifies that changes to network filtering rules are noticed as they happen, by requiring activity log alerts on network security group writes and deletions.
 
-        Azure creates no activity log alerts on its own, so this signal exists only when someone configures it. The check requires alerts carrying an action group, one matching the operation name `Microsoft.Network/networkSecurityGroups/write` and another matching `Microsoft.Network/networkSecurityGroups/delete`. In the portal these are created under Monitor, then Alerts, choosing Activity Log as the resource type and the Create or Update Network Security Group signal, with an action group on the Actions tab. From the CLI it is `az monitor activity-log alert create --condition "category=Administrative and operationName=..."`. In Terraform the equivalent is a `criteria` block with `operation_name`; in Bicep it is an entry in `condition.allOf`.
+        Azure creates no activity log alerts on its own, so this signal exists only when someone configures it. The check requires enabled alerts scoped to the whole subscription and carrying an action group, one matching the operation name `Microsoft.Network/networkSecurityGroups/write` and another matching `Microsoft.Network/networkSecurityGroups/delete`. An alert scoped to one resource group or one network security group does not count, because changes everywhere else in the subscription raise nothing. In the portal these are created under Monitor, then Alerts, choosing Activity Log as the resource type and the Create or Update Network Security Group signal, with an action group on the Actions tab. From the CLI it is `az monitor activity-log alert create --condition "category=Administrative and operationName=..."`. In Terraform the equivalent is a `criteria` block with `operation_name`; in Bicep it is an entry in `condition.allOf`.
 
         **Why this matters**
 
@@ -3579,10 +3575,8 @@ queries:
             3. Select **Alerts**.
             4. Select **+ Create**.
             5. Under **Resource types**, select **Activity Log**.
-            6. Select the subscription name, resource group, or network security group to apply the rule to.
-            7. Verify that the selection preview shows:
-                - All network security groups or your selected network security group
-                - The subscription, group, or resource you selected
+            6. Select the subscription as the scope of the rule.
+            7. Verify that the selection preview shows the subscription and all network security groups.
             8. Select the **Apply** button.
             9. Select the **Condition** tab and select **See all signals**.
             10. Select **Create or Update Network Security Group**.
@@ -3598,13 +3592,13 @@ queries:
             To ensure activity log alerts exist for NSG create, update, and delete using the Azure CLI, create an activity log alert for network security group changes:
 
             ```bash
-            az monitor activity-log alert create --name <AlertName> --resource-group <ResourceGroupName> --scope <ResourceID> --condition "category=Administrative and operationName=Microsoft.Network/networkSecurityGroups/write" --action-group <ActionGroupID>
+            az monitor activity-log alert create --name <AlertName> --resource-group <ResourceGroupName> --scope /subscriptions/<SubscriptionId> --condition "category=Administrative and operationName=Microsoft.Network/networkSecurityGroups/write" --action-group <ActionGroupID>
             ```
 
             To create an activity log alert for network security group deletions:
 
             ```bash
-            az monitor activity-log alert create --name <AlertName> --resource-group <ResourceGroupName> --scope <ResourceID> --condition "category=Administrative and operationName=Microsoft.Network/networkSecurityGroups/delete" --action-group <ActionGroupID>
+            az monitor activity-log alert create --name <AlertName> --resource-group <ResourceGroupName> --scope /subscriptions/<SubscriptionId> --condition "category=Administrative and operationName=Microsoft.Network/networkSecurityGroups/delete" --action-group <ActionGroupID>
             ```
         - id: powershell
           desc: |
@@ -3630,13 +3624,15 @@ queries:
             To ensure activity log alerts exist for NSG create, update, and delete in Terraform, create an activity log alert for network security group changes:
 
             ```hcl
+            data "azurerm_subscription" "current" {}
+
             resource "azurerm_monitor_activity_log_alert" "example" {
               name                = "example-alert"
               resource_group_name = azurerm_resource_group.example.name
-              location            = azurerm_resource_group.example.location
+              location            = "global"
 
               scopes = [
-                azurerm_network_security_group.example.id,
+                data.azurerm_subscription.current.id,
               ]
 
               criteria {
@@ -3652,10 +3648,10 @@ queries:
             resource "azurerm_monitor_activity_log_alert" "nsg_delete" {
               name                = "example-nsg-delete-alert"
               resource_group_name = azurerm_resource_group.example.name
-              location            = azurerm_resource_group.example.location
+              location            = "global"
 
               scopes = [
-                azurerm_network_security_group.example.id,
+                data.azurerm_subscription.current.id,
               ]
 
               criteria {
@@ -3743,17 +3739,17 @@ queries:
       asset.platform == "azure"
     mql: |
       azure.subscription.monitor.activityLog.alerts
-        .where(actions != empty)
+        .where(enabled == true && actions != empty && scopes.any(downcase == azure.subscription.id.downcase))
         .any(
           conditions.any(
-            equals == "Microsoft.Network/networkSecurityGroups/write" && fieldName == "operationName"
+            fieldName == "operationName" && equals.downcase == "microsoft.network/networksecuritygroups/write"
           )
         )
       azure.subscription.monitor.activityLog.alerts
-        .where(actions != empty)
+        .where(enabled == true && actions != empty && scopes.any(downcase == azure.subscription.id.downcase))
         .any(
           conditions.any(
-            equals == "Microsoft.Network/networkSecurityGroups/delete" && fieldName == "operationName"
+            fieldName == "operationName" && equals.downcase == "microsoft.network/networksecuritygroups/delete"
           )
         )
   - uid: mondoo-azure-security-ensure-activity-log-alert-exists-for-create-update-delete-network-security-group-terraform-hcl
@@ -3851,7 +3847,7 @@ queries:
       desc: |
         This check verifies that Microsoft Defender for Cloud pushes high-severity alerts to a human by email rather than leaving them in the portal.
 
-        By default Defender for Cloud raises alerts in the portal but sends no proactive email unless security contacts and alert notification settings are explicitly configured. Set this under Microsoft Defender for Cloud, Environment settings, Email notifications, where "Notify about alerts with the following severity (or higher):" must be enabled and set to `High`. In the API this is `alertNotifications` with `state` set to `On` and `minimalSeverity` set to `High`, or a `notificationsSources` entry whose `sourceType` is `Alert` and `minimalSeverity` is `High`.
+        By default Defender for Cloud raises alerts in the portal but sends no proactive email unless security contacts and alert notification settings are explicitly configured. Set this under Microsoft Defender for Cloud, Environment settings, Email notifications, where "Notify about alerts with the following severity (or higher):" must be enabled. `High` sends only high-severity alerts; `Medium` and `Low` send those as well. In the current API this is a `notificationsSources` entry whose `sourceType` is `Alert`, on a security contact whose `isEnabled` is `true`. The entry carries only `minimalSeverity`, and its absence is what turns the email off. The check passes when the `default` contact is enabled and has that entry at any severity.
 
         **Why this matters**
 
@@ -3870,15 +3866,17 @@ queries:
           3. Select `Environment Settings`.
           4. Select the appropriate Management Group, Subscription, or Workspace.
           5. Select `Email notifications`.
-          6. Verify that the `Notify about alerts with the following severity (or higher):` setting is checked and set to `High`.
+          6. Verify that the `Notify about alerts with the following severity (or higher):` setting is checked. `High`, `Medium`, and `Low` all include high-severity alerts.
 
         **Automated Audit with Azure CLI:**
 
-          Run the following command to check the notification settings for high severity alerts. Make sure the output is set to `true`, indicating that notifications for high severity alerts are enabled.
+          Read the subscription's `default` security contact:
 
           ```bash
-          az account get-access-token --query "{subscription:subscription,accessToken:accessToken}" --output tsv | xargs -L1 bash -c 'curl -X GET -H "Authorization: Bearer $1" -H "Content-Type: application/json" https://management.azure.com/subscriptions/$0/providers/Microsoft.Security/securityContacts?api-version=2020-01-01-preview' | jq '.|.[] | select(.name=="default")'|jq '.properties.alertNotifications'
+          az rest --method get --url "https://management.azure.com/subscriptions/<SubscriptionId>/providers/Microsoft.Security/securityContacts/default?api-version=2023-12-01-preview" --query "{enabled:properties.isEnabled, alerts:properties.notificationsSources[?sourceType=='Alert'].minimalSeverity}"
           ```
+
+          `enabled` must be `true` and `alerts` must list a severity. An empty `alerts` list means no alert email is sent.
       remediation:
         - id: portal
           desc: |
@@ -3991,10 +3989,10 @@ queries:
     filters: |
       asset.platform == "azure"
     mql: |
-      azure.subscription.cloudDefender.securityContacts.all(
-        notificationSources.Alert.minimalSeverity == "High"
+      azure.subscription.cloudDefender.securityContacts.any(
+        isEnabled == true &&
+        notificationSources.Alert.minimalSeverity.in(["Low", "Medium", "High"])
       )
-      azure.subscription.cloudDefender.securityContacts.all(notificationSources.Alert.state == "On")
   - uid: mondoo-azure-security-ensure-that-notify-about-alerts-with-high-severity-is-on-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_security_center_contact")
     mql: |
@@ -4411,7 +4409,7 @@ queries:
       desc: |
         This check verifies that an Azure SQL server is not reachable by arbitrary internet clients, either because public network access is turned off or because access is narrowed to selected networks.
 
-        New Azure SQL servers accept public connections, meaning any address can attempt to reach the SQL endpoint on port `1433`. The control is on the Networking blade under Security, where Public network access is set to Disabled or to Selected networks. The CLI equivalent is `az sql server update --set publicNetworkAccess='Disabled'`, and Terraform exposes `public_network_access_enabled`. The check passes when `publicNetworkAccess` reads `Disabled`, or when at least one firewall rule or virtual network rule scopes the exposure.
+        The control is on the Networking blade under Security, where Public network access is set to Disabled or to Selected networks. The CLI equivalent is `az sql server update --set publicNetworkAccess='Disabled'`, and Terraform exposes `public_network_access_enabled`. With public access enabled, the server firewall decides who connects: a server with no firewall rules refuses every public client, and each rule opens the address range it names. A rule from `0.0.0.0` to `255.255.255.255` opens the endpoint on port `1433` to the whole internet. The check passes when `publicNetworkAccess` reads `Disabled`, or when no firewall rule spans that full range.
 
         **Why this matters**
 
@@ -4421,7 +4419,7 @@ queries:
 
         Selected-network restrictions additionally stop an attacker who has compromised a public address in another region or another cloud from pivoting directly to the SQL server without first landing on an approved network path.
 
-        Because the check accepts the presence of firewall or virtual network rules as evidence of scoping, it does not judge how broad those rules are. A companion check in this policy fails any rule that starts at `0.0.0.0`, and the two are meant to be read together.
+        This check fails only the rule that admits every address. A companion check in this policy also fails the `0.0.0.0` rule that admits all Azure services, including other tenants' resources, and the two are meant to be read together.
       audit: |
         **Manual Audit via Azure Portal:**
 
@@ -4985,6 +4983,8 @@ queries:
 
         Activity log entries live in Azure Monitor for only 90 days by default and cannot be reached from SIEM tooling or cross-subscription queries while they stay there. A diagnostic setting copies them to a Log Analytics workspace, Storage account, or Event Hub that the organization controls. Add one under Azure Monitor, Activity log, Diagnostic settings, or with `az monitor diagnostic-settings subscription create`.
 
+        A setting only counts while its destination exists. Deleting a workspace or storage account leaves the setting in place, still listed and still looking configured, while the activity log goes nowhere. The check therefore requires at least one setting whose Log Analytics workspace or storage account can be read, or that names an Event Hub authorization rule.
+
         **Why this matters**
 
         An attacker who compromises a subscription creates resources, modifies IAM role assignments, and changes network configuration. Without forwarding, those actions exist only in the short-lived activity log and are frequently gone before incident response begins. Backdoor service principals, new role assignments, and freshly deployed resources leave no centralized trace at all.
@@ -5117,7 +5117,9 @@ queries:
     filters: |
       asset.platform == "azure"
     mql: |
-      azure.subscription.monitor.diagnosticSettings != empty
+      azure.subscription.monitor.diagnosticSettings.any(
+        workspace != empty || storageAccount != empty || eventHubAuthorizationRuleId != empty
+      )
   - uid: mondoo-azure-security-diagnostic-settings-exist-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_monitor_diagnostic_setting")
     mql: |
@@ -5181,7 +5183,7 @@ queries:
       desc: |
         This check verifies that subscription activity log forwarding includes the four security-relevant log categories: `Administrative`, `Security`, `Alert`, and `Policy`.
 
-        A subscription diagnostic setting exports the activity log to a Log Analytics workspace, Storage account, or Event Hub, but each category is selected individually. A setting can exist and still omit categories, which leaves blind spots even when forwarding is otherwise working. Configure it under Azure Monitor, Activity log, Diagnostic settings, or with `az monitor diagnostic-settings subscription create` and a `--logs` list that enables all four.
+        A subscription diagnostic setting exports the activity log to a Log Analytics workspace, Storage account, or Event Hub, but each category is selected individually. A setting can exist and still omit categories, which leaves blind spots even when forwarding is otherwise working. The check passes when one setting enables all four and sends them to a Log Analytics workspace or storage account that still exists, or to an Event Hub. Other settings that forward a subset for a different purpose do not affect the result. Configure it under Azure Monitor, Activity log, Diagnostic settings, or with `az monitor diagnostic-settings subscription create` and a `--logs` list that enables all four.
 
         **Why this matters**
 
@@ -5318,11 +5320,9 @@ queries:
     filters: |
       asset.platform == "azure"
     mql: |
-      azure.subscription.monitor.diagnosticSettings != empty
-      azure.subscription.monitor.diagnosticSettings.all(enabledLogCategories.contains("Administrative"))
-      azure.subscription.monitor.diagnosticSettings.all(enabledLogCategories.contains("Security"))
-      azure.subscription.monitor.diagnosticSettings.all(enabledLogCategories.contains("Alert"))
-      azure.subscription.monitor.diagnosticSettings.all(enabledLogCategories.contains("Policy"))
+      azure.subscription.monitor.diagnosticSettings
+        .where(workspace != empty || storageAccount != empty || eventHubAuthorizationRuleId != empty)
+        .any(enabledLogCategories.containsAll(["Administrative", "Security", "Alert", "Policy"]))
   - uid: mondoo-azure-security-diagnostic-settings-essential-categories-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_monitor_diagnostic_setting")
     mql: |
@@ -8530,107 +8530,6 @@ queries:
         properties["pricingTier"] == "Standard"
       )
   # No Terraform variants: the azurerm provider removed `azurerm_security_center_auto_provisioning` in 5.0, so there is no resource for an HCL, plan, or state scan to match.
-  - uid: mondoo-azure-security-defender-auto-provisioning-enabled
-    title: Ensure auto-provisioning of the monitoring agent is enabled
-    impact: 80
-    tags:
-      compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-log-03
-      compliance/dora: dora-art-10
-      compliance/hipaa: hipaa-security-ss164-312-b-audit-controls
-      compliance/iso-27001-2022: iso-27001-2022-a-8-16
-      compliance/nis-2: nis-2-21-2-b
-      compliance/nist-csf-1: nist-csf-1-de-cm-1
-      compliance/nist-csf-2: nist-csf-2-de-cm-09
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-4
-      compliance/nist-sp-800-171: nist-sp-800-171--3-14-6
-      compliance/owasp-top-10-2025: owasp-top-10-2025-a09
-      compliance/pci-dss-4: false
-      compliance/soc2-2017: soc2-control-cc7-2-1
-      compliance/vda-isa-5: vda-isa-5-5-2-4
-    variants:
-      - uid: mondoo-azure-security-defender-auto-provisioning-enabled-azure
-        tags:
-          mondoo.com/filter-title: Azure Subscription
-          mondoo.com/filter-icon: azure
-      - uid: mondoo-azure-security-defender-auto-provisioning-enabled-bicep
-        tags:
-          mondoo.com/filter-title: Bicep
-          mondoo.com/filter-icon: bicep
-    docs:
-      desc: |
-        This check verifies that Microsoft Defender for Cloud automatically instruments new virtual machines with the monitoring agent instead of waiting for someone to install it.
-
-        Auto-provisioning installs the monitoring agent on every virtual machine in the subscription as it appears. Set it under Microsoft Defender for Cloud, Environment settings, then the subscription, then Auto provisioning under Settings; the command line equivalent is `az security auto-provisioning-setting update --name default --auto-provision On`, and the Bicep property is `autoProvision` set to `On` on a `Microsoft.Security/autoProvisioningSettings` resource named `default`.
-
-        **Why this matters**
-
-        Enabling a Defender plan protects the machines Defender can see. Without auto-provisioning, virtual machines created after the plan was switched on receive no agent, so they sit inside a subscription that looks fully covered while producing no telemetry.
-
-        An unmonitored virtual machine generates no Defender alerts regardless of what runs on it, which makes it the most attractive host in the environment for anyone who has already gained access. Attackers with subscription-level permissions routinely deploy their own machines as command-and-control or staging infrastructure precisely because freshly created resources are the least likely to be watched. Auto-provisioning removes that advantage by covering those machines from the moment they exist.
-
-        Timing matters as well as coverage. Agents installed at creation time rather than on a periodic sweep eliminate the window during which a new machine runs unprotected, which is often the window in which it is configured and first exposed.
-
-        The agent is also what delivers vulnerability assessment and behavioral analysis data, so Defender recommendations are incomplete and misleading for any machine that lacks it. Consistent agent coverage across all compute resources satisfies the continuous monitoring requirements of common security frameworks without maintaining a manual inventory.
-      audit: |
-        **Manual Audit via Azure Portal:**
-
-        1. Navigate to **Microsoft Defender for Cloud** in the Azure Portal.
-        2. Select **Environment settings** and choose the subscription.
-        3. Select **Auto provisioning** under **Settings**.
-        4. Verify that the Log Analytics agent or Azure Monitor agent auto-provisioning is set to **On**.
-
-        **Automated Audit with Azure CLI:**
-
-        ```bash
-        az security auto-provisioning-setting show --name default --query "autoProvision"
-        ```
-      remediation:
-        - id: portal
-          desc: |
-            To ensure auto-provisioning of the monitoring agent is enabled using the Azure Portal:
-
-            1. Navigate to **Microsoft Defender for Cloud** in the Azure Portal.
-            2. Select **Environment settings** and choose the subscription.
-            3. Select **Auto provisioning** under **Settings**.
-            4. Set the monitoring agent auto-provisioning to **On**.
-            5. Select **Save**.
-        - id: cli
-          desc: |
-            To ensure auto-provisioning of the monitoring agent is enabled using the Azure CLI:
-
-            ```bash
-            az security auto-provisioning-setting update --name default --auto-provision On
-            ```
-        # No Terraform remediation: the azurerm provider removed `azurerm_security_center_auto_provisioning` in 5.0 after Microsoft retired the Log Analytics agent it provisioned. The setting is still readable through the API, so the runtime and Bicep variants remain.
-        - id: bicep
-          desc: |
-            To ensure auto-provisioning of the monitoring agent is enabled in Bicep:
-
-            ```bicep
-            targetScope = 'subscription'
-
-            resource autoProvisioning 'Microsoft.Security/autoProvisioningSettings@2017-08-01-preview' = {
-              name: 'default'
-              properties: {
-                autoProvision: 'On'
-              }
-            }
-            ```
-    refs:
-      - url: https://learn.microsoft.com/en-us/azure/defender-for-cloud/monitoring-components
-        title: Auto provisioning agents and extensions from Microsoft Defender for Cloud
-  - uid: mondoo-azure-security-defender-auto-provisioning-enabled-azure
-    filters: |
-      asset.platform == "azure"
-    mql: |
-      azure.subscription.cloudDefender.monitoringAgentAutoProvision == true
-  - uid: mondoo-azure-security-defender-auto-provisioning-enabled-bicep
-    filters: asset.platform == "bicep" && bicep.resources.any(type == "Microsoft.Security/autoProvisioningSettings")
-    mql: |
-      bicep.resources.where(type == "Microsoft.Security/autoProvisioningSettings").all(
-        properties["autoProvision"] == "On"
-      )
   - uid: mondoo-azure-security-aks-rbac-enabled
     title: Ensure RBAC is enabled on Azure Kubernetes Service clusters
     impact: 80
@@ -21293,7 +21192,7 @@ queries:
         **Automated Audit with Azure CLI:**
 
         ```bash
-        az security setting show --name WDATP --query "kind"
+        az security setting show --name WDATP --query "enabled"
         ```
       remediation:
         - id: portal
@@ -23965,10 +23864,8 @@ queries:
     filters: |
       asset.platform == "azure-sql-server"
     mql: |
-      azure.subscription.sql.server.publicNetworkAccess == "Disabled"
-      ||
-      azure.subscription.sql.server.virtualNetworkRules != empty ||
-      azure.subscription.sql.server.firewallRules != empty
+      azure.subscription.sql.server.publicNetworkAccess == "Disabled" ||
+      azure.subscription.sql.server.firewallRules.none(startIpAddress == "0.0.0.0" && endIpAddress == "255.255.255.255")
   - uid: mondoo-azure-security-ensure-disabled-public-access-sql-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_mssql_server")
     mql: |
@@ -35371,7 +35268,7 @@ queries:
       desc: |
         This check verifies that saved searches and query-based log alerts in a Log Analytics workspace are encrypted with a customer-managed key (CMK).
 
-        The setting is the `forceCmkForQuery` workspace property. It cannot be configured in the Azure portal and has no dedicated Azure CLI flag, so it is set by patching the property directly with `az resource update --set properties.features.forceCmkForQuery=true`, or by setting `cmk_for_query_forced = true` in Terraform. The workspace must already be linked to a dedicated Log Analytics cluster that has CMK configured before the property can take effect.
+        The setting is the `forceCmkForQuery` workspace property. It cannot be configured in the Azure portal and has no dedicated Azure CLI flag, so it is set by patching the property directly with `az monitor log-analytics workspace update --set forceCmkForQuery=true`, or by setting `cmk_for_query_forced = true` in Terraform. The workspace must already be linked to a dedicated Log Analytics cluster that has CMK configured before the property can take effect.
 
         **Why this matters**
 
@@ -35395,22 +35292,20 @@ queries:
             Enforcing CMK for queries cannot be configured in the Azure Portal. Link the workspace to a dedicated cluster with CMK configured, then set the property with the Azure CLI:
 
             ```bash
-            az resource update \
-              --resource-type Microsoft.OperationalInsights/workspaces \
-              --name <WorkspaceName> \
+            az monitor log-analytics workspace update \
+              --workspace-name <WorkspaceName> \
               --resource-group <ResourceGroupName> \
-              --set properties.features.forceCmkForQuery=true
+              --set forceCmkForQuery=true
             ```
         - id: cli
           desc: |
             Enforcing CMK for queries requires the workspace to be linked to a dedicated Log Analytics cluster with CMK configured. There is no dedicated CLI flag for `forceCmkForQuery`; patch the workspace property directly:
 
             ```bash
-            az resource update \
-              --resource-type Microsoft.OperationalInsights/workspaces \
-              --name <WorkspaceName> \
+            az monitor log-analytics workspace update \
+              --workspace-name <WorkspaceName> \
               --resource-group <ResourceGroupName> \
-              --set properties.features.forceCmkForQuery=true
+              --set forceCmkForQuery=true
             ```
 
             Ensure the workspace is linked to a dedicated cluster that has CMK enabled before running this command.
@@ -48172,6 +48067,8 @@ queries:
         It also keeps separation of duties legible. When the set of identities holding standing privilege is small and every entry has an end date, an access review is a short and meaningful exercise rather than an inventory of historical decisions.
 
         Under Settings for each privileged role, disable "Allow permanent active assignment" so future grants must be time-bound. This check evaluates active assignments only; eligible assignments are already bounded by their activation window and are deliberately not flagged.
+
+        The schedule list includes every active role assignment at, above, and below the subscription, including ones made outside Privileged Identity Management, so it is never empty when the data can be read: the identity running the scan holds one itself. An empty list means the schedules could not be read, most often because the tenant has no Microsoft Entra ID P2 or Governance license. Without one, every assignment is permanent and none can be time-bound, so the check fails rather than passing on an empty list.
       audit: |
         ### Audit via Console
 
@@ -48267,6 +48164,7 @@ queries:
   - uid: mondoo-azure-security-pim-active-assignments-time-bound-azure
     filters: asset.platform == "azure"
     mql: |
+      azure.subscription.iam.roleAssignmentSchedules != empty
       azure.subscription.iam.roleAssignmentSchedules
         .where(assignmentType == "Assigned")
         .all(endDateTime != empty)
