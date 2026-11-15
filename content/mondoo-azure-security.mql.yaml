@@ -25700,7 +25700,7 @@ queries:
       desc: |
         This check verifies that the minimum protocol version negotiated by an Application Gateway is TLS 1.2 or later, on the gateway itself and on every SSL profile its listeners can use.
 
-        The gateway-wide SSL policy appears under **SSL settings** in the portal and is set with `az network application-gateway ssl-policy set` or through the `ssl_policy` block. It passes when it sets a minimum protocol version of `TLSv1_2` or `TLSv1_3`, when it selects the predefined policy `AppGwSslPolicy20170401S`, `AppGwSslPolicy20220101`, or `AppGwSslPolicy20220101S`, or when it is left unset, because Azure then applies its default `AppGwSslPolicy20220101`. An SSL profile overrides the gateway policy for the listeners it is attached to, so each profile must meet the same floor. Azure rejects a gateway policy below TLS 1.2, but it still accepts an SSL profile with a minimum version of `TLSv1_1`.
+        The gateway-wide SSL policy appears under **SSL settings** in the portal and is set with `az network application-gateway ssl-policy set` or through the `ssl_policy` block. It passes when it sets a minimum protocol version of `TLSv1_2` or `TLSv1_3`, when it selects the predefined policy `AppGwSslPolicy20170401S`, `AppGwSslPolicy20220101`, or `AppGwSslPolicy20220101S`, or when it is left unset on a `Standard_v2` or `WAF_v2` gateway, because Azure then applies its default `AppGwSslPolicy20220101`. Microsoft documents that default for API version 2023-02-01 and later, and `AppGwSslPolicy20150501`, which allows TLS 1.0, for earlier API versions, so the Terraform and Bicep versions of this check require an explicit policy on any other SKU, and the Bicep version also requires an API version of 2023-02-01 or later before it accepts an unset policy. An SSL profile overrides the gateway policy for the listeners it is attached to, so each profile must meet the same floor. Azure rejects a gateway policy below TLS 1.2, but it still accepts an SSL profile with a minimum version of `TLSv1_1`.
 
         **Why this matters**
 
@@ -25870,6 +25870,10 @@ queries:
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_application_gateway")
     mql: |
       terraform.resources("azurerm_application_gateway").all(
+        blocks.where(type == "ssl_policy") != empty ||
+        blocks.where(type == "sku").any(arguments['name'] == "Standard_v2" || arguments['name'] == "WAF_v2")
+      )
+      terraform.resources("azurerm_application_gateway").all(
         blocks.where(type == "ssl_policy").all(
           arguments['min_protocol_version'] == "TLSv1_2" || arguments['min_protocol_version'] == "TLSv1_3" ||
           arguments['policy_name'] == "AppGwSslPolicy20170401S" ||
@@ -25888,6 +25892,10 @@ queries:
   - uid: mondoo-azure-security-appgw-min-tls-version-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_application_gateway")
     mql: |
+      terraform.plan.resourceChanges.where(type == "azurerm_application_gateway").all(
+        change.after['ssl_policy'] != empty ||
+        change.after['sku'].any(_['name'] == "Standard_v2" || _['name'] == "WAF_v2")
+      )
       terraform.plan.resourceChanges.where(type == "azurerm_application_gateway").all(
         change.after['ssl_policy'].all(
           _['min_protocol_version'] == "TLSv1_2" || _['min_protocol_version'] == "TLSv1_3" ||
@@ -25908,6 +25916,10 @@ queries:
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_application_gateway")
     mql: |
       terraform.state.resources.where(type == "azurerm_application_gateway").all(
+        values['ssl_policy'] != empty ||
+        values['sku'].any(_['name'] == "Standard_v2" || _['name'] == "WAF_v2")
+      )
+      terraform.state.resources.where(type == "azurerm_application_gateway").all(
         values['ssl_policy'].all(
           _['min_protocol_version'] == "TLSv1_2" || _['min_protocol_version'] == "TLSv1_3" ||
           _['policy_name'] == "AppGwSslPolicy20170401S" ||
@@ -25926,6 +25938,11 @@ queries:
   - uid: mondoo-azure-security-appgw-min-tls-version-bicep
     filters: asset.platform == "bicep" && bicep.resources.any(type == "Microsoft.Network/applicationGateways")
     mql: |
+      bicep.resources.where(type == "Microsoft.Network/applicationGateways").all(
+        properties["sslPolicy"] != empty ||
+        properties["sku"]["name"] == "Standard_v2" && apiVersion >= "2023-02-01" ||
+        properties["sku"]["name"] == "WAF_v2" && apiVersion >= "2023-02-01"
+      )
       bicep.resources.where(type == "Microsoft.Network/applicationGateways").all(
         properties["sslPolicy"] == empty ||
         properties["sslPolicy"]["minProtocolVersion"] == "TLSv1_2" ||
@@ -25998,7 +26015,7 @@ queries:
 
         PCI DSS and NIST guidance prohibit these suites outright, and a gateway offering them will fail an external scan however strong the rest of the configuration is.
 
-        Predefined policies such as `AppGwSslPolicy20220101` already exclude them and are usually a better starting point than a hand-written list. The check reads the cipher list of the gateway policy and of every SSL profile, since a profile overrides the gateway policy for the listeners it is attached to. A predefined policy, or no policy at all, names no suites of its own, and the policies Azure still accepts exclude these families.
+        Predefined policies such as `AppGwSslPolicy20220101` already exclude them and are usually a better starting point than a hand-written list. The check reads the cipher list of the gateway policy and of every SSL profile, since a profile overrides the gateway policy for the listeners it is attached to. A predefined policy names no suites of its own, and the policies Azure still accepts exclude these families. An unset policy passes only on a `Standard_v2` or `WAF_v2` gateway, where Azure applies its default `AppGwSslPolicy20220101` for API version 2023-02-01 and later; the Terraform and Bicep versions of this check require an explicit policy on any other SKU, and the Bicep version also requires that API version.
       audit: |
         ### Audit via Portal
 
@@ -26149,6 +26166,10 @@ queries:
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_application_gateway")
     mql: |
       terraform.resources("azurerm_application_gateway").all(
+        blocks.where(type == "ssl_policy") != empty ||
+        blocks.where(type == "sku").any(arguments['name'] == "Standard_v2" || arguments['name'] == "WAF_v2")
+      )
+      terraform.resources("azurerm_application_gateway").all(
         blocks.where(type == "ssl_policy").all(
           arguments['cipher_suites'] == empty ||
           arguments['cipher_suites'].none(_ == /RC4|3DES|NULL|EXPORT/)
@@ -26164,6 +26185,10 @@ queries:
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_application_gateway")
     mql: |
       terraform.plan.resourceChanges.where(type == "azurerm_application_gateway").all(
+        change.after['ssl_policy'] != empty ||
+        change.after['sku'].any(_['name'] == "Standard_v2" || _['name'] == "WAF_v2")
+      )
+      terraform.plan.resourceChanges.where(type == "azurerm_application_gateway").all(
         change.after['ssl_policy'].all(
           _['cipher_suites'] == empty || _['cipher_suites'].none(_ == /RC4|3DES|NULL|EXPORT/)
         ) &&
@@ -26177,6 +26202,10 @@ queries:
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_application_gateway")
     mql: |
       terraform.state.resources.where(type == "azurerm_application_gateway").all(
+        values['ssl_policy'] != empty ||
+        values['sku'].any(_['name'] == "Standard_v2" || _['name'] == "WAF_v2")
+      )
+      terraform.state.resources.where(type == "azurerm_application_gateway").all(
         values['ssl_policy'].all(
           _['cipher_suites'] == empty || _['cipher_suites'].none(_ == /RC4|3DES|NULL|EXPORT/)
         ) &&
@@ -26189,6 +26218,11 @@ queries:
   - uid: mondoo-azure-security-appgw-no-weak-ciphers-bicep
     filters: asset.platform == "bicep" && bicep.resources.any(type == "Microsoft.Network/applicationGateways")
     mql: |
+      bicep.resources.where(type == "Microsoft.Network/applicationGateways").all(
+        properties["sslPolicy"] != empty ||
+        properties["sku"]["name"] == "Standard_v2" && apiVersion >= "2023-02-01" ||
+        properties["sku"]["name"] == "WAF_v2" && apiVersion >= "2023-02-01"
+      )
       bicep.resources.where(type == "Microsoft.Network/applicationGateways").all(
         properties["sslPolicy"]["cipherSuites"] == empty ||
         properties["sslPolicy"]["cipherSuites"].none(_ == /RC4|3DES|NULL|EXPORT/)
@@ -26252,7 +26286,7 @@ queries:
       desc: |
         This check verifies that every internet-facing address in the subscription is covered by adaptive denial-of-service mitigation, either directly or through the virtual network it belongs to.
 
-        Azure provides only basic infrastructure-level DDoS protection by default; the Standard tier with its adaptive tuning, telemetry, and active mitigation must be enabled. An address passes when its protection mode is `Enabled`, or when it inherits protection from its virtual network and a DDoS protection plan lists it among the addresses it protects. `VirtualNetworkInherited` is the default mode for every Standard public IP, so on its own it means nothing: an address that inherits from a virtual network without a plan has only the basic infrastructure protection and fails. In the portal the field is DDoS protection under the address's Properties. From the CLI, `az network public-ip update --ddos-protection-mode Enabled --ddos-protection-plan` attaches it directly, while `az network vnet update --ddos-protection-plan --ddos-protection true` covers addresses that inherit from the network. In Terraform the argument is `ddos_protection_mode`; in Bicep it is `ddosSettings.protectionMode`.
+        Azure provides only basic infrastructure-level DDoS protection by default; the Standard tier with its adaptive tuning, telemetry, and active mitigation must be enabled. An address passes when its protection mode is `Enabled`, or when it inherits protection from its virtual network and a DDoS protection plan lists it among the addresses it protects. `VirtualNetworkInherited` is the default mode for every Standard public IP, so on its own it means nothing: an address that inherits from a virtual network without a plan has only the basic infrastructure protection and fails. In the portal the field is DDoS protection under the address's Properties. From the CLI, `az network public-ip update --ddos-protection-mode Enabled --ddos-protection-plan` attaches it directly, while `az network vnet update --ddos-protection-plan --ddos-protection true` covers addresses that inherit from the network. In Terraform the argument is `ddos_protection_mode`; in Bicep it is `ddosSettings.protectionMode`. A template does not record which virtual network an address will be attached to, so the Terraform and Bicep versions of this check accept an inherited address only when the template declares exactly one virtual network and that network has an enabled DDoS protection plan. A template with several virtual networks must set the mode to `Enabled` on each address to pass; the live check reads the addresses each plan actually protects.
 
         **Why this matters**
 
@@ -26362,7 +26396,8 @@ queries:
       terraform.resources("azurerm_public_ip").all(
         arguments['ddos_protection_mode'] == "Enabled" ||
         arguments['ddos_protection_mode'] != "Disabled" &&
-        terraform.resources("azurerm_virtual_network").any(blocks.any(type == "ddos_protection_plan" && arguments['enable'] != false))
+        terraform.resources("azurerm_virtual_network").length == 1 &&
+        terraform.resources("azurerm_virtual_network").all(blocks.any(type == "ddos_protection_plan" && arguments['enable'] != false))
       )
   - uid: mondoo-azure-security-public-ip-ddos-protection-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_public_ip")
@@ -26370,7 +26405,8 @@ queries:
       terraform.plan.resourceChanges.where(type == "azurerm_public_ip").all(
         change.after['ddos_protection_mode'] == "Enabled" ||
         change.after['ddos_protection_mode'] == "VirtualNetworkInherited" &&
-        terraform.plan.resourceChanges.any(type == "azurerm_virtual_network" && change.after['ddos_protection_plan'] != empty && change.after['ddos_protection_plan'].any(_['enable'] == true))
+        terraform.plan.resourceChanges.where(type == "azurerm_virtual_network").length == 1 &&
+        terraform.plan.resourceChanges.where(type == "azurerm_virtual_network").all(change.after['ddos_protection_plan'] != empty && change.after['ddos_protection_plan'].any(_['enable'] == true))
       )
   - uid: mondoo-azure-security-public-ip-ddos-protection-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_public_ip")
@@ -26378,7 +26414,8 @@ queries:
       terraform.state.resources.where(type == "azurerm_public_ip").all(
         values['ddos_protection_mode'] == "Enabled" ||
         values['ddos_protection_mode'] == "VirtualNetworkInherited" &&
-        terraform.state.resources.any(type == "azurerm_virtual_network" && values['ddos_protection_plan'] != empty && values['ddos_protection_plan'].any(_['enable'] == true))
+        terraform.state.resources.where(type == "azurerm_virtual_network").length == 1 &&
+        terraform.state.resources.where(type == "azurerm_virtual_network").all(values['ddos_protection_plan'] != empty && values['ddos_protection_plan'].any(_['enable'] == true))
       )
   - uid: mondoo-azure-security-public-ip-ddos-protection-bicep
     filters: asset.platform == "bicep" && bicep.resources.any(type == "Microsoft.Network/publicIPAddresses")
@@ -26386,7 +26423,8 @@ queries:
       bicep.resources.where(type == "Microsoft.Network/publicIPAddresses").all(
         properties["ddosSettings"]["protectionMode"] == "Enabled" ||
         properties["ddosSettings"]["protectionMode"] != "Disabled" &&
-        bicep.resources.any(type == "Microsoft.Network/virtualNetworks" && properties["enableDdosProtection"] == true)
+        bicep.resources.where(type == "Microsoft.Network/virtualNetworks").length == 1 &&
+        bicep.resources.where(type == "Microsoft.Network/virtualNetworks").all(properties["enableDdosProtection"] == true)
       )
   - uid: mondoo-azure-security-public-ip-ddos-protection-azure
     filters: |
@@ -52162,7 +52200,7 @@ queries:
       desc: |
         This check verifies that no allow rule on an Azure Firewall permits every source to reach every destination.
 
-        Network rules live in rule collections inside a firewall policy, reachable from **Network rules** on the policy, and each rule names source and destination addresses. The check fails a rule whose action is `Allow` and whose source and destination both contain `*`, the wildcard that matches every address.
+        Network rules live in rule collections inside a firewall policy, reachable from **Network rules** on the policy, and each rule names source and destination addresses. The check fails an `Allow` rule whose source and destination both match every address. An address list matches every address when any entry is `*`, `0.0.0.0/0`, `::/0`, or `Any`, and an IP group does when its addresses include one of those. An application rule fails when it admits any source to the bare wildcard FQDN `*`. The check covers rule collections in the attached firewall policy and classic rules defined on the firewall itself. The Terraform and Bicep versions read address lists only, because an IP group is referenced by an ID the template does not resolve.
 
         **Why this matters**
 
@@ -52274,19 +52312,35 @@ queries:
     filters: |
       asset.platform == "azure-firewall"
     mql: |
+      anyIpGroups = azure.subscription.networkService.ipGroups.where(ipAddresses.any(_ == /^(\*|0\.0\.0\.0\/0|::\/0|any)$/i)).map(id.downcase)
       azure.subscription.networkService.firewall.networkRules.where(action == "Allow").all(
-        rules.none(
-          _['sourceAddresses'] != empty && _['sourceAddresses'].contains("*") &&
-          _['destinationAddresses'] != empty && _['destinationAddresses'].contains("*")
+        rules.where(
+          _['sourceAddresses'] != empty && _['sourceAddresses'].any(_ == /^(\*|0\.0\.0\.0\/0|::\/0|any)$/i) ||
+          _['sourceIpGroups'] != empty && _['sourceIpGroups'].any(downcase.in(anyIpGroups))
+        ).none(
+          _['destinationAddresses'] != empty && _['destinationAddresses'].any(_ == /^(\*|0\.0\.0\.0\/0|::\/0|any)$/i) ||
+          _['destinationIpGroups'] != empty && _['destinationIpGroups'].any(downcase.in(anyIpGroups))
+        )
+      )
+      azure.subscription.networkService.firewall.applicationRules.where(action == "Allow").all(
+        rules.where(
+          _['sourceAddresses'] != empty && _['sourceAddresses'].any(_ == /^(\*|0\.0\.0\.0\/0|::\/0|any)$/i) ||
+          _['sourceIpGroups'] != empty && _['sourceIpGroups'].any(downcase.in(anyIpGroups))
+        ).none(
+          _['targetFqdns'] != empty && _['targetFqdns'].any(_ == /^\*$/)
         )
       )
       azure.subscription.networkService.firewall.policy == empty ||
       azure.subscription.networkService.firewall.policy.ruleCollectionGroups.all(
         ruleCollections.where(_["ruleCollectionType"] == "FirewallPolicyFilterRuleCollection" && _["action"]["type"] == "Allow").all(
           _["rules"] == empty ||
-          _["rules"].none(
-            _["sourceAddresses"] != empty && _["sourceAddresses"].contains("*") &&
-            _["destinationAddresses"] != empty && _["destinationAddresses"].contains("*")
+          _["rules"].where(
+            _["sourceAddresses"] != empty && _["sourceAddresses"].any(_ == /^(\*|0\.0\.0\.0\/0|::\/0|any)$/i) ||
+            _["sourceIpGroups"] != empty && _["sourceIpGroups"].any(downcase.in(anyIpGroups))
+          ).none(
+            _["destinationAddresses"] != empty && _["destinationAddresses"].any(_ == /^(\*|0\.0\.0\.0\/0|::\/0|any)$/i) ||
+            _["destinationIpGroups"] != empty && _["destinationIpGroups"].any(downcase.in(anyIpGroups)) ||
+            _["ruleType"] == "ApplicationRule" && _["targetFqdns"] != empty && _["targetFqdns"].any(_ == /^\*$/)
           )
         )
       )
@@ -52295,12 +52349,17 @@ queries:
       asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_firewall_policy_rule_collection_group")
     mql: |
       terraform.resources("azurerm_firewall_policy_rule_collection_group").all(
-        blocks.where(type == "network_rule_collection").where(arguments['action'] == "Allow").all(
-          blocks.where(type == "rule").all(
-            arguments['source_addresses'] == empty ||
-            arguments['source_addresses'].none(_ == "*") ||
-            arguments['destination_addresses'] == empty ||
-            arguments['destination_addresses'].none(_ == "*")
+        blocks.where(type == "network_rule_collection" && arguments['action'] == "Allow").all(
+          blocks.where(type == "rule" && arguments['source_addresses'] != empty && arguments['source_addresses'].any(_ == /^(\*|0\.0\.0\.0\/0|::\/0|any)$/i)).none(
+            arguments['destination_addresses'] != empty && arguments['destination_addresses'].any(_ == /^(\*|0\.0\.0\.0\/0|::\/0|any)$/i)
+          )
+        )
+      )
+      terraform.resources("azurerm_firewall_policy_rule_collection_group").all(
+        blocks.where(type == "application_rule_collection" && arguments['action'] == "Allow").all(
+          blocks.where(type == "rule" && arguments['source_addresses'] != empty && arguments['source_addresses'].any(_ == /^(\*|0\.0\.0\.0\/0|::\/0|any)$/i)).none(
+            arguments['destination_fqdns'] != empty && arguments['destination_fqdns'].any(_ == /^\*$/) ||
+            arguments['destination_addresses'] != empty && arguments['destination_addresses'].any(_ == /^(\*|0\.0\.0\.0\/0|::\/0|any)$/i)
           )
         )
       )
@@ -52309,14 +52368,21 @@ queries:
       asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_firewall_policy_rule_collection_group")
     mql: |
       terraform.plan.resourceChanges.where(type == "azurerm_firewall_policy_rule_collection_group").all(
-        change.after['network_rule_collection'] == null ||
         change.after['network_rule_collection'] == empty ||
         change.after['network_rule_collection'].where(_['action'] == "Allow").all(
-          _['rule'] == null ||
           _['rule'] == empty ||
-          _['rule'].none(
-            _['source_addresses'] != empty && _['source_addresses'].contains("*") &&
-            _['destination_addresses'] != empty && _['destination_addresses'].contains("*")
+          _['rule'].where(_['source_addresses'] != empty && _['source_addresses'].any(_ == /^(\*|0\.0\.0\.0\/0|::\/0|any)$/i)).none(
+            _['destination_addresses'] != empty && _['destination_addresses'].any(_ == /^(\*|0\.0\.0\.0\/0|::\/0|any)$/i)
+          )
+        )
+      )
+      terraform.plan.resourceChanges.where(type == "azurerm_firewall_policy_rule_collection_group").all(
+        change.after['application_rule_collection'] == empty ||
+        change.after['application_rule_collection'].where(_['action'] == "Allow").all(
+          _['rule'] == empty ||
+          _['rule'].where(_['source_addresses'] != empty && _['source_addresses'].any(_ == /^(\*|0\.0\.0\.0\/0|::\/0|any)$/i)).none(
+            _['destination_fqdns'] != empty && _['destination_fqdns'].any(_ == /^\*$/) ||
+            _['destination_addresses'] != empty && _['destination_addresses'].any(_ == /^(\*|0\.0\.0\.0\/0|::\/0|any)$/i)
           )
         )
       )
@@ -52325,14 +52391,21 @@ queries:
       asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_firewall_policy_rule_collection_group")
     mql: |
       terraform.state.resources.where(type == "azurerm_firewall_policy_rule_collection_group").all(
-        values['network_rule_collection'] == null ||
         values['network_rule_collection'] == empty ||
         values['network_rule_collection'].where(_['action'] == "Allow").all(
-          _['rule'] == null ||
           _['rule'] == empty ||
-          _['rule'].none(
-            _['source_addresses'] != empty && _['source_addresses'].contains("*") &&
-            _['destination_addresses'] != empty && _['destination_addresses'].contains("*")
+          _['rule'].where(_['source_addresses'] != empty && _['source_addresses'].any(_ == /^(\*|0\.0\.0\.0\/0|::\/0|any)$/i)).none(
+            _['destination_addresses'] != empty && _['destination_addresses'].any(_ == /^(\*|0\.0\.0\.0\/0|::\/0|any)$/i)
+          )
+        )
+      )
+      terraform.state.resources.where(type == "azurerm_firewall_policy_rule_collection_group").all(
+        values['application_rule_collection'] == empty ||
+        values['application_rule_collection'].where(_['action'] == "Allow").all(
+          _['rule'] == empty ||
+          _['rule'].where(_['source_addresses'] != empty && _['source_addresses'].any(_ == /^(\*|0\.0\.0\.0\/0|::\/0|any)$/i)).none(
+            _['destination_fqdns'] != empty && _['destination_fqdns'].any(_ == /^\*$/) ||
+            _['destination_addresses'] != empty && _['destination_addresses'].any(_ == /^(\*|0\.0\.0\.0\/0|::\/0|any)$/i)
           )
         )
       )
@@ -52344,9 +52417,9 @@ queries:
         properties["ruleCollections"] == empty ||
         properties["ruleCollections"].where(_["action"]["type"] == "Allow").all(
           _["rules"] == empty ||
-          _["rules"].none(
-            _["sourceAddresses"] != empty && _["sourceAddresses"].contains("*") &&
-            _["destinationAddresses"] != empty && _["destinationAddresses"].contains("*")
+          _["rules"].where(_["sourceAddresses"] != empty && _["sourceAddresses"].any(_ == /^(\*|0\.0\.0\.0\/0|::\/0|any)$/i)).none(
+            _["destinationAddresses"] != empty && _["destinationAddresses"].any(_ == /^(\*|0\.0\.0\.0\/0|::\/0|any)$/i) ||
+            _["targetFqdns"] != empty && _["targetFqdns"].any(_ == /^\*$/)
           )
         )
       )
