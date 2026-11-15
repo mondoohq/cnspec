@@ -30601,6 +30601,8 @@ queries:
 
         A workspace created with a customer-managed key stays pending until the key is activated, and only then encrypts with it. The `cmk.status` field reads `AwaitingUserAction` while the workspace is pending and `Consistent` once the key is active, and this check requires `Consistent`. In Terraform the key is activated by an `azurerm_synapse_workspace_key` resource with `active = true`, and in Bicep by a `Microsoft.Synapse/workspaces/keys` resource with `isActiveCMK` set to `true`.
 
+        The Terraform and Bicep versions of this check match each workspace to its own active key. In Terraform the key's `synapse_workspace_id` must reference the workspace directly, as `azurerm_synapse_workspace.<name>.id`, and the plan version also needs `active` set to a literal `true`. A key credits a workspace only when that reference names exactly one workspace. A key linked any other way, such as through a conditional that can pick between workspaces, a literal resource ID, a variable, a module output, or `count`/`for_each` indexing, credits no workspace, so those workspaces fail rather than passing on a link the check cannot follow. In Bicep the key must name the workspace as its `parent`, carry the workspace name as its name prefix, or be nested inside the workspace.
+
         **Why this matters**
 
         The key covers the workspace's data at rest across dedicated SQL pools, serverless SQL pools, and Apache Spark pools, which is to say most of what the organization has centralized for analysis. Deciding who holds that key decides who can ultimately decrypt it.
@@ -30787,28 +30789,42 @@ queries:
       terraform.resources("azurerm_synapse_workspace").all(
         blocks.where(type == "customer_managed_key") != empty
       )
-      terraform.resources("azurerm_synapse_workspace_key").any(arguments['active'] == true)
+      activeWorkspaces = terraform.resources("azurerm_synapse_workspace_key").where(arguments["active"] == true && arguments["synapse_workspace_id"] == /^azurerm_synapse_workspace\.[^.\[]+\.id$/).map(arguments["synapse_workspace_id"].split(".")[1])
+      terraform.resources("azurerm_synapse_workspace").all(
+        labels[1].in(activeWorkspaces)
+      )
   - uid: mondoo-azure-security-synapse-cmk-encryption-terraform-plan
     filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_synapse_workspace")
     mql: |
       terraform.plan.resourceChanges.where(type == "azurerm_synapse_workspace").all(
-        change.after['customer_managed_key'] != empty
+        change.after["customer_managed_key"] != empty
       )
-      terraform.plan.resourceChanges.where(type == "azurerm_synapse_workspace_key").any(change.after['active'] == true)
+      activeWorkspaces = terraform.plan.configuration.resources.where(type == "azurerm_synapse_workspace_key" && expressions["active"]["constant_value"] == true && expressions["synapse_workspace_id"]["references"].length == 2 && expressions["synapse_workspace_id"]["references"][0] == /^azurerm_synapse_workspace\.[^.\[]+\.id$/ && expressions["synapse_workspace_id"]["references"][1] == /^azurerm_synapse_workspace\.[^.\[]+$/).map(expressions["synapse_workspace_id"]["references"][1].trim)
+      terraform.plan.resourceChanges.where(type == "azurerm_synapse_workspace").all(
+        address.in(activeWorkspaces)
+      )
   - uid: mondoo-azure-security-synapse-cmk-encryption-terraform-state
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_synapse_workspace")
     mql: |
       terraform.state.resources.where(type == "azurerm_synapse_workspace").all(
-        values['customer_managed_key'] != empty
+        values["customer_managed_key"] != empty
       )
-      terraform.state.resources.where(type == "azurerm_synapse_workspace_key").any(values['active'] == true)
+      activeWorkspaces = terraform.state.resources.where(type == "azurerm_synapse_workspace_key" && values["active"] == true).map(values["synapse_workspace_id"].downcase)
+      terraform.state.resources.where(type == "azurerm_synapse_workspace").all(
+        values["id"].downcase.in(activeWorkspaces)
+      )
   - uid: mondoo-azure-security-synapse-cmk-encryption-bicep
     filters: asset.platform == "bicep" && bicep.resources.any(type == "Microsoft.Synapse/workspaces")
     mql: |
       bicep.resources.where(type == "Microsoft.Synapse/workspaces").all(
         properties["encryption"]["cmk"] != empty
       )
-      bicep.resources.where(type == "Microsoft.Synapse/workspaces/keys").any(properties["isActiveCMK"] == true)
+      activeKeys = bicep.resources.where(type == "Microsoft.Synapse/workspaces/keys" && properties["isActiveCMK"] == true)
+      byParent = activeKeys.map(parent)
+      byName = activeKeys.map(name.split("/")[0])
+      bicep.resources.where(type == "Microsoft.Synapse/workspaces").all(
+        symbolicName.in(byParent) || name.in(byName) || resources.any(type == "keys" && properties["isActiveCMK"] == true)
+      )
   - uid: mondoo-azure-security-acr-admin-user-disabled
     title: Ensure ACR admin user is disabled
     impact: 80
