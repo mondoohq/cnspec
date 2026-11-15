@@ -90706,9 +90706,12 @@ queries:
     filters: asset.platform == "aws-directoryservice-directory"
     mql: |
       aws.directoryservice.directory.shareMethod != "HANDSHAKE"
+      aws.directoryservice.directory.sharedDirectories.none(
+        shareMethod == "HANDSHAKE" && shareStatus != /^(Deleted|Deleting|Rejected)$/
+      )
     docs:
       desc: |
-        This check verifies that AWS Directory Service directories are not shared with AWS accounts outside your organization, by requiring the share method not to be `HANDSHAKE`. Directory sharing supports two methods: `ORGANIZATIONS`, which shares within your organization, and `HANDSHAKE`, which shares with any AWS account outside it.
+        This check verifies that AWS Directory Service directories are not shared through the `HANDSHAKE` method. On a directory this account owns, it fails any share to another account that uses `HANDSHAKE` and has not been rejected or deleted. On a directory shared into this account, it fails when that share used `HANDSHAKE`. Directory sharing supports two methods: `ORGANIZATIONS`, which shares within your organization, and `HANDSHAKE`, which shares with any AWS account, including accounts outside it.
 
         Shares are reviewed on the **Scale & share** tab of the directory, and removed with `aws ds unshare-directory --unshare-target Id=111122223333,Type=ACCOUNT`.
 
@@ -90732,14 +90735,22 @@ queries:
 
         ### Audit via CLI
 
-        1. Inspect the share method reported for each directory:
+        1. List the shares of a directory this account owns:
+
+        ```bash
+        aws ds describe-shared-directories \
+          --owner-directory-id <directory-id> \
+          --query "SharedDirectories[*].{Account:SharedAccountId,Method:ShareMethod,Status:ShareStatus}"
+        ```
+
+        2. For a directory shared into this account, inspect the share method it reports:
 
         ```bash
         aws ds describe-directories \
           --query "DirectoryDescriptions[*].{Id:DirectoryId,ShareMethod:ShareMethod,ShareStatus:ShareStatus}"
         ```
 
-        A passing directory reports a `ShareMethod` other than `HANDSHAKE` (empty or `ORGANIZATIONS`). A failing directory reports `HANDSHAKE`.
+        A passing directory has no share with `ShareMethod` `HANDSHAKE` other than ones in `Rejected`, `Deleting`, or `Deleted` status, and does not itself report `HANDSHAKE`. A failing directory has such a share or reports `HANDSHAKE`.
       remediation:
         - id: console
           desc: |
