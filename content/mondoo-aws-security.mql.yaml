@@ -5740,7 +5740,7 @@ queries:
         title: Amazon VPC Security Best Practices
   - uid: mondoo-aws-security-vpc-bpa-enabled-aws
     filters: asset.platform == "aws-vpc"
-    mql: aws.vpc.internetGatewayBlockMode != "off"
+    mql: aws.vpc.internetGatewayBlockMode == "block-bidirectional" || aws.vpc.internetGatewayBlockMode == "block-ingress"
   - uid: mondoo-aws-security-vpc-bpa-enabled-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.where(nameLabel == "aws_vpc" || nameLabel == "aws_vpc_block_public_access_options") != empty
     mql: |
@@ -5956,7 +5956,6 @@ queries:
     mql: |
       aws.vpc.flowLogs.any(
         status == "ACTIVE" &&
-        destination != empty &&
         destinationType == "cloud-watch-logs" &&
         deliverLogsStatus == "SUCCESS" &&
         trafficType.in(["REJECT", "ALL"])
@@ -9049,7 +9048,7 @@ queries:
   - uid: mondoo-aws-security-ebs-snapshot-public-restorable-check-aws
     filters: asset.platform == "aws-ebs-snapshot"
     mql: |
-      aws.ec2.snapshot.createVolumePermission.none(Group == "all")
+      aws.ec2.snapshot.createVolumePermissionGroups.none(_ == "all")
   - uid: mondoo-aws-security-ebs-snapshot-public-restorable-check-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_ebs_snapshot")
     mql: |
@@ -9651,7 +9650,7 @@ queries:
           mondoo.com/filter-icon: cloudformation
     docs:
       desc: |
-        This check verifies that EBS volumes use KMS encryption rather than the default EBS-managed encryption, by requiring the volume's SSE type to be `sse-kms`. A volume encrypted as `sse-ebs` is protected, but with an AWS-managed key that offers no customer control over key policies, rotation scheduling, or access auditing.
+        This check verifies that encrypted EBS volumes are encrypted with a KMS key, by requiring the volume's SSE type to be `sse-kms`, or, when EC2 omits the SSE type, a KMS key on the volume. EC2 documents the `SseType` field of a volume as reserved for future use and usually leaves it out, and every encrypted EBS volume has a KMS key, either the AWS managed `aws/ebs` key or a customer managed key. A volume encrypted with `aws/ebs` therefore passes here. The companion check in this policy that requires a customer managed key is the one that fails it.
 
         The encryption type cannot be changed in place. Snapshot the volume, copy the snapshot with a customer managed KMS key, create a volume from the copy, and reattach it. `aws ec2 describe-volumes` reports the current `KmsKeyId` for each volume.
 
@@ -9670,9 +9669,9 @@ queries:
         1. Sign in to the AWS Management Console and open the EC2 console at https://console.aws.amazon.com/ec2/.
         2. In the left navigation pane, under **Elastic Block Store**, choose **Volumes**.
         3. Select a volume and view the **Details** tab.
-        4. Check the **KMS key ID** field. Volumes using KMS encryption show a KMS key ARN. Volumes using default AWS-managed EBS encryption (sse-ebs) show no KMS key or the default AWS-managed EBS key with no customer control.
+        4. Check the **KMS key ID** field.
 
-        A passing volume shows a customer-managed or AWS KMS key ARN in the KMS key ID field. A failing volume shows an empty KMS key ID or the default sse-ebs encryption.
+        A passing volume shows a KMS key ARN in the KMS key ID field, whether the key is customer managed or the AWS managed `aws/ebs` key. A failing volume is encrypted but shows no KMS key ID.
 
         ### Audit via CLI
 
@@ -9682,7 +9681,7 @@ queries:
         aws ec2 describe-volumes --query "Volumes[?State=='in-use'].{VolumeId:VolumeId,Encrypted:Encrypted,KmsKeyId:KmsKeyId,SseType:SseType}" --output table
         ```
 
-        A passing volume shows a non-empty `KmsKeyId` and `SseType` of `sse-kms`. A failing volume shows an empty `KmsKeyId` or `SseType` of `sse-ebs`.
+        A passing volume shows a non-empty `KmsKeyId`. `SseType` is usually empty, because EC2 reserves the field for future use. A failing volume shows an empty `KmsKeyId` or an `SseType` of `sse-ebs`.
       remediation:
         - id: console
           desc: |
@@ -10487,10 +10486,10 @@ queries:
       - url: https://docs.aws.amazon.com/elasticloadbalancing/latest/userguide/security.html
         title: Elastic Load Balancing Security
   - uid: mondoo-aws-security-elb-security-policy-enabled-aws
-    filters: asset.platform == "aws-elb-loadbalancer"
+    filters: asset.platform == "aws-elb-loadbalancer" && aws.elb.loadbalancer.elbType == "application"
     mql: |
-      aws.elb.loadbalancer.listenerDescriptions.all(
-        SslPolicy.in(props.allowedTlsPoliciesAlb)
+      aws.elb.loadbalancer.listeners.where(protocol == "HTTPS").all(
+        sslPolicy.in(props.allowedTlsPoliciesAlb)
       )
   - uid: mondoo-aws-security-elb-security-policy-enabled-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_lb_listener" && arguments["protocol"] == /^(HTTPS|TLS)$/)
@@ -10717,7 +10716,7 @@ queries:
       - url: https://docs.aws.amazon.com/elasticloadbalancing/latest/userguide/security.html
         title: Elastic Load Balancing Security
   - uid: mondoo-aws-security-elb-ssl-listener-aws
-    filters: asset.platform == "aws-elb-loadbalancer"
+    filters: asset.platform == "aws-elb-loadbalancer" && aws.elb.loadbalancer.elbType == "application"
     mql: |
       aws.elb.loadbalancer.listeners.all(
         protocol == "HTTPS" ||
@@ -10983,7 +10982,7 @@ queries:
       - url: https://docs.aws.amazon.com/elasticloadbalancing/latest/userguide/security.html
         title: Elastic Load Balancing Security
   - uid: mondoo-aws-security-elb-logging-enabled-aws
-    filters: asset.platform == "aws-elb-loadbalancer"
+    filters: asset.platform == "aws-elb-loadbalancer" && aws.elb.loadbalancer.elbType == "application"
     mql: |
       aws.elb.loadbalancer.attributes.any(Key == "access_logs.s3.enabled")
       aws.elb.loadbalancer.attributes.where(Key == "access_logs.s3.enabled").all(Value == true)
@@ -11161,7 +11160,7 @@ queries:
       - url: https://docs.aws.amazon.com/elasticloadbalancing/latest/userguide/security.html
         title: Elastic Load Balancing Security
   - uid: mondoo-aws-security-elb-deletion-protection-enabled-aws
-    filters: asset.platform == "aws-elb-loadbalancer"
+    filters: asset.platform == "aws-elb-loadbalancer" && aws.elb.loadbalancer.elbType != "classic"
     mql: |
       aws.elb.loadbalancer.attributes.any(Key == "deletion_protection.enabled")
       aws.elb.loadbalancer.attributes.where(Key == "deletion_protection.enabled").all(Value == true)
@@ -12679,7 +12678,7 @@ queries:
     filters: asset.platform == "aws-security-group"
     mql: |
       aws.ec2.securitygroup.ipPermissions.where(
-        fromPort <= 22 && toPort >= 22 && toPort != 0).none(
+        portRangeStart <= 22 && portRangeEnd >= 22).none(
           ipRanges.contains("0.0.0.0/0") || ipv6Ranges.contains("::/0")
         )
   - uid: mondoo-aws-security-secgroup-restricted-ssh-terraform-hcl
@@ -12918,7 +12917,7 @@ queries:
     filters: asset.platform == "aws-security-group"
     mql: |
       aws.ec2.securitygroup.ipPermissions.where(
-        fromPort <= 5903 && toPort >= 5900 && toPort != 0).none(
+        portRangeStart <= 5903 && portRangeEnd >= 5900).none(
           ipRanges.contains("0.0.0.0/0") || ipv6Ranges.contains("::/0")
         )
   - uid: mondoo-aws-security-secgroup-restricted-vnc-terraform-hcl
@@ -13155,7 +13154,7 @@ queries:
     filters: asset.platform == "aws-security-group"
     mql: |
       aws.ec2.securitygroup.ipPermissions.where(
-        fromPort <= 3389 && toPort >= 3389 && toPort != 0).none(
+        portRangeStart <= 3389 && portRangeEnd >= 3389).none(
           ipRanges.contains("0.0.0.0/0") || ipv6Ranges.contains("::/0")
         )
   - uid: mondoo-aws-security-secgroup-restricted-rdp-terraform-hcl
@@ -13420,8 +13419,7 @@ queries:
   - uid: mondoo-aws-security-secgroup-restrict-traffic-aws
     filters: asset.platform == "aws-security-group"
     mql: |
-      aws.ec2.securitygroup.ipPermissions.where(
-        fromPort == -1 && toPort == -1).none(
+      aws.ec2.securitygroup.ipPermissions.where(ipProtocol == "-1").none(
           ipRanges.contains("0.0.0.0/0") || ipv6Ranges.contains("::/0")
         )
   - uid: mondoo-aws-security-secgroup-restrict-traffic-terraform-hcl
@@ -19105,7 +19103,7 @@ queries:
         title: AWS Documentation - EFS controls
   - uid: mondoo-aws-security-efs-backup-enabled-aws
     filters: asset.platform == "aws-efs-filesystem"
-    mql: aws.efs.filesystem.backupPolicy["BackupPolicy"]["Status"] == "ENABLED"
+    mql: aws.efs.filesystem.automaticBackup.status == "ENABLED"
   - uid: mondoo-aws-security-efs-backup-enabled-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_efs_file_system")
     mql: |
@@ -19284,7 +19282,7 @@ queries:
       - url: https://docs.aws.amazon.com/securityhub/latest/userguide/elb-controls.html
         title: AWS Documentation - ELB controls
   - uid: mondoo-aws-security-elb-drop-invalid-headers-aws
-    filters: asset.platform == "aws-elb-loadbalancer"
+    filters: asset.platform == "aws-elb-loadbalancer" && aws.elb.loadbalancer.elbType == "application"
     mql: |
       aws.elb.loadbalancer.attributes
         .where(Key == "routing.http.drop_invalid_header_fields.enabled")
@@ -27528,7 +27526,7 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check verifies that AWS Systems Manager Parameter Store parameters of type `SecureString` name an explicit KMS key. SSM always encrypts `SecureString` parameters, but using the default AWS-managed key limits visibility and control over the encryption lifecycle.
+        This check verifies that AWS Systems Manager Parameter Store parameters of type `SecureString` are encrypted with a customer managed KMS key. SSM always encrypts `SecureString` parameters, but using the default AWS-managed key limits visibility and control over the encryption lifecycle.
 
         The key is specified when creating a parameter version with `aws ssm put-parameter --type SecureString --key-id <kms-key-id> --overwrite`.
 
@@ -27610,7 +27608,7 @@ queries:
   - uid: mondoo-aws-security-ssm-parameter-encryption-aws
     filters: asset.platform == "aws"
     mql: |
-      aws.ssm.parameters.where(type == "SecureString").all(kmsKey != empty)
+      aws.ssm.parameters.where(type == "SecureString").all(kmsKey != empty && kmsKey.keyManager == "CUSTOMER")
   - uid: mondoo-aws-security-ssm-parameter-encryption-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_ssm_parameter")
     mql: |
@@ -28030,7 +28028,6 @@ queries:
 
         ```bash
         aws drs describe-source-servers \
-          --filters actionRequired=NONE \
           --query "items[*].{SourceServerId:sourceServerID,Arn:arn}"
         ```
 
@@ -28106,7 +28103,7 @@ queries:
     filters: asset.platform == "aws"
     mql: |
       aws.drs.sourceServers.all(
-        replicationConfiguration.ebsEncryption != "NONE" && replicationConfiguration.ebsEncryption != ""
+        replicationConfiguration.ebsEncryption == "DEFAULT" || replicationConfiguration.ebsEncryption == "CUSTOM"
       )
   - uid: mondoo-aws-security-drs-replication-ebs-encrypted-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_drs_replication_configuration_template")
@@ -41033,7 +41030,7 @@ queries:
         title: AWS KMS Customer Managed Keys
   - uid: mondoo-aws-security-fsx-filesystem-cmk-encryption-aws
     filters: asset.platform == "aws"
-    mql: aws.fsx.fileSystems.all(kmsKey { metadata.KeyManager == "CUSTOMER" })
+    mql: aws.fsx.fileSystems.all(kmsKey != empty && kmsKey.keyManager == "CUSTOMER")
   - uid: mondoo-aws-security-fsx-filesystem-cmk-encryption-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == /^aws_fsx_(lustre|windows|ontap|openzfs)_file_system$/)
     mql: |
@@ -58507,7 +58504,7 @@ queries:
         ```bash
         aws ec2 describe-instances \
           --filters "Name=instance-state-name,Values=running" \
-          --query "Reservations[*].Instances[?PublicIpAddress!=null].{Id:InstanceId,PublicIp:PublicIpAddress,SubnetId:SubnetId}" \
+          --query "Reservations[].Instances[?PublicIpAddress!=null][].{Id:InstanceId,PublicIp:PublicIpAddress,SubnetId:SubnetId}" \
           --output table
         ```
 
@@ -64715,7 +64712,7 @@ queries:
       desc: |
         This check verifies that AWS Client VPN endpoints have at least one security group attached, so that traffic from connected VPN clients into the VPC is subject to network controls. Without one, clients can reach any resource in the associated VPC.
 
-        Security groups are applied on the **Security groups** tab of a Client VPN endpoint in the VPC console through **Apply security groups**, or with `aws ec2 modify-client-vpn-endpoint --security-group-ids <security-group-id>`.
+        Security groups are applied on the **Security groups** tab of a Client VPN endpoint in the VPC console through **Apply security groups**, or with `aws ec2 modify-client-vpn-endpoint --vpc-id <vpc-id> --security-group-ids <security-group-id>`. AWS rejects a security group change that does not name the VPC.
 
         **Why this matters**
 
@@ -64771,6 +64768,7 @@ queries:
             ```bash
             aws ec2 modify-client-vpn-endpoint \
               --client-vpn-endpoint-id <endpoint-id> \
+              --vpc-id <vpc-id> \
               --security-group-ids <security-group-id>
             ```
         - id: terraform
@@ -65189,7 +65187,7 @@ queries:
     filters: asset.platform == "aws"
     mql: |
       aws.ssm.documents.all(
-        permissions.none(_['accountIds'].any(_ == "All" || _ == "all"))
+        permissions.none(_['accountId'] == "All" || _['accountId'] == "all")
       )
   - uid: mondoo-aws-security-ssm-document-not-public-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_ssm_document")
@@ -65282,12 +65280,12 @@ queries:
 
         ### Audit via CLI
 
-        1. List all non-default patch baselines:
+        1. List the patch baselines your account owns:
 
         ```bash
         aws ssm describe-patch-baselines \
-          --filters "Key=NAME_PREFIX,Values=" \
-          --query "BaselineIdentities[?DefaultBaseline==\`false\`].{Id:BaselineId,Name:BaselineName}" \
+          --filters "Key=OWNER,Values=Self" \
+          --query "BaselineIdentities[].{Id:BaselineId,Name:BaselineName}" \
           --output table
         ```
 
@@ -65359,7 +65357,7 @@ queries:
   - uid: mondoo-aws-security-ssm-patch-baseline-reject-action-aws
     filters: asset.platform == "aws"
     mql: |
-      aws.ssm.patchBaselines.where(isDefault == false).all(
+      aws.ssm.patchBaselines.where(arn.contains(":" + aws.account.id + ":")).all(
         rejectedPatchesAction != "ALLOW_AS_DEPENDENCY"
       )
   - uid: mondoo-aws-security-ssm-patch-baseline-reject-action-terraform-hcl
@@ -68807,7 +68805,7 @@ queries:
     filters: asset.platform == "aws"
     mql: |
       aws.ec2.launchTemplates.all(
-        metadataOptions['HttpTokens'] == "required"
+        instanceMetadata.httpTokens == "required"
       )
   - uid: mondoo-aws-security-ec2-launch-template-imdsv2-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_launch_template")
@@ -69831,7 +69829,7 @@ queries:
     filters: asset.platform == "aws"
     mql: |
       aws.drs.sourceServers.all(
-        replicationConfiguration.createPublicIP != true
+        replicationConfiguration.createPublicIP == false
       )
   - uid: mondoo-aws-security-drs-no-public-recovery-ip-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "aws_drs_replication_configuration_template")
@@ -70297,7 +70295,7 @@ queries:
     filters: asset.platform == "aws-security-group"
     mql: |
       aws.ec2.securitygroup.ipPermissions.where(
-        fromPort <= 5432 && toPort >= 5432 && toPort != 0).none(
+        portRangeStart <= 5432 && portRangeEnd >= 5432).none(
           ipRanges.contains("0.0.0.0/0") || ipv6Ranges.contains("::/0")
         )
   - uid: mondoo-aws-security-secgroup-restricted-postgresql-terraform-hcl
@@ -70497,7 +70495,7 @@ queries:
     filters: asset.platform == "aws-security-group"
     mql: |
       aws.ec2.securitygroup.ipPermissions.where(
-        fromPort <= 3306 && toPort >= 3306 && toPort != 0).none(
+        portRangeStart <= 3306 && portRangeEnd >= 3306).none(
           ipRanges.contains("0.0.0.0/0") || ipv6Ranges.contains("::/0")
         )
   - uid: mondoo-aws-security-secgroup-restricted-mysql-terraform-hcl
@@ -70697,7 +70695,7 @@ queries:
     filters: asset.platform == "aws-security-group"
     mql: |
       aws.ec2.securitygroup.ipPermissions.where(
-        fromPort <= 1433 && toPort >= 1433 && toPort != 0).none(
+        portRangeStart <= 1433 && portRangeEnd >= 1433).none(
           ipRanges.contains("0.0.0.0/0") || ipv6Ranges.contains("::/0")
         )
   - uid: mondoo-aws-security-secgroup-restricted-mssql-terraform-hcl
@@ -70899,7 +70897,7 @@ queries:
     filters: asset.platform == "aws-security-group"
     mql: |
       aws.ec2.securitygroup.ipPermissions.where(
-        fromPort <= 1521 && toPort >= 1521 && toPort != 0).none(
+        portRangeStart <= 1521 && portRangeEnd >= 1521).none(
           ipRanges.contains("0.0.0.0/0") || ipv6Ranges.contains("::/0")
         )
   - uid: mondoo-aws-security-secgroup-restricted-oracle-terraform-hcl
@@ -71101,7 +71099,7 @@ queries:
     filters: asset.platform == "aws-security-group"
     mql: |
       aws.ec2.securitygroup.ipPermissions.where(
-        fromPort <= 27017 && toPort >= 27017 && toPort != 0).none(
+        portRangeStart <= 27017 && portRangeEnd >= 27017).none(
           ipRanges.contains("0.0.0.0/0") || ipv6Ranges.contains("::/0")
         )
   - uid: mondoo-aws-security-secgroup-restricted-mongodb-terraform-hcl
@@ -71305,7 +71303,7 @@ queries:
     filters: asset.platform == "aws-security-group"
     mql: |
       aws.ec2.securitygroup.ipPermissions.where(
-        fromPort <= 6379 && toPort >= 6379 && toPort != 0).none(
+        portRangeStart <= 6379 && portRangeEnd >= 6379).none(
           ipRanges.contains("0.0.0.0/0") || ipv6Ranges.contains("::/0")
         )
   - uid: mondoo-aws-security-secgroup-restricted-redis-terraform-hcl
@@ -71511,7 +71509,7 @@ queries:
     filters: asset.platform == "aws-security-group"
     mql: |
       aws.ec2.securitygroup.ipPermissions.where(
-        fromPort <= 11211 && toPort >= 11211 && toPort != 0).none(
+        portRangeStart <= 11211 && portRangeEnd >= 11211).none(
           ipRanges.contains("0.0.0.0/0") || ipv6Ranges.contains("::/0")
         )
   - uid: mondoo-aws-security-secgroup-restricted-memcached-terraform-hcl
@@ -71715,7 +71713,7 @@ queries:
     filters: asset.platform == "aws-security-group"
     mql: |
       aws.ec2.securitygroup.ipPermissions.where(
-        fromPort <= 9300 && toPort >= 9200 && toPort != 0).none(
+        portRangeStart <= 9300 && portRangeEnd >= 9200).none(
           ipRanges.contains("0.0.0.0/0") || ipv6Ranges.contains("::/0")
         )
   - uid: mondoo-aws-security-secgroup-restricted-elasticsearch-terraform-hcl
@@ -71917,7 +71915,7 @@ queries:
     filters: asset.platform == "aws-security-group"
     mql: |
       aws.ec2.securitygroup.ipPermissions.where(
-        fromPort <= 5986 && toPort >= 5985 && toPort != 0).none(
+        portRangeStart <= 5986 && portRangeEnd >= 5985).none(
           ipRanges.contains("0.0.0.0/0") || ipv6Ranges.contains("::/0")
         )
   - uid: mondoo-aws-security-secgroup-restricted-winrm-terraform-hcl
@@ -72121,7 +72119,7 @@ queries:
     filters: asset.platform == "aws-security-group"
     mql: |
       aws.ec2.securitygroup.ipPermissions.where(
-        fromPort <= 2376 && toPort >= 2375 && toPort != 0).none(
+        portRangeStart <= 2376 && portRangeEnd >= 2375).none(
           ipRanges.contains("0.0.0.0/0") || ipv6Ranges.contains("::/0")
         )
   - uid: mondoo-aws-security-secgroup-restricted-docker-daemon-terraform-hcl
@@ -72325,7 +72323,7 @@ queries:
     filters: asset.platform == "aws-security-group"
     mql: |
       aws.ec2.securitygroup.ipPermissions.where(
-        fromPort <= 6443 && toPort >= 6443 && toPort != 0).none(
+        portRangeStart <= 6443 && portRangeEnd >= 6443).none(
           ipRanges.contains("0.0.0.0/0") || ipv6Ranges.contains("::/0")
         )
   - uid: mondoo-aws-security-secgroup-restricted-kubernetes-api-terraform-hcl
@@ -72527,7 +72525,7 @@ queries:
     filters: asset.platform == "aws-security-group"
     mql: |
       aws.ec2.securitygroup.ipPermissions.where(
-        fromPort <= 10255 && toPort >= 10250 && toPort != 0).none(
+        portRangeStart <= 10255 && portRangeEnd >= 10250).none(
           ipRanges.contains("0.0.0.0/0") || ipv6Ranges.contains("::/0")
         )
   - uid: mondoo-aws-security-secgroup-restricted-kubelet-terraform-hcl
@@ -72731,7 +72729,7 @@ queries:
     filters: asset.platform == "aws-security-group"
     mql: |
       aws.ec2.securitygroup.ipPermissions.where(
-        fromPort <= 2380 && toPort >= 2379 && toPort != 0).none(
+        portRangeStart <= 2380 && portRangeEnd >= 2379).none(
           ipRanges.contains("0.0.0.0/0") || ipv6Ranges.contains("::/0")
         )
   - uid: mondoo-aws-security-secgroup-restricted-etcd-terraform-hcl
@@ -72959,11 +72957,11 @@ queries:
         effectiveIngress.where(
           securityGroup.id == aws.ec2.securitygroup.id
         ).where(source == "0.0.0.0/0" || source == "::/0").where(
-          fromPort <= 22 && toPort >= 22 && toPort != 0
+          protocol == "-1" || fromPort <= 22 && toPort >= 22 && toPort != 0
         ).none(reachable) &&
         effectiveIngress.where(securityGroup.id == aws.ec2.securitygroup.id)
           .where(source == "0.0.0.0/0" || source == "::/0")
-          .where(fromPort <= 3389 && toPort >= 3389 && toPort != 0)
+          .where(protocol == "-1" || fromPort <= 3389 && toPort >= 3389 && toPort != 0)
           .none(reachable)
       )
   - uid: mondoo-aws-security-secgroup-internet-facing-restrict-admin-ports-terraform-hcl
@@ -73141,31 +73139,31 @@ queries:
         effectiveIngress.where(
           securityGroup.id == aws.ec2.securitygroup.id
         ).where(source == "0.0.0.0/0" || source == "::/0").where(
-          fromPort <= 5432 && toPort >= 5432 && toPort != 0
+          protocol == "-1" || fromPort <= 5432 && toPort >= 5432 && toPort != 0
         ).none(reachable) &&
         effectiveIngress.where(
           securityGroup.id == aws.ec2.securitygroup.id
         ).where(source == "0.0.0.0/0" || source == "::/0").where(
-          fromPort <= 3306 && toPort >= 3306 && toPort != 0
+          protocol == "-1" || fromPort <= 3306 && toPort >= 3306 && toPort != 0
         ).none(reachable) &&
         effectiveIngress.where(
           securityGroup.id == aws.ec2.securitygroup.id
         ).where(source == "0.0.0.0/0" || source == "::/0").where(
-          fromPort <= 1433 && toPort >= 1433 && toPort != 0
+          protocol == "-1" || fromPort <= 1433 && toPort >= 1433 && toPort != 0
         ).none(reachable) &&
         effectiveIngress.where(
           securityGroup.id == aws.ec2.securitygroup.id
         ).where(source == "0.0.0.0/0" || source == "::/0").where(
-          fromPort <= 1521 && toPort >= 1521 && toPort != 0
+          protocol == "-1" || fromPort <= 1521 && toPort >= 1521 && toPort != 0
         ).none(reachable) &&
         effectiveIngress.where(
           securityGroup.id == aws.ec2.securitygroup.id
         ).where(source == "0.0.0.0/0" || source == "::/0").where(
-          fromPort <= 27017 && toPort >= 27017 && toPort != 0
+          protocol == "-1" || fromPort <= 27017 && toPort >= 27017 && toPort != 0
         ).none(reachable) &&
         effectiveIngress.where(securityGroup.id == aws.ec2.securitygroup.id)
           .where(source == "0.0.0.0/0" || source == "::/0")
-          .where(fromPort <= 6379 && toPort >= 6379 && toPort != 0)
+          .where(protocol == "-1" || fromPort <= 6379 && toPort >= 6379 && toPort != 0)
           .none(reachable)
       )
   - uid: mondoo-aws-security-secgroup-internet-facing-restrict-database-ports-terraform-hcl
@@ -81508,11 +81506,14 @@ queries:
 
         ### Audit via CLI
 
-        1. List all HTTPS and TLS listeners and their security policies:
+        1. List all HTTPS and TLS listeners and their security policies. `describe-listeners` requires a load balancer or listener ARN, so iterate over the load balancers:
 
         ```bash
-        aws elbv2 describe-listeners \
-          --query 'Listeners[?Protocol==`HTTPS` || Protocol==`TLS`].{ARN:ListenerArn,Protocol:Protocol,SslPolicy:SslPolicy}'
+        for lb in $(aws elbv2 describe-load-balancers --query "LoadBalancers[].LoadBalancerArn" --output text); do
+          aws elbv2 describe-listeners \
+            --load-balancer-arn "$lb" \
+            --query 'Listeners[?Protocol==`HTTPS` || Protocol==`TLS`].{ARN:ListenerArn,Protocol:Protocol,SslPolicy:SslPolicy}'
+        done
         ```
 
         A passing listener returns an `SslPolicy` that starts with `ELBSecurityPolicy-TLS-1-2-`, `ELBSecurityPolicy-TLS13-1-2-`, `ELBSecurityPolicy-TLS13-1-3-`, or `ELBSecurityPolicy-FS-1-2-`. A failing listener returns any other policy name.
