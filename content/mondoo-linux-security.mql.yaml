@@ -3367,9 +3367,10 @@ queries:
     mql: |
       service("slapd").enabled == false
       service("slapd").running == false
+      services.where(name == /^dirsrv@./).none(enabled || running)
     docs:
       desc: |
-        This check verifies that the `slapd` service is neither running nor enabled at boot. OpenLDAP's `slapd` serves directory data on ports 389 and 636.
+        This check verifies that no LDAP directory server is running or enabled at boot. It covers OpenLDAP's `slapd` service and every instance of 389 Directory Server, which runs as one `dirsrv@<instance>` unit per directory instance. Red Hat Enterprise Linux 8 and later ship 389 Directory Server and do not ship the OpenLDAP server. Both serve directory data on ports 389 and 636.
 
         **Why this matters**
 
@@ -3377,35 +3378,52 @@ queries:
 
         The default access configuration in many deployments permits anonymous binds for read. Anyone who can reach port 389 can then enumerate the entire tree without credentials. That gives an attacker a complete, authoritative list of accounts to target and a map of which of them hold privileged group memberships, which is the reconnaissance step that makes a password-spraying campaign efficient instead of noisy.
 
-        An unintended `slapd` is worse than an intended one, because the intended one has an access control policy that someone reviewed. A `slapd` running because a package pulled it in has whatever the default configuration provides.
+        An unintended directory server is worse than an intended one, because the intended one has an access control policy that someone reviewed. A server running because a package pulled it in has whatever the default configuration provides.
 
-        Run `slapd` only on designated directory servers. On those, require TLS, disable anonymous binds, and restrict access to the attributes each client genuinely needs.
+        Run a directory server only on designated directory servers. On those, require TLS, disable anonymous binds, and restrict access to the attributes each client genuinely needs.
       audit: |
-        Run this command to confirm the LDAP server service is stopped and disabled:
+        Run these commands to confirm the LDAP server services are stopped and disabled:
 
         ```bash
         systemctl is-active slapd
         systemctl is-enabled slapd
+        systemctl list-units --all 'dirsrv@*'
+        find /etc/systemd/system -path '*.wants/dirsrv@?*.service' -printf '%f\n'
         ```
 
-        A passing result reports `inactive` and `disabled` (or `masked`) for every listed unit. A failing result reports any unit as `active` or `enabled`.
+        A passing result reports `slapd` as `inactive` and `disabled`, `masked`, or missing, lists no active `dirsrv@` instance, and finds no `dirsrv@` instance enabled. A failing result reports `slapd` as `active` or `enabled`, or shows a `dirsrv@` instance that is active or enabled.
       remediation:
         - id: cli
           desc: |
             **Using the CLI**
 
-            Run these commands to stop and disable `slapd`. Masking the unit prevents another service or dependency from restarting it:
+            1. Run these commands to stop and disable `slapd`. Masking the unit prevents another service or dependency from restarting it:
 
-            ```bash
-            systemctl stop slapd
-            systemctl disable slapd
-            systemctl mask slapd
-            ```
+                ```bash
+                systemctl stop slapd
+                systemctl disable slapd
+                systemctl mask slapd
+                ```
+
+            2. List the 389 Directory Server instances that are loaded or enabled:
+
+                ```bash
+                systemctl list-units --all --plain --no-legend 'dirsrv@*.service'
+                find /etc/systemd/system -path '*.wants/dirsrv@?*.service' -printf '%f\n'
+                ```
+
+            3. Stop, disable, and mask each instance the commands list, replacing `<instance>` with its name:
+
+                ```bash
+                systemctl stop dirsrv@<instance>
+                systemctl disable dirsrv@<instance>
+                systemctl mask dirsrv@<instance>
+                ```
         - id: bash
           desc: |
             **Using a Bash Script**
 
-            Use this Bash script to stop, disable, and mask the LDAP server. Masking prevents another service or dependency from restarting it.
+            Use this Bash script to stop, disable, and mask the LDAP servers. Masking prevents another service or dependency from restarting them.
 
             ```bash
             #!/bin/bash
@@ -3418,16 +3436,31 @@ queries:
               systemctl disable slapd.service
               systemctl mask slapd.service
             fi
+
+            # 389 Directory Server runs one dirsrv@<instance> unit per instance. Collect the loaded
+            # instances and the enabled ones, which are not loaded until something starts them.
+            instances=$(
+              {
+                systemctl list-units --all --plain --no-legend 'dirsrv@?*.service' | awk '{print $1}'
+                find /etc/systemd/system -path '*.wants/dirsrv@?*.service' -printf '%f\n'
+              } | sort -u
+            )
+            for unit in $instances; do
+              echo "Stopping, disabling, and masking $unit..."
+              systemctl stop "$unit"
+              systemctl disable "$unit"
+              systemctl mask "$unit"
+            done
             ```
         - id: ansible
           desc: |
             **Using Ansible**
 
-            Use this Ansible playbook to stop and disable `slapd`:
+            Use this Ansible playbook to stop and disable the LDAP servers:
 
             ```yaml
             ---
-            - name: Stop and disable LDAP server (slapd)
+            - name: Stop and disable LDAP servers
               hosts: all
               become: true
 
@@ -3441,20 +3474,48 @@ queries:
                   ansible.builtin.systemd:
                     name: slapd
                     state: stopped
-                    enabled: no
-                    masked: yes
+                    enabled: false
+                    masked: true
                   when: slapd_unit.status.LoadState != 'not-found'
+
+                - name: Gather the loaded service units
+                  ansible.builtin.service_facts:
+
+                # Enabled instances are links in a .wants directory and are not loaded until started
+                - name: Find enabled 389 Directory Server instances
+                  ansible.builtin.find:
+                    paths: /etc/systemd/system
+                    patterns: 'dirsrv@?*.service'
+                    file_type: link
+                    recurse: true
+                  register: dirsrv_links
+
+                - name: Ensure 389 Directory Server instances are stopped, disabled, and masked
+                  ansible.builtin.systemd:
+                    name: "{{ item }}"
+                    state: stopped
+                    enabled: false
+                    masked: true
+                  loop: >-
+                    {{ (ansible_facts.services.keys() | select('match', '^dirsrv@.+\.service$') | list
+                        + dirsrv_links.files | map(attribute='path') | map('basename') | list) | unique }}
             ```
         - id: chef
           desc: |
             **Using Chef Infra**
 
-            Use this Chef Infra recipe code to stop, disable, and mask the LDAP server:
+            Use this Chef Infra recipe code to stop, disable, and mask the LDAP servers. The recipe handles the 389 Directory Server instances that are enabled at boot:
 
             ```ruby
             systemd_unit 'slapd.service' do
               action %i(stop disable mask)
               only_if 'systemctl cat slapd.service'
+            end
+
+            Dir.glob('/etc/systemd/system/*.wants/dirsrv@?*.service').map { |path| ::File.basename(path) }.uniq.each do |unit|
+              systemd_unit unit do
+                action %i(stop disable mask)
+              end
             end
             ```
     refs:
@@ -9842,7 +9903,7 @@ queries:
       desc: |
         This check verifies that the audit system records changes to the host's network identity and to the files that define its local name resolution and its login banners.
 
-        It requires syscall rules with a non-empty key for `sethostname` and `setdomainname` on both the 32-bit and the 64-bit ABI, and watch rules with the `wa` permission mask on `/etc/issue`, `/etc/issue.net`, and `/etc/hosts`. On Red Hat and Debian based systems it also requires a watch on the distribution's network configuration location, `/etc/sysconfig/network` or `/etc/network`. Rules are written into a file under `/etc/audit/rules.d/` and loaded with `augenrules --load`.
+        It requires syscall rules with a non-empty key for `sethostname` and `setdomainname` on both the 32-bit and the 64-bit ABI, and watch rules with the `wa` permission mask on `/etc/issue`, `/etc/issue.net`, and `/etc/hosts`. On Red Hat and Debian based systems it also requires a watch on the distribution's network configuration location, `/etc/sysconfig/network` or `/etc/network`, and, on a host where the `/etc/NetworkManager` directory exists, a watch on that directory, which holds the NetworkManager connection profiles that define the interfaces on Red Hat Enterprise Linux 9 and later. Rules are written into a file under `/etc/audit/rules.d/` and loaded with `augenrules --load`.
 
         **Why this matters**
 
@@ -9857,7 +9918,7 @@ queries:
         Run this command to confirm the audit rules for network environment modification events are loaded:
 
         ```bash
-        auditctl -l | grep -E -- 'sethostname|setdomainname|/etc/(issue|issue\.net|hosts)|/etc/(sysconfig/)?network'
+        auditctl -l | grep -E -- 'sethostname|setdomainname|/etc/(issue|issue\.net|hosts)|/etc/(sysconfig/)?network|/etc/NetworkManager'
         ```
 
         A passing result lists the expected syscall and watch rules, each with a non-empty audit key. A failing result returns no matching rules.
@@ -9891,6 +9952,12 @@ queries:
 
                 ```text
                 -w /etc/network -p wa -k system-locale
+                ```
+
+                On a host where the `/etc/NetworkManager` directory exists, also add the following line. NetworkManager keeps its connection profiles there, and on Red Hat Enterprise Linux 9 and later those profiles, not `/etc/sysconfig/network`, define the network interfaces:
+
+                ```text
+                -w /etc/NetworkManager -p wa -k system-locale
                 ```
 
                 On openSUSE, `/etc/audit/rules.d/audit.rules` ships the rule `-a task,never`, which turns off syscall auditing for every process started after the rules load, so these rules would record nothing. Remove it before you load the rules:
@@ -9944,6 +10011,11 @@ queries:
               echo "-w /etc/network -p wa -k system-locale" >> "$RULES_FILE"
             else
               echo "-w /etc/sysconfig/network -p wa -k system-locale" >> "$RULES_FILE"
+            fi
+
+            # NetworkManager keeps its connection profiles under /etc/NetworkManager.
+            if [ -d /etc/NetworkManager ]; then
+              echo "-w /etc/NetworkManager -p wa -k system-locale" >> "$RULES_FILE"
             fi
 
             # openSUSE builds auditctl without 32-bit ARM support. An arch=b32 rule it cannot
@@ -10036,6 +10108,20 @@ queries:
                   vars:
                     network_config_path: "{{ '/etc/network' if ansible_facts['os_family'] == 'Debian' else '/etc/sysconfig/network' }}"
 
+                - name: Check whether NetworkManager keeps its configuration on this host
+                  ansible.builtin.stat:
+                    path: /etc/NetworkManager
+                  register: networkmanager_dir
+
+                - name: Watch the NetworkManager configuration
+                  ansible.builtin.blockinfile:
+                    path: /etc/audit/rules.d/50-system_local.rules
+                    block: "-w /etc/NetworkManager -p wa -k system-locale"
+                    marker: "# {mark} ANSIBLE MANAGED - NetworkManager configuration"
+                    state: present
+                  register: networkmanager_audit_rule
+                  when: networkmanager_dir.stat.isdir is defined and networkmanager_dir.stat.isdir
+
                 - name: Set secure file permissions
                   ansible.builtin.file:
                     path: /etc/audit/rules.d/50-system_local.rules
@@ -10061,7 +10147,7 @@ queries:
                 - name: Reload audit rules if the rules file was updated
                   ansible.builtin.command: augenrules --load
                   when:
-                    - (base_audit_rules.changed or conditional_audit_rules.changed) or audit_task_never.changed
+                    - (base_audit_rules.changed or conditional_audit_rules.changed or networkmanager_audit_rule.changed) or audit_task_never.changed
                     - immutable_check.rc != 0
 
                 - name: Warn if reboot is required due to immutable audit config
@@ -10103,6 +10189,8 @@ queries:
 
             network_config_path = platform_family?('debian') ? '/etc/network' : '/etc/sysconfig/network'
             locale_rules << "-w #{network_config_path} -p wa -k system-locale"
+            # NetworkManager keeps its connection profiles under /etc/NetworkManager
+            locale_rules << '-w /etc/NetworkManager -p wa -k system-locale' if ::Dir.exist?('/etc/NetworkManager')
 
             locale_rules.reject! { |rule| rule.include?('arch=b32') } unless arm32_audit
 
@@ -10163,6 +10251,15 @@ queries:
           && w.keyname != empty
         )
       )
+
+      // NetworkManager keeps its connection profiles under /etc/NetworkManager, which on
+      // Red Hat Enterprise Linux 9 and later define the interfaces
+      if (file("/etc/NetworkManager").exists) {
+        auditd.rules.watches.contains(w:
+          w.path == "/etc/NetworkManager" && w.permissions == ["w", "a"]
+          && w.keyname != empty
+        )
+      }
 
       // A task,never rule without fields turns off syscall auditing for every
       // process, and with it every rule this check reads.
@@ -14496,7 +14593,7 @@ queries:
           desc: |
             **Using the CLI**
 
-            This check requires that the private host keys have no group or other access, so set the mode to `0600`. Red Hat family releases before Fedora 38, including Red Hat Enterprise Linux 9 and earlier, ship the keys as `0640 root:ssh_keys` and read them through the `ssh_keys` group. Mode `0600` removes group read regardless of the group owner, so keep the `ssh_keys` group where it exists to match the platform layout, and fall back to `root` ownership only where no such group is present:
+            This check requires that the private host keys have no group or other access, so set the mode to `0600`. Red Hat Enterprise Linux 8 ships the keys as `0640 root:ssh_keys`, so that the setgid `ssh-keysign` helper can read them through the `ssh_keys` group. Red Hat Enterprise Linux 9 creates them as `0600 root:ssh_keys`, and Red Hat Enterprise Linux 10 has no `ssh_keys` group and creates them as `0600 root:root`. Mode `0600` removes group read regardless of the group owner, so keep the `ssh_keys` group where it exists to match the platform layout, and fall back to `root` ownership only where no such group is present:
 
             ```bash
             if getent group ssh_keys >/dev/null 2>&1; then
@@ -14562,7 +14659,7 @@ queries:
           desc: |
             **Using Chef Infra**
 
-            Use this Chef Infra recipe code to restrict the SSH host private keys. Distributions that ship an `ssh_keys` group expect the keys to belong to it so that `ssh-keygen` can read them without root:
+            Use this Chef Infra recipe code to restrict the SSH host private keys. Distributions that ship an `ssh_keys` group expect the keys to belong to it so that the setgid `ssh-keysign` helper can read them without root:
 
             ```ruby
             ssh_keys_group = ::File.readlines('/etc/group').any? { |entry| entry.start_with?('ssh_keys:') }
@@ -17038,15 +17135,15 @@ queries:
 
         Prefer AEAD constructions such as `chacha20-poly1305@openssh.com` and the AES-GCM ciphers, which authenticate and encrypt in a single pass. Adjust the property if a client that cannot be upgraded requires something outside the list, and record why.
       audit: |
-        Run this command to inspect the SSH server configuration file and any files it includes:
+        Run this command to inspect the SSH server configuration file, the drop-in files it includes, and the system-wide cryptographic policy file that Red Hat Enterprise Linux 9 and later include from a vendor drop-in:
 
         ```bash
-        grep -rEi '^\s*Ciphers\b' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/ 2>/dev/null
+        grep -rEi '^\s*Ciphers\b' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/ /etc/crypto-policies/back-ends/opensshserver.config 2>/dev/null
         ```
 
-        A passing result shows an explicit `Ciphers` directive listing only approved algorithms. A failing result lists a weak algorithm, such as any CBC-mode cipher or an `arcfour` variant, or produces no output at all, which means the directive is absent.
+        sshd uses the first `Ciphers` line it reads. Where `/etc/ssh/sshd_config` begins with an `Include` of the drop-in directory, sshd reads the drop-in files in lexical order, and the policy file at the point where a drop-in includes it, before the rest of `/etc/ssh/sshd_config`. A passing result shows an explicit `Ciphers` directive listing only approved algorithms. A failing result lists a weak algorithm, such as any CBC-mode cipher or an `arcfour` variant, or produces no output at all, which means the directive is absent.
 
-        Do not verify this check with `sshd -T`. That command prints the effective configuration including OpenSSH's built-in defaults, so on a host where the directive is absent it reports `the full built-in cipher list` while this check reads the configuration file and fails.
+        Do not verify this check with `sshd -T`. That command prints the effective configuration including OpenSSH's built-in defaults, so on a host where the directive is absent it reports the full built-in cipher list while this check reads the configuration file and fails.
       remediation:
         - id: cli
           desc: |
@@ -17068,7 +17165,7 @@ queries:
             Ciphers aes256-ctr,aes192-ctr,aes128-ctr
             ```
 
-            The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. On Red Hat Enterprise Linux 9 that snippet includes the system-wide cryptographic policy, which sets `Ciphers`, `MACs`, and `KexAlgorithms` itself, so a lower-numbered drop-in is the only place these keywords take effect. On openSUSE Leap 16, `/etc/ssh/sshd_config` does not exist and sshd reads the vendor file `/usr/etc/ssh/sshd_config`, which carries the same `Include`. Creating `/etc/ssh/sshd_config` there makes sshd ignore the vendor file, so use the drop-in. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
+            The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. On Red Hat Enterprise Linux 9 and later, one of those snippets includes the system-wide cryptographic policy, which sets `Ciphers`, `MACs`, and `KexAlgorithms` itself, so a lower-numbered drop-in is the only place these keywords take effect. On openSUSE Leap 16, `/etc/ssh/sshd_config` does not exist and sshd reads the vendor file `/usr/etc/ssh/sshd_config`, which carries the same `Include`. Creating `/etc/ssh/sshd_config` there makes sshd ignore the vendor file, so use the drop-in. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
 
             ```bash
             grep -ri 'Ciphers' /etc/ssh/sshd_config.d/
@@ -17368,15 +17465,15 @@ queries:
 
         Note that AEAD ciphers such as `chacha20-poly1305@openssh.com` and the AES-GCM modes provide integrity themselves and ignore the `MACs` list entirely. The list governs sessions that negotiate a non-AEAD cipher.
       audit: |
-        Run this command to inspect the SSH server configuration file and any files it includes:
+        Run this command to inspect the SSH server configuration file, the drop-in files it includes, and the system-wide cryptographic policy file that Red Hat Enterprise Linux 9 and later include from a vendor drop-in:
 
         ```bash
-        grep -rEi '^\s*MACs\b' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/ 2>/dev/null
+        grep -rEi '^\s*MACs\b' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/ /etc/crypto-policies/back-ends/opensshserver.config 2>/dev/null
         ```
 
-        A passing result shows an explicit `MACs` directive listing only approved algorithms. A failing result lists a weak algorithm, such as an MD5-based or `-96` truncated variant, or produces no output at all, which means the directive is absent.
+        sshd uses the first `MACs` line it reads. Where `/etc/ssh/sshd_config` begins with an `Include` of the drop-in directory, sshd reads the drop-in files in lexical order, and the policy file at the point where a drop-in includes it, before the rest of `/etc/ssh/sshd_config`. A passing result shows an explicit `MACs` directive listing only approved algorithms. A failing result lists a weak algorithm, such as an MD5-based or `-96` truncated variant, or produces no output at all, which means the directive is absent.
 
-        Do not verify this check with `sshd -T`. That command prints the effective configuration including OpenSSH's built-in defaults, so on a host where the directive is absent it reports `the full built-in MAC list` while this check reads the configuration file and fails.
+        Do not verify this check with `sshd -T`. That command prints the effective configuration including OpenSSH's built-in defaults, so on a host where the directive is absent it reports the full built-in MAC list while this check reads the configuration file and fails.
       remediation:
         - id: cli
           desc: |
@@ -17392,7 +17489,7 @@ queries:
             MACs hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com,hmac-sha2-512,hmac-sha2-256
             ```
 
-            The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. On Red Hat Enterprise Linux 9 that snippet includes the system-wide cryptographic policy, which sets `Ciphers`, `MACs`, and `KexAlgorithms` itself, so a lower-numbered drop-in is the only place these keywords take effect. On openSUSE Leap 16, `/etc/ssh/sshd_config` does not exist and sshd reads the vendor file `/usr/etc/ssh/sshd_config`, which carries the same `Include`. Creating `/etc/ssh/sshd_config` there makes sshd ignore the vendor file, so use the drop-in. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
+            The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. On Red Hat Enterprise Linux 9 and later, one of those snippets includes the system-wide cryptographic policy, which sets `Ciphers`, `MACs`, and `KexAlgorithms` itself, so a lower-numbered drop-in is the only place these keywords take effect. On openSUSE Leap 16, `/etc/ssh/sshd_config` does not exist and sshd reads the vendor file `/usr/etc/ssh/sshd_config`, which carries the same `Include`. Creating `/etc/ssh/sshd_config` there makes sshd ignore the vendor file, so use the drop-in. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
 
             ```bash
             grep -ri 'MACs' /etc/ssh/sshd_config.d/
@@ -17718,15 +17815,15 @@ queries:
 
         Prefer `curve25519-sha256` and the group-exchange and ECDH variants over SHA-256 or better. Where post-quantum resistance is a requirement, current OpenSSH releases offer hybrid exchanges that combine a classical algorithm with a post-quantum one, which protects recorded traffic against later decryption.
       audit: |
-        Run this command to inspect the SSH server configuration file and any files it includes:
+        Run this command to inspect the SSH server configuration file, the drop-in files it includes, and the system-wide cryptographic policy file that Red Hat Enterprise Linux 9 and later include from a vendor drop-in:
 
         ```bash
-        grep -rEi '^\s*KexAlgorithms\b' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/ 2>/dev/null
+        grep -rEi '^\s*KexAlgorithms\b' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/ /etc/crypto-policies/back-ends/opensshserver.config 2>/dev/null
         ```
 
-        A passing result shows an explicit `KexAlgorithms` directive listing only approved algorithms. A failing result lists a weak algorithm, such as `diffie-hellman-group1-sha1` or another SHA-1 based exchange, or produces no output at all, which means the directive is absent.
+        sshd uses the first `KexAlgorithms` line it reads. Where `/etc/ssh/sshd_config` begins with an `Include` of the drop-in directory, sshd reads the drop-in files in lexical order, and the policy file at the point where a drop-in includes it, before the rest of `/etc/ssh/sshd_config`. A passing result shows an explicit `KexAlgorithms` directive listing only approved algorithms. A failing result lists a weak algorithm, such as `diffie-hellman-group1-sha1` or another SHA-1 based exchange, or produces no output at all, which means the directive is absent.
 
-        Do not verify this check with `sshd -T`. That command prints the effective configuration including OpenSSH's built-in defaults, so on a host where the directive is absent it reports `the full built-in key exchange list` while this check reads the configuration file and fails.
+        Do not verify this check with `sshd -T`. That command prints the effective configuration including OpenSSH's built-in defaults, so on a host where the directive is absent it reports the full built-in key exchange list while this check reads the configuration file and fails.
       remediation:
         - id: cli
           desc: |
@@ -17792,7 +17889,7 @@ queries:
 
             Releases before 4.4 offer no key exchange that meets this check. Every method they carry is either SHA-1 based or uses the fixed 1024-bit group. Upgrade OpenSSH on those hosts rather than editing `KexAlgorithms`.
 
-            The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. On Red Hat Enterprise Linux 9 that snippet includes the system-wide cryptographic policy, which sets `Ciphers`, `MACs`, and `KexAlgorithms` itself, so a lower-numbered drop-in is the only place these keywords take effect. On openSUSE Leap 16, `/etc/ssh/sshd_config` does not exist and sshd reads the vendor file `/usr/etc/ssh/sshd_config`, which carries the same `Include`. Creating `/etc/ssh/sshd_config` there makes sshd ignore the vendor file, so use the drop-in. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
+            The SSH daemon uses the first value it reads for each keyword, and the `Include` directive at the top of `/etc/ssh/sshd_config` loads `/etc/ssh/sshd_config.d/` first, in lexical order. Red Hat Enterprise Linux and Ubuntu ship their own snippets in that directory, so a value added to `/etc/ssh/sshd_config` has no effect once one of those snippets sets the same keyword. On Red Hat Enterprise Linux 9 and later, one of those snippets includes the system-wide cryptographic policy, which sets `Ciphers`, `MACs`, and `KexAlgorithms` itself, so a lower-numbered drop-in is the only place these keywords take effect. On openSUSE Leap 16, `/etc/ssh/sshd_config` does not exist and sshd reads the vendor file `/usr/etc/ssh/sshd_config`, which carries the same `Include`. Creating `/etc/ssh/sshd_config` there makes sshd ignore the vendor file, so use the drop-in. Check the directory, and where it is in use put the value in a drop-in numbered below the vendor snippets:
 
             ```bash
             grep -ri 'KexAlgorithms' /etc/ssh/sshd_config.d/
