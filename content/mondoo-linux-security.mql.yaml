@@ -427,6 +427,9 @@ queries:
       aideDailyRunEnabled && systemd.timer("dailyaidecheck").enabled ||
       crontab.entries.where(user == "root").any(command.contains("aide --check")) ||
       crontab.entries.where(user == "root").any(command.contains("aide.conf --check")) ||
+      // The aide package on Fedora and CentOS Stream 9 and 10 ships aide-check.timer.
+      // aidecheck.timer is the name of a unit created by hand.
+      systemd.timer('aide-check').enabled ||
       systemd.timer('aidecheck').enabled
 
       // A schedule does nothing unless the configuration it reads and the
@@ -437,7 +440,7 @@ queries:
       desc: |
         This check verifies that AIDE integrity comparisons run on a schedule rather than only when someone remembers to start one.
 
-        Any of three arrangements satisfies it: the daily check that the Debian and Ubuntu `aide-common` package schedules itself, a root crontab entry that runs `aide --check`, or an enabled `aidecheck` systemd timer. Distributions differ in which they ship, so any one of them is accepted. The `aide-common` check runs from `/etc/cron.daily/aide` through cron on older releases and from `dailyaidecheck.timer` on newer ones, and either counts only while `CRON_DAILY_RUN` in `/etc/default/aide` is unset or `yes`. Setting it to any other value turns the daily run off. On the newer releases, such as Debian 12, `/etc/cron.daily/aide` is still installed but exits when systemd is running, so the script counts only where it has no such test and the `cron` service is running. The check also requires the AIDE configuration, `/etc/aide/aide.conf` on Debian and Ubuntu or `/etc/aide.conf` elsewhere, and a database at `/var/lib/aide/aide.db` or `/var/lib/aide/aide.db.gz`, because a scheduled comparison without them fails every time it runs.
+        Any of three arrangements satisfies it: the daily check that the Debian and Ubuntu `aide-common` package schedules itself, a root crontab entry that runs `aide --check`, or an enabled `aide-check` or `aidecheck` systemd timer. Distributions differ in which they ship, so any one of them is accepted. The aide package on Fedora and on CentOS Stream 9 and 10 ships `aide-check.timer`, which runs `aide --check` daily once it is enabled, and `aidecheck.timer` is the name of a unit created by hand. The `aide-common` check runs from `/etc/cron.daily/aide` through cron on older releases and from `dailyaidecheck.timer` on newer ones, and either counts only while `CRON_DAILY_RUN` in `/etc/default/aide` is unset or `yes`. Setting it to any other value turns the daily run off. On the newer releases, such as Debian 12, `/etc/cron.daily/aide` is still installed but exits when systemd is running, so the script counts only where it has no such test and the `cron` service is running. The check also requires the AIDE configuration, `/etc/aide/aide.conf` on Debian and Ubuntu or `/etc/aide.conf` elsewhere, and a database at `/var/lib/aide/aide.db` or `/var/lib/aide/aide.db.gz`, because a scheduled comparison without them fails every time it runs.
 
         **Why this matters**
 
@@ -458,11 +461,12 @@ queries:
         systemctl is-active cron
         systemctl is-enabled dailyaidecheck.timer
         crontab -u root -l | grep aide
+        systemctl is-enabled aide-check.timer
         systemctl is-enabled aidecheck.timer
         ls /etc/aide/aide.conf /etc/aide.conf /var/lib/aide/aide.db /var/lib/aide/aide.db.gz
         ```
 
-        A passing result shows one of these: `dailyaidecheck.timer` is enabled, or `/etc/cron.daily/aide` exists without a `/run/systemd/system` test and `cron` is active, while `CRON_DAILY_RUN` is absent, commented out, or `yes`; a root cron entry runs `aide --check`; or `aidecheck.timer` is enabled. `ls` must also list one configuration file and one database. A failing result shows none of these schedules, `CRON_DAILY_RUN` set to `no` with no other schedule in place, or `ls` finding no configuration file or no database.
+        A passing result shows one of these: `dailyaidecheck.timer` is enabled, or `/etc/cron.daily/aide` exists without a `/run/systemd/system` test and `cron` is active, while `CRON_DAILY_RUN` is absent, commented out, or `yes`; a root cron entry runs `aide --check`; or `aide-check.timer` or `aidecheck.timer` is enabled. `ls` must also list one configuration file and one database. A failing result shows none of these schedules, `CRON_DAILY_RUN` set to `no` with no other schedule in place, or `ls` finding no configuration file or no database.
       remediation:
         - id: cli
           desc: |
@@ -532,6 +536,14 @@ queries:
 
             **Using the CLI to setup systemd:**
 
+            Where the aide package ships `aide-check.timer`, as on Fedora and on CentOS Stream 9 and 10, build the AIDE database with the command from step 1 of the cron instructions above and enable the shipped timer instead of creating one:
+
+            ```bash
+            systemctl enable --now aide-check.timer
+            ```
+
+            On other distributions, create the units:
+
             1. Build the AIDE database with the command for your distribution from step 1 of the cron instructions above.
 
             2. Create the systemd service by creating the file `/etc/systemd/system/aidecheck.service` and adding the following lines. Set `ExecStart` to the check command for your distribution: `/usr/sbin/aide --check` on RHEL, Fedora, and Amazon Linux, `/usr/bin/aide --config /etc/aide/aide.conf --check` on Debian and Ubuntu, and `/usr/bin/aide --check` on SLES and openSUSE:
@@ -577,7 +589,7 @@ queries:
           desc: |
             **Using a Bash Script**
 
-            Use this Bash script to configure a daily AIDE check. It will auto-detect the package manager, install AIDE if not already installed, initialize the database, and set up a cron job for daily checks at 5AM. On hosts without cron, such as the Debian cloud image, it schedules the check with a systemd timer named `aidecheck.timer` instead.
+            Use this Bash script to configure a daily AIDE check. It will auto-detect the package manager, install AIDE if not already installed, initialize the database, and set up a cron job for daily checks at 5AM. Where the aide package ships `aide-check.timer`, as on Fedora and CentOS Stream 9 and 10, it enables that timer instead. On hosts without cron, such as the Debian cloud image, it schedules the check with a systemd timer named `aidecheck.timer` instead.
 
             ```bash
             #!/bin/bash
@@ -634,7 +646,11 @@ queries:
               AIDE_CHECK="$AIDE_BIN --check"
             fi
 
-            if command -v crontab >/dev/null 2>&1; then
+            if systemctl cat aide-check.timer >/dev/null 2>&1; then
+              # The aide package on Fedora and CentOS Stream 9 and 10 ships its own daily timer.
+              systemctl enable --now aide-check.timer
+              echo "AIDE daily check scheduled via the packaged aide-check.timer."
+            elif command -v crontab >/dev/null 2>&1; then
               # `grep -v` exits 1 when it selects nothing, which is what happens when root has
               # no crontab at all. Without the `|| true` that status aborts the subshell under
               # `set -e`, so `crontab -` reads empty input and clears the crontab instead of
@@ -672,7 +688,7 @@ queries:
           desc: |
             **Using Ansible**
 
-            Use this Ansible playbook to install AIDE, initialize its database, and run the check using a systemd timer named `aidecheck.timer`. The database and check commands differ by distribution, because Debian and Ubuntu use `aideinit` and need the configuration file passed explicitly, and the database and binary paths differ:
+            Use this Ansible playbook to install AIDE, initialize its database, and run the check using a systemd timer: the packaged `aide-check.timer` where the aide package ships one, as on Fedora and CentOS Stream 9 and 10, and an `aidecheck.timer` it creates elsewhere. The database and check commands differ by distribution, because Debian and Ubuntu use `aideinit` and need the configuration file passed explicitly, and the database and binary paths differ:
 
             ```yaml
             ---
@@ -732,6 +748,19 @@ queries:
                     creates: /var/lib/aide/aide.db.gz
                   when: ansible_facts['os_family'] == 'RedHat'
 
+                # The aide package on Fedora and CentOS Stream 9 and 10 ships its own daily timer
+                - name: Check for the packaged aide-check.timer
+                  ansible.builtin.stat:
+                    path: /usr/lib/systemd/system/aide-check.timer
+                  register: aide_packaged_timer
+
+                - name: Enable and start the packaged aide-check.timer
+                  ansible.builtin.systemd:
+                    name: aide-check.timer
+                    enabled: true
+                    state: started
+                  when: aide_packaged_timer.stat.exists
+
                 - name: Create systemd service unit for AIDE check
                   ansible.builtin.copy:
                     dest: /etc/systemd/system/aidecheck.service
@@ -748,6 +777,7 @@ queries:
 
                       [Install]
                       WantedBy=multi-user.target
+                  when: not aide_packaged_timer.stat.exists
 
                 - name: Create systemd timer unit for daily AIDE check at 5AM
                   ansible.builtin.copy:
@@ -765,6 +795,7 @@ queries:
 
                       [Install]
                       WantedBy=multi-user.target
+                  when: not aide_packaged_timer.stat.exists
 
                 - name: Reload systemd daemon to recognize new units
                   ansible.builtin.systemd:
@@ -774,18 +805,20 @@ queries:
                   ansible.builtin.systemd:
                     name: aidecheck.service
                     enabled: true
+                  when: not aide_packaged_timer.stat.exists
 
                 - name: Enable and start aidecheck.timer
                   ansible.builtin.systemd:
                     name: aidecheck.timer
                     enabled: true
                     state: started
+                  when: not aide_packaged_timer.stat.exists
             ```
         - id: chef
           desc: |
             **Using Chef Infra**
 
-            Use this Chef Infra recipe code to install AIDE, initialize its database, and run the check from a systemd timer named `aidecheck.timer`. The database and check commands differ by distribution, because Debian and Ubuntu use `aideinit` and need the configuration file passed explicitly, and the database and binary paths differ:
+            Use this Chef Infra recipe code to install AIDE, initialize its database, and run the check from a systemd timer: the packaged `aide-check.timer` where the aide package ships one, as on Fedora and CentOS Stream 9 and 10, and an `aidecheck.timer` it creates elsewhere. The database and check commands differ by distribution, because Debian and Ubuntu use `aideinit` and need the configuration file passed explicitly, and the database and binary paths differ:
 
             ```ruby
             if platform_family?('debian')
@@ -823,6 +856,14 @@ queries:
               creates aide_db
             end
 
+            # The aide package on Fedora and CentOS Stream 9 and 10 ships its own daily timer
+            packaged_timer = '/usr/lib/systemd/system/aide-check.timer'
+
+            systemd_unit 'aide-check.timer' do
+              action %i(enable start)
+              only_if { ::File.exist?(packaged_timer) }
+            end
+
             systemd_unit 'aidecheck.service' do
               content <<~UNIT
                 [Unit]
@@ -836,6 +877,7 @@ queries:
                 WantedBy=multi-user.target
               UNIT
               action %i(create enable)
+              not_if { ::File.exist?(packaged_timer) }
             end
 
             systemd_unit 'aidecheck.timer' do
@@ -851,6 +893,7 @@ queries:
                 WantedBy=multi-user.target
               UNIT
               action %i(create enable start)
+              not_if { ::File.exist?(packaged_timer) }
             end
             ```
     refs:
