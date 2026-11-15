@@ -43268,6 +43268,8 @@ queries:
 
         Vulnerability assessment evaluates the database engine and its configuration against a rule set and stores results in a storage account. Azure SQL runs no scans by default, and even a configured assessment can have its schedule left off. The setting is Periodic recurring scans in the vulnerability assessment configuration reached from Microsoft Defender for Cloud under the server's Security section. In ARM and the REST API it is `recurringScans.isEnabled` on the server's `vulnerabilityAssessments/default` resource, and in Terraform it is the `recurring_scans` block with `enabled = true`.
 
+        The express configuration, which Microsoft Defender for SQL now enables by default, stores results inside the service rather than in a storage account and scans every database weekly on its own. It is `state` set to `Enabled` on the server's `sqlVulnerabilityAssessments/default` resource, and the classic `recurringScans.isEnabled` reads `false` on such a server. This check passes a server with either the express configuration or classic recurring scans enabled.
+
         **Why this matters**
 
         Scheduled scans re-evaluate every server on a weekly cadence, so newly introduced misconfigurations and configuration drift are caught without depending on an administrator remembering to run a manual scan. Excessive permissions, weak settings, and unsafe defaults surface before an attacker finds them.
@@ -43297,6 +43299,14 @@ queries:
           --url "https://management.azure.com/subscriptions/<SubscriptionId>/resourceGroups/<ResourceGroupName>/providers/Microsoft.Sql/servers/<ServerName>/vulnerabilityAssessments/default?api-version=2021-11-01" \
           --query "properties.recurringScans.isEnabled"
         ```
+
+        A server using the express configuration returns `false` there. Read the express configuration state as well; a server passes when either command shows the setting enabled:
+
+        ```bash
+        az rest --method get \
+          --url "https://management.azure.com/subscriptions/<SubscriptionId>/resourceGroups/<ResourceGroupName>/providers/Microsoft.Sql/servers/<ServerName>/sqlVulnerabilityAssessments/default?api-version=2025-01-01" \
+          --query "properties.state"
+        ```
       remediation:
         - id: portal
           desc: |
@@ -43319,6 +43329,14 @@ queries:
             ```
 
             The server needs write access to the container. `storageAccountAccessKey` supplies it; without it, or a Storage Blob Data Contributor role assignment for the server's managed identity on the storage account, the service rejects the request with `VulnerabilityAssessmentInsufficientStorageAccountPermissions`.
+
+            Alternatively, turn on the express configuration, which needs Microsoft Defender for SQL on the server and no storage account:
+
+            ```bash
+            az rest --method put \
+              --url "https://management.azure.com/subscriptions/<SubscriptionId>/resourceGroups/<ResourceGroupName>/providers/Microsoft.Sql/servers/<ServerName>/sqlVulnerabilityAssessments/default?api-version=2025-01-01" \
+              --body '{"properties":{"state":"Enabled"}}'
+            ```
         - id: terraform
           desc: |
             To enable recurring vulnerability assessment scans on an Azure SQL server in Terraform, add a `recurring_scans` block to the `azurerm_mssql_server_vulnerability_assessment` resource:
@@ -43365,7 +43383,8 @@ queries:
     filters: |
       asset.platform == "azure-sql-server"
     mql: |
-      azure.subscription.sql.server.vulnerabilityAssessmentSettings.recurringScanEnabled == true
+      azure.subscription.sql.server.vulnerabilityAssessmentExpressEnabled == true ||
+        azure.subscription.sql.server.vulnerabilityAssessmentSettings.recurringScanEnabled == true
   - uid: mondoo-azure-security-sql-server-vulnerability-assessment-recurring-scans-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_mssql_server_vulnerability_assessment")
     mql: |
