@@ -101,7 +101,6 @@ policies:
           - uid: mondoo-gcp-security-bigquery-dataset-no-domain-wide-access
           - uid: mondoo-gcp-security-bigquery-aws-azure-connections-use-identity-federation
           - uid: mondoo-gcp-security-bigquery-cloudsql-connection-credentials-rotated-90-days
-          - uid: mondoo-gcp-security-bigquery-cloud-resource-connection-sa-no-default
       - title: Cloud KMS
         checks:
           - uid: mondoo-gcp-security-cloud-kms-cryptokeys-not-publicly-accessible
@@ -218,7 +217,6 @@ policies:
           - uid: mondoo-gcp-security-cloud-sql-cmek-encryption
           - uid: mondoo-gcp-security-cloud-sql-connector-enforcement
           - uid: mondoo-gcp-security-cloud-sql-automated-backups-enabled
-          - uid: mondoo-gcp-security-cloud-sql-sqlserver-cross-db-ownership-chaining-disabled
           - uid: mondoo-gcp-security-cloud-sql-sqlserver-contained-db-auth-disabled
           - uid: mondoo-gcp-security-cloud-sql-postgres-log-lock-waits-enabled
           - uid: mondoo-gcp-security-cloud-sql-users-use-iam-auth
@@ -237,7 +235,6 @@ policies:
           - uid: mondoo-gcp-security-memorystore-transit-encryption-enabled
           - uid: mondoo-gcp-security-memorystore-cmek-encryption
           - uid: mondoo-gcp-security-memorystore-backup-cmek-encryption
-          - uid: mondoo-gcp-security-memorystore-no-public-psc
           - uid: mondoo-gcp-security-memorystore-engine-version-supported
       - title: Datastream
         checks:
@@ -280,7 +277,6 @@ policies:
           - uid: mondoo-gcp-security-pubsub-topic-schema-validation-enabled
           - uid: mondoo-gcp-security-pubsub-topic-message-storage-policy-configured
           - uid: mondoo-gcp-security-pubsub-subscription-not-publicly-accessible
-          - uid: mondoo-gcp-security-pubsub-subscription-push-endpoint-https
           - uid: mondoo-gcp-security-pubsub-subscription-dead-letter-configured
           - uid: mondoo-gcp-security-pubsub-subscription-not-detached
       - title: Cloud Healthcare API
@@ -362,7 +358,6 @@ policies:
         checks:
           - uid: mondoo-gcp-security-secretmanager-cmek-encryption
           - uid: mondoo-gcp-security-secretmanager-rotation-configured
-          - uid: mondoo-gcp-security-secretmanager-not-publicly-accessible
       - title: Cloud Armor
         checks:
           - uid: mondoo-gcp-security-cloud-armor-rules-not-preview-only
@@ -407,12 +402,9 @@ policies:
           - uid: mondoo-gcp-security-spanner-cmek-encryption
           - uid: mondoo-gcp-security-spanner-backup-schedule-cmek-encryption
           - uid: mondoo-gcp-security-spanner-iam-no-primitive-roles
-          - uid: mondoo-gcp-security-spanner-iam-no-public-principals
       - title: Bigtable
         checks:
           - uid: mondoo-gcp-security-bigtable-cmek-encryption
-          - uid: mondoo-gcp-security-bigtable-iam-no-public-principals
-          - uid: mondoo-gcp-security-bigtable-iam-no-primitive-roles
       - title: AlloyDB
         checks:
           - uid: mondoo-gcp-security-alloydb-cmek-encryption
@@ -1341,17 +1333,17 @@ queries:
 
         ```bash
         gcloud storage buckets describe gs://BUCKET_NAME \
-          --format="get(iamConfiguration.uniformBucketLevelAccess.enabled)"
+          --format="get(uniform_bucket_level_access)"
         ```
 
         2. List all buckets and their uniform access setting:
 
         ```bash
         gcloud storage buckets list \
-          --format="table(name,iamConfiguration.uniformBucketLevelAccess.enabled)"
+          --format="table(name,uniform_bucket_level_access)"
         ```
 
-        A passing bucket returns `True` for `uniformBucketLevelAccess.enabled`. A failing bucket returns `False` or an empty value.
+        A passing bucket returns `True`. A failing bucket returns `False`.
       remediation:
         - id: terraform
           desc: |
@@ -1477,14 +1469,14 @@ queries:
 
         ```bash
         gcloud storage buckets describe gs://BUCKET_NAME \
-          --format="get(iamConfiguration.publicAccessPrevention)"
+          --format="get(public_access_prevention)"
         ```
 
         2. List all buckets and their public access prevention status:
 
         ```bash
         gcloud storage buckets list \
-          --format="table(name,iamConfiguration.publicAccessPrevention)"
+          --format="table(name,public_access_prevention)"
         ```
 
         A passing bucket returns `enforced`. A failing bucket returns `inherited` or any value other than `enforced`.
@@ -1608,14 +1600,14 @@ queries:
 
         ```bash
         gcloud storage buckets describe gs://BUCKET_NAME \
-          --format="get(encryption.defaultKmsKeyName)"
+          --format="get(default_kms_key)"
         ```
 
         2. List all buckets and their default KMS key:
 
         ```bash
         gcloud storage buckets list \
-          --format="table(name,encryption.defaultKmsKeyName)"
+          --format="table(name,default_kms_key)"
         ```
 
         A passing bucket returns a Cloud KMS key resource name such as `projects/PROJECT_ID/locations/LOCATION/keyRings/KEY_RING/cryptoKeys/KEY`. A failing bucket returns an empty value.
@@ -2243,7 +2235,7 @@ queries:
       desc: |
         This check verifies that each individual BigQuery table is encrypted under a customer-managed encryption key (CMEK), not merely that its dataset carries a default.
 
-        Every table in the dataset must have an encryption configuration naming a Cloud KMS key. The table's **Details** tab shows this as an **Encryption** value of **Customer-managed** with a key name, and `bq show --format=prettyjson PROJECT_ID:DATASET_ID.TABLE_ID` exposes the `encryptionConfiguration.kmsKeyName` field the check depends on.
+        Every table in the dataset must have an encryption configuration naming a Cloud KMS key. Views and external tables hold no BigQuery-managed data, carry no encryption configuration, and are not evaluated. The table's **Details** tab shows this as an **Encryption** value of **Customer-managed** with a key name, and `bq show --format=prettyjson PROJECT_ID:DATASET_ID.TABLE_ID` exposes the `encryptionConfiguration.kmsKeyName` field the check depends on.
 
         **Why this matters**
 
@@ -2344,31 +2336,37 @@ queries:
         title: Introduction to data governance in BigQuery
   - uid: mondoo-gcp-security-bigquery-tables-cmek-encryption-gcp
     filters: asset.platform == "gcp-bigquery-dataset"
-    mql: gcp.bigquery.dataset.tables.all(kmsKey != null)
+    mql: gcp.bigquery.dataset.tables.where(type != "VIEW" && type != "EXTERNAL").all(kmsKey != null)
   - uid: mondoo-gcp-security-bigquery-tables-cmek-encryption-terraform-hcl
     filters: |
       asset.platform == 'terraform-hcl' &&
         terraform.resources.contains(nameLabel == 'google_bigquery_table')
     mql: |
       terraform.resources('google_bigquery_table').all(
+        blocks.where(type == 'view') != empty ||
+        blocks.where(type == 'external_data_configuration') != empty ||
         blocks.where(type == 'encryption_configuration') != empty &&
         blocks.where(type == 'encryption_configuration').all(arguments.kms_key_name != empty)
       )
   - uid: mondoo-gcp-security-bigquery-tables-cmek-encryption-terraform-plan
     filters: |
-      asset.platform == 'terraform-plan'
+      asset.platform == 'terraform-plan' &&
       terraform.plan.resourceChanges.contains(type == 'google_bigquery_table')
     mql: |
       terraform.plan.resourceChanges.where(type == 'google_bigquery_table').all(
+        change.after['view'] != empty ||
+        change.after['external_data_configuration'] != empty ||
         change.after['encryption_configuration'] != empty &&
         change.after['encryption_configuration'].any(_['kms_key_name'] != empty)
       )
   - uid: mondoo-gcp-security-bigquery-tables-cmek-encryption-terraform-state
     filters: |
-      asset.platform == 'terraform-state'
+      asset.platform == 'terraform-state' &&
       terraform.state.resources.contains(type == 'google_bigquery_table')
     mql: |
       terraform.state.resources.where(type == 'google_bigquery_table').all(
+        values['view'] != empty ||
+        values['external_data_configuration'] != empty ||
         values['encryption_configuration'] != empty &&
         values['encryption_configuration'].any(_['kms_key_name'] != empty)
       )
@@ -2657,7 +2655,7 @@ queries:
       )
   - uid: mondoo-gcp-security-bigquery-views-no-legacy-sql-terraform-plan
     filters: |
-      asset.platform == 'terraform-plan'
+      asset.platform == 'terraform-plan' &&
       terraform.plan.resourceChanges.contains(type == 'google_bigquery_table')
     mql: |
       terraform.plan.resourceChanges.where(type == 'google_bigquery_table').where(
@@ -2667,7 +2665,7 @@ queries:
       )
   - uid: mondoo-gcp-security-bigquery-views-no-legacy-sql-terraform-state
     filters: |
-      asset.platform == 'terraform-state'
+      asset.platform == 'terraform-state' &&
       terraform.state.resources.contains(type == 'google_bigquery_table')
     mql: |
       terraform.state.resources.where(type == 'google_bigquery_table').where(
@@ -3545,7 +3543,7 @@ queries:
         1.  Navigate to the Cloud SQL Instances page: [https://console.cloud.google.com/sql/instances](https://console.cloud.google.com/sql/instances).
         2.  Select a PostgreSQL instance to view its details.
         3.  In the **Configuration** section, find the **Database flags** area.
-        4.  Verify that the `log_error_verbosity` flag is listed and its value is set to `default` or `verbose`.
+        4.  Verify that the `log_error_verbosity` flag is either not listed, which leaves the PostgreSQL default of `default` in effect, or set to `default` or `verbose`.
 
         **Using Google Cloud CLI**
 
@@ -3556,9 +3554,9 @@ queries:
         2.  For each PostgreSQL instance, check the flag's value:
             ```bash
             # This command shows the value, verify it's "default" or "verbose"
-            gcloud sql instances describe INSTANCE_NAME --format=json | jq '.settings.databaseFlags[] | select(.name=="log_error_verbosity")|.value'
+            gcloud sql instances describe INSTANCE_NAME --format=json | jq '.settings.databaseFlags[]? | select(.name=="log_error_verbosity")|.value'
             ```
-            Ensure the output for each PostgreSQL instance is `"default"` or `"verbose"`.
+            Ensure the output for each PostgreSQL instance is empty, `"default"`, or `"verbose"`. Empty output means the flag is unset and PostgreSQL uses `default`.
       remediation:
         - id: console
           desc: |
@@ -3608,21 +3606,18 @@ queries:
     filters: |
       asset.platform == 'gcp-sql-postgresql'
     mql: |
+      gcp.sql.instance.settings.databaseFlags['log_error_verbosity'] == empty ||
       gcp.sql.instance.settings.databaseFlags['log_error_verbosity'].in(['verbose', 'default'])
   - uid: mondoo-gcp-security-cloud-sql-postgres-log-error-verbosity-default-verbose-terraform-hcl
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_sql_database_instance' && arguments['database_version'].contains('POSTGRES'))
     mql: |
-      # Require a 'log_error_verbosity' flag to exist and be set to 'verbose' or 'default' on every settings block of all PostgreSQL instances.
-      # Without the existence guard, .all() over a .where() that filters down to zero matches is vacuously true and the check would silently pass when the flag is omitted.
+      # An omitted log_error_verbosity flag leaves the PostgreSQL default, `default`, in effect.
       terraform.resources('google_sql_database_instance')
         .where(arguments['database_version'].contains('POSTGRES'))
         .all(
           blocks.where(type == 'settings') != empty &&
           blocks.where(type == 'settings').all(
-            blocks.where(type == 'database_flags').where(
-              arguments['name'] == 'log_error_verbosity'
-            ) != empty &&
             blocks.where(type == 'database_flags').where(arguments['name'] == 'log_error_verbosity').all(
               arguments['value'].in(['verbose', 'default'])
             )
@@ -3637,11 +3632,6 @@ queries:
           type == 'google_sql_database_instance' && change.after.database_version.contains('POSTGRES')
         )
         .all(
-          // Check for existence of log_error_verbosity
-          change.after['settings'].all(
-            _['database_flags'].contains(name == 'log_error_verbosity')
-          ) &&
-          // Verify correct value
           change.after['settings'].all(
             _['database_flags'].where(name == 'log_error_verbosity').all(
               _['value'].in(['verbose', 'default'])
@@ -3655,11 +3645,6 @@ queries:
       terraform.state.resources
         .where(type == 'google_sql_database_instance' && values.database_version.contains('POSTGRES'))
         .all(
-          // Check for existence of log_error_verbosity
-          values['settings'].all(
-            _['database_flags'].contains(name == 'log_error_verbosity')
-          ) &&
-          // Verify correct value
           values['settings'].all(
             _['database_flags'].where(name == 'log_error_verbosity').all(
               _['value'].in(['verbose', 'default'])
@@ -10661,7 +10646,7 @@ queries:
         1. List all Redis instances and their AUTH status:
 
         ```bash
-        gcloud redis instances list --format="table(name,region,authEnabled)"
+        gcloud redis instances list --region=REGION --format="table(name.basename(),authEnabled)"
         ```
 
         A passing instance returns `True` in the `AUTH_ENABLED` column. A failing instance returns `False` or an empty value.
@@ -12479,21 +12464,24 @@ queries:
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_pubsub_subscription')
     mql: |
       terraform.resources('google_pubsub_subscription').all(
-        blocks.where(type == 'expiration_policy') != empty
+        blocks.where(type == 'expiration_policy') != empty &&
+        blocks.where(type == 'expiration_policy').all(arguments['ttl'] != empty)
       )
   - uid: mondoo-gcp-security-pubsub-subscription-expiration-configured-terraform-plan
     filters: |
       asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_pubsub_subscription')
     mql: |
       terraform.plan.resourceChanges.where(type == 'google_pubsub_subscription').all(
-        change.after.expiration_policy != empty
+        change.after.expiration_policy != empty &&
+        change.after.expiration_policy.all(_['ttl'] != empty)
       )
   - uid: mondoo-gcp-security-pubsub-subscription-expiration-configured-terraform-state
     filters: |
       asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_pubsub_subscription')
     mql: |
       terraform.state.resources.where(type == 'google_pubsub_subscription').all(
-        values.expiration_policy != empty
+        values.expiration_policy != empty &&
+        values.expiration_policy.all(_['ttl'] != empty)
       )
   - uid: mondoo-gcp-security-pubsub-topic-not-publicly-accessible
     title: Ensure Pub/Sub topics are not anonymously or publicly accessible
@@ -16473,7 +16461,7 @@ queries:
         1. List all Redis instances and check their tier:
 
         ```bash
-        gcloud redis instances list --format="table(name,region,tier,memorySizeGb,state)"
+        gcloud redis instances list --region=REGION --format="table(name.basename(),tier,memorySizeGb,state)"
         ```
 
         A passing Redis instance returns `STANDARD_HA` in the `TIER` column. A failing instance returns `BASIC`.
@@ -17161,193 +17149,6 @@ queries:
       terraform.state.resources.where(type == 'google_secret_manager_secret').all(
         values.rotation != empty
       )
-  - uid: mondoo-gcp-security-secretmanager-not-publicly-accessible
-    title: Ensure Secret Manager secrets do not have overly permissive IAM policies
-    impact: 80
-    tags:
-      compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
-      compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
-      compliance/iso-27001-2022: iso-27001-2022-a-8-3
-      compliance/nis-2: nis-2-21-2-i
-      compliance/nist-csf-1: nist-csf-1-pr-ac-4
-      compliance/nist-csf-2: nist-csf-2-pr-aa-05
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
-      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
-      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
-      compliance/pci-dss-4: pcidss-requirement-7-2-1
-      compliance/soc2-2017: soc2-control-cc6-1-3
-      compliance/vda-isa-5: vda-isa-5-4-2-1
-    variants:
-      - uid: mondoo-gcp-security-secretmanager-not-publicly-accessible-gcp
-        tags:
-          mondoo.com/filter-title: GCP Secret Manager Secret
-          mondoo.com/filter-icon: gcp
-      - uid: mondoo-gcp-security-secretmanager-not-publicly-accessible-terraform-hcl
-        tags:
-          mondoo.com/filter-title: Terraform HCL
-          mondoo.com/filter-icon: terraform
-      - uid: mondoo-gcp-security-secretmanager-not-publicly-accessible-terraform-plan
-        tags:
-          mondoo.com/filter-title: Terraform Plan
-          mondoo.com/filter-icon: terraform
-      - uid: mondoo-gcp-security-secretmanager-not-publicly-accessible-terraform-state
-        tags:
-          mondoo.com/filter-title: Terraform State
-          mondoo.com/filter-icon: terraform
-    docs:
-      desc: |
-        This check verifies that access to secret material is limited to named identities and never granted to the two principals that represent the public.
-
-        Secret Manager authorizes reads through the IAM policy attached to each secret. Under **Security > Secret Manager**, the **Permissions** tab of a secret must contain no binding whose member is `allUsers` or `allAuthenticatedUsers`; the same policy is returned by `gcloud secrets get-iam-policy SECRET_ID`.
-
-        **Why this matters**
-
-        `allUsers` requires no authentication at all. Any request from the internet retrieves the secret value without presenting a credential of any kind. `allAuthenticatedUsers` is only marginally narrower: it admits every holder of a Google account anywhere in the world, including personal Gmail accounts with no relationship to the organization.
-
-        Secrets are rarely the end of the attack. They hold credentials for databases, payment APIs, and internal services, so a single exposed secret hands an attacker the material to compromise several downstream systems at once, none of which will record anything unusual because the attacker arrives holding valid credentials.
-
-        There is also no way to unwind the exposure. Once a secret value has been readable from the public internet, it is not possible to determine who fetched it or to revoke access from specific individuals after the fact. The only safe response is to treat the secret as compromised and rotate every credential it contained.
-
-        Review the IAM policy of every secret, remove those principals wherever they appear, and grant access instead to named service accounts, groups, or users with a documented need, using `roles/secretmanager.secretAccessor` as the minimum-privilege role. To prevent the binding from being recreated, apply an organization-level policy that forbids `allUsers` and `allAuthenticatedUsers` in any IAM binding on Secret Manager resources across all projects.
-      audit: |
-        ### Audit via Console
-
-        1. In the Google Cloud Console, navigate to **Security > Secret Manager**.
-        2. For each secret, click the secret name, then click the **Permissions** tab.
-        3. Review all IAM role bindings and confirm that neither `allUsers` nor `allAuthenticatedUsers` appears as a member in any binding.
-
-        A passing secret shows only specific service accounts, groups, or user identities as members. A failing secret shows `allUsers` or `allAuthenticatedUsers` listed under one or more role bindings.
-
-        ### Audit via CLI
-
-        1. Retrieve the IAM policy for a secret:
-
-        ```bash
-        gcloud secrets get-iam-policy SECRET_ID
-        ```
-
-        A passing secret returns bindings that contain no `allUsers` or `allAuthenticatedUsers` members. A failing secret returns a binding with `members` containing `allUsers` or `allAuthenticatedUsers`.
-      remediation:
-        - id: terraform
-          desc: |
-            To ensure Secret Manager secrets do not have overly permissive IAM policies in Terraform, ensure that IAM policy resources for Secret Manager secrets do not include `allUsers` or `allAuthenticatedUsers` as members:
-
-            ```hcl
-            # Correct - specific service accounts only
-            resource "google_secret_manager_secret_iam_binding" "binding" {
-              secret_id = google_secret_manager_secret.example.secret_id
-              role      = "roles/secretmanager.secretAccessor"
-
-              members = [
-                "serviceAccount:my-service@project.iam.gserviceaccount.com",
-              ]
-            }
-            ```
-        - id: console
-          desc: |
-            To ensure Secret Manager secrets do not have overly permissive IAM policies using the Google Cloud Console:
-
-            1. Navigate to **Security > Secret Manager** in the Google Cloud Console.
-            2. Select the secret you want to review.
-            3. Click the **Permissions** tab.
-            4. Review all IAM bindings for the secret.
-            5. For any binding that includes `allUsers` or `allAuthenticatedUsers`:
-                - Select **Edit** for that binding.
-                - Remove `allUsers` and/or `allAuthenticatedUsers` from the members list.
-                - Select **Save** to apply the changes.
-            6. Replace removed principals with specific identities that require access.
-        - id: cli
-          desc: |
-            To ensure Secret Manager secrets do not have overly permissive IAM policies using the Google Cloud CLI:
-
-            1. List the IAM policy for a secret:
-
-            ```bash
-            gcloud secrets get-iam-policy SECRET_ID
-            ```
-
-            2. Remove public access bindings:
-
-            ```bash
-            gcloud secrets remove-iam-policy-binding SECRET_ID \
-              --member='allUsers' \
-              --role='ROLE'
-
-            gcloud secrets remove-iam-policy-binding SECRET_ID \
-              --member='allAuthenticatedUsers' \
-              --role='ROLE'
-            ```
-
-            3. Grant access to specific identities instead:
-
-            ```bash
-            gcloud secrets add-iam-policy-binding SECRET_ID \
-              --member='serviceAccount:SA_EMAIL' \
-              --role='roles/secretmanager.secretAccessor'
-            ```
-    refs:
-      - url: https://docs.cloud.google.com/secret-manager/docs/access-control
-        title: Secret Manager access control with IAM
-      - url: https://docs.cloud.google.com/secret-manager/docs/creating-and-accessing-secrets
-        title: Creating and accessing secrets
-  - uid: mondoo-gcp-security-secretmanager-not-publicly-accessible-gcp
-    filters: asset.platform == 'gcp-secretmanager-secret'
-    mql: |
-      gcp.project.secretmanager.secret.iamPolicy.all(
-        members.none(_ == "allUsers" || _ == "allAuthenticatedUsers")
-      )
-  - uid: mondoo-gcp-security-secretmanager-not-publicly-accessible-terraform-hcl
-    filters: |
-      asset.platform == 'terraform-hcl' &&
-        terraform.resources.where(nameLabel.in(['google_secret_manager_secret_iam_policy', 'google_secret_manager_secret_iam_binding', 'google_secret_manager_secret_iam_member'])) != empty
-    mql: |
-      terraform.resources.where(
-        nameLabel == 'google_secret_manager_secret_iam_policy' ||
-        nameLabel == 'google_secret_manager_secret_iam_binding'
-      )
-        .all(
-          arguments.members == empty ||
-          arguments.members.none(_ == 'allUsers' || _ == 'allAuthenticatedUsers')
-        )
-      terraform.resources('google_secret_manager_secret_iam_member').all(
-        arguments.member != 'allUsers' && arguments.member != 'allAuthenticatedUsers'
-      )
-  - uid: mondoo-gcp-security-secretmanager-not-publicly-accessible-terraform-plan
-    filters: |
-      asset.platform == 'terraform-plan' &&
-        terraform.plan.resourceChanges.where(type.in(['google_secret_manager_secret_iam_policy', 'google_secret_manager_secret_iam_binding', 'google_secret_manager_secret_iam_member'])) != empty
-    mql: |
-      terraform.plan.resourceChanges
-        .where(
-          type == 'google_secret_manager_secret_iam_policy' ||
-          type == 'google_secret_manager_secret_iam_binding'
-        )
-        .all(
-          change.after.members == empty ||
-          change.after.members.none(_ == 'allUsers' || _ == 'allAuthenticatedUsers')
-        )
-      terraform.plan.resourceChanges.where(type == 'google_secret_manager_secret_iam_member').all(
-        change.after.member != 'allUsers' && change.after.member != 'allAuthenticatedUsers'
-      )
-  - uid: mondoo-gcp-security-secretmanager-not-publicly-accessible-terraform-state
-    filters: |
-      asset.platform == 'terraform-state' &&
-        terraform.state.resources.where(type.in(['google_secret_manager_secret_iam_policy', 'google_secret_manager_secret_iam_binding', 'google_secret_manager_secret_iam_member'])) != empty
-    mql: |
-      terraform.state.resources
-        .where(
-          type == 'google_secret_manager_secret_iam_policy' ||
-          type == 'google_secret_manager_secret_iam_binding'
-        )
-        .all(
-          values.members == empty ||
-          values.members.none(_ == 'allUsers' || _ == 'allAuthenticatedUsers')
-        )
-      terraform.state.resources.where(type == 'google_secret_manager_secret_iam_member').all(
-        values.member != 'allUsers' && values.member != 'allAuthenticatedUsers'
-      )
   - uid: mondoo-gcp-security-compute-instances-ip-forwarding-disabled
     title: Ensure IP forwarding is not enabled on compute instances
     impact: 70
@@ -17993,7 +17794,7 @@ queries:
       desc: |
         This check verifies that the IP allowlist on a Cloud SQL instance names specific hosts or narrow ranges rather than opening the database to every address.
 
-        Authorized networks are the CIDR entries Cloud SQL consults before accepting a connection on a public endpoint. Cloud SQL starts with none configured, so every entry is something an operator added deliberately, and the entries `0.0.0.0/0` and `::/0` added for convenience during a migration or a debugging session allow the entire IPv4 and IPv6 internet respectively. Review them in the console under the instance **Connections** tab, **Authorized networks**, or with `gcloud sql instances patch INSTANCE_NAME --authorized-networks=203.0.113.0/24`.
+        Authorized networks are the CIDR entries Cloud SQL consults before accepting a connection on a public endpoint. Cloud SQL starts with none configured, so every entry is something an operator added deliberately, and the entries `0.0.0.0/0` and `::/0` added for convenience during a migration or a debugging session allow the entire IPv4 and IPv6 internet respectively. The same reach can be spread across several shorter ranges, such as `0.0.0.0/1` and `128.0.0.0/1`, so this check fails any entry with a prefix shorter than /8. Review them in the console under the instance **Connections** tab, **Authorized networks**, or with `gcloud sql instances patch INSTANCE_NAME --authorized-networks=203.0.113.0/24`.
 
         **Why this matters**
 
@@ -18011,7 +17812,7 @@ queries:
         2. Click the **Connections** tab.
         3. Under **Authorized networks**, review each entry for the CIDR value.
 
-        A passing instance shows no authorized network entries with the value `0.0.0.0/0` or `::/0`. A failing instance shows an authorized network with the value `0.0.0.0/0` or `::/0`.
+        A passing instance shows no authorized network with a prefix shorter than /8. A failing instance shows an entry such as `0.0.0.0/0`, `::/0`, or `0.0.0.0/1`.
 
         ### Audit via CLI
 
@@ -18022,7 +17823,7 @@ queries:
           --format="json(settings.ipConfiguration.authorizedNetworks)"
         ```
 
-        A passing instance returns no network entries with a `value` of `0.0.0.0/0` or `::/0`. A failing instance returns one or more entries where `value` is `0.0.0.0/0` or `::/0`.
+        A passing instance returns no entry whose `value` has a prefix shorter than /8. A failing instance returns one or more such entries, for example `0.0.0.0/0`, `::/0`, or `0.0.0.0/1`.
       remediation:
         - id: terraform
           desc: |
@@ -18054,7 +17855,7 @@ queries:
             1. Navigate to the Cloud SQL Instances page: [https://console.cloud.google.com/sql/instances](https://console.cloud.google.com/sql/instances).
             2. Select the instance.
             3. Go to the **Connections** tab.
-            4. Under **Authorized networks**, remove any entry with the value `0.0.0.0/0` or `::/0`.
+            4. Under **Authorized networks**, remove any entry with a prefix shorter than /8, such as `0.0.0.0/0`, `::/0`, or `0.0.0.0/1`.
             5. Add specific IP ranges that require access.
             6. Select **Save**.
         - id: cli
@@ -18074,19 +17875,19 @@ queries:
     filters: asset.platform == 'gcp-sql-mysql'
     mql: |
       gcp.sql.instance.settings.ipConfiguration.authorizedNetworks.none(
-        _['value'].in(["0.0.0.0/0", "::/0"])
+        _['value'] == /\/[0-7]$/
       )
   - uid: mondoo-gcp-security-cloud-sql-no-overly-permissive-authorized-networks-gcp-postgresql
     filters: asset.platform == 'gcp-sql-postgresql'
     mql: |
       gcp.sql.instance.settings.ipConfiguration.authorizedNetworks.none(
-        _['value'].in(["0.0.0.0/0", "::/0"])
+        _['value'] == /\/[0-7]$/
       )
   - uid: mondoo-gcp-security-cloud-sql-no-overly-permissive-authorized-networks-gcp-sqlserver
     filters: asset.platform == 'gcp-sql-sqlserver'
     mql: |
       gcp.sql.instance.settings.ipConfiguration.authorizedNetworks.none(
-        _['value'].in(["0.0.0.0/0", "::/0"])
+        _['value'] == /\/[0-7]$/
       )
   - uid: mondoo-gcp-security-cloud-sql-no-overly-permissive-authorized-networks-terraform-hcl
     filters: |
@@ -18096,8 +17897,7 @@ queries:
         blocks.where(type == 'settings').all(
           blocks.where(type == 'ip_configuration').all(
             blocks.where(type == 'authorized_networks').all(
-              arguments['value'] != '0.0.0.0/0' &&
-              arguments['value'] != '::/0'
+              arguments['value'] != /\/[0-7]$/
             )
           )
         )
@@ -18111,7 +17911,7 @@ queries:
           _['ip_configuration'].all(
             _['authorized_networks'] == empty ||
             _['authorized_networks'].none(
-              _['value'].in(['0.0.0.0/0', '::/0'])
+              _['value'] == /\/[0-7]$/
             )
           )
         )
@@ -18125,7 +17925,7 @@ queries:
           _['ip_configuration'].all(
             _['authorized_networks'] == empty ||
             _['authorized_networks'].none(
-              _['value'].in(['0.0.0.0/0', '::/0'])
+              _['value'] == /\/[0-7]$/
             )
           )
         )
@@ -21124,7 +20924,7 @@ queries:
       desc: |
         This check verifies that a Bigtable cluster's stored data is encrypted under a Cloud KMS key the organization owns.
 
-        By default Bigtable encrypts data at rest with Google-managed keys, which cannot be rotated on a schedule the organization chooses or revoked independently. On the **Bigtable** page, the **Encryption** column on an instance's **Clusters** tab must show a customer-managed key; `gcloud bigtable clusters list --instances=INSTANCE_ID` reports the same as a non-empty `encryptionInfo.kmsKeyName`, and this check requires an encryption configuration on every cluster in the instance.
+        By default Bigtable encrypts data at rest with Google-managed keys, which cannot be rotated on a schedule the organization chooses or revoked independently. On the **Bigtable** page, the **Encryption** column on an instance's **Clusters** tab must show a customer-managed key; `gcloud bigtable clusters list --instances=INSTANCE_ID` reports the same as a non-empty `encryptionConfig.kmsKeyName`, and this check requires an encryption configuration on every cluster in the instance.
 
         **Why this matters**
 
@@ -21158,7 +20958,7 @@ queries:
 
         ```bash
         gcloud bigtable clusters list --instances=INSTANCE_ID \
-          --format="table(name,zone,state,encryptionInfo.kmsKeyName)"
+          --format="table(name.basename(),location.basename(),state,encryptionConfig.kmsKeyName)"
         ```
 
         A passing Bigtable cluster returns a non-empty `KMS_KEY_NAME`. A failing cluster returns an empty `KMS_KEY_NAME`.
@@ -21336,6 +21136,7 @@ queries:
             ```bash
             gcloud alloydb clusters create CLUSTER_ID \
               --region=REGION \
+              --password=PASSWORD \
               --network=NETWORK \
               --kms-key=projects/PROJECT/locations/LOCATION/keyRings/RING/cryptoKeys/KEY
             ```
@@ -21436,7 +21237,7 @@ queries:
         1. List AlloyDB clusters to find cluster names and regions:
 
         ```bash
-        gcloud alloydb clusters list --region=- --format="table(name,region)"
+        gcloud alloydb clusters list --region=- --format="table(name.basename(),name.segment(3):label=REGION)"
         ```
 
         2. For each cluster, list instances and check for public IP assignments:
@@ -25079,177 +24880,6 @@ queries:
           _['backup_configuration'].all(_['enabled'] == true)
         )
       )
-  - uid: mondoo-gcp-security-cloud-sql-sqlserver-cross-db-ownership-chaining-disabled
-    title: Ensure cross-database ownership chaining is disabled
-    impact: 60
-    tags:
-      compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-04
-      compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
-      compliance/iso-27001-2022: iso-27001-2022-a-8-9
-      compliance/nis-2: nis-2-21-2-e
-      compliance/nist-csf-1: nist-csf-1-pr-ip-1
-      compliance/nist-csf-2: nist-csf-2-pr-ps-01
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-6
-      compliance/nist-sp-800-171: nist-sp-800-171--3-4-2
-      compliance/owasp-top-10-2025: owasp-top-10-2025-a02
-      compliance/pci-dss-4: pcidss-requirement-2-2-1
-      compliance/soc2-2017: soc2-control-cc7-1-1
-      compliance/vda-isa-5: vda-isa-5-4-2-1
-    variants:
-      - uid: mondoo-gcp-security-cloud-sql-sqlserver-cross-db-ownership-chaining-disabled-gcp
-        tags:
-          mondoo.com/filter-title: GCP Cloud SQL SQL Server Instance
-          mondoo.com/filter-icon: gcp
-      - uid: mondoo-gcp-security-cloud-sql-sqlserver-cross-db-ownership-chaining-disabled-terraform-hcl
-        tags:
-          mondoo.com/filter-title: Terraform HCL
-          mondoo.com/filter-icon: terraform
-      - uid: mondoo-gcp-security-cloud-sql-sqlserver-cross-db-ownership-chaining-disabled-terraform-plan
-        tags:
-          mondoo.com/filter-title: Terraform Plan
-          mondoo.com/filter-icon: terraform
-      - uid: mondoo-gcp-security-cloud-sql-sqlserver-cross-db-ownership-chaining-disabled-terraform-state
-        tags:
-          mondoo.com/filter-title: Terraform State
-          mondoo.com/filter-icon: terraform
-    docs:
-      desc: |
-        This check verifies that permission boundaries between databases on a Cloud SQL for SQL Server instance are enforced independently.
-
-        Cross-database ownership chaining lets a stored procedure in one database reach objects in another without the caller holding any permission on the target, provided the ownership chain lines up. The `cross db ownership chaining` flag is `on` by default on Cloud SQL for SQL Server, so this behavior is present until an operator turns it off. Set the flag to `off` in the console under **Edit > Flags**, or with `gcloud sql instances patch <instance-name> --database-flags="cross db ownership chaining=off"`.
-
-        **Why this matters**
-
-        Ownership chaining is a privilege escalation path that does not look like one in a permission review. A user granted access only to a reporting database can read production tables through a chained procedure, and the grant that permits it lives in a different database from the one being examined.
-
-        It also turns a single compromised database into a foothold on the whole instance. An attacker who gains write access to one database can author a procedure that reads or modifies data in the others, so containment fails at exactly the moment it matters.
-
-        With the feature off, each database enforces its own access controls with no inheritance from elsewhere, and any cross-database access requires an explicit grant. That makes entitlements reviewable, because what a principal can reach is visible in the permissions rather than implied by object ownership.
-
-        Cross-database chaining is rarely needed in modern application designs, so the safer setting is almost always the correct one. The `gcloud` command replaces every flag currently set on the instance and may trigger a restart, so include the existing flags in the same list.
-      audit: |
-        ### Audit via Console
-
-        1. Navigate to **SQL** > **Instances**.
-        2. Select the SQL Server instance.
-        3. Select **Edit** and scroll to the **Flags** section.
-        4. Look for the `cross db ownership chaining` flag and its value.
-
-        A passing instance shows the `cross db ownership chaining` flag set to `off`. A failing instance shows the flag set to `on` or the flag is absent (which defaults to `on`).
-
-        ### Audit via CLI
-
-        1. Describe the Cloud SQL instance and inspect the database flags:
-
-        ```bash
-        gcloud sql instances describe <instance-name> \
-          --format="value(settings.databaseFlags)"
-        ```
-
-        A passing instance returns a flag entry with `name: cross db ownership chaining` and `value: off`. A failing instance returns a value of `on` or no entry for the flag.
-      remediation:
-        - id: console
-          desc: |
-            To ensure cross-database ownership chaining is disabled using the Google Cloud Console:
-
-            1. Navigate to **SQL** > **Instances**.
-            2. Select the SQL Server instance.
-            3. Select **Edit**.
-            4. Under **Flags**, add or update the `cross db ownership chaining` flag to `off`.
-            5. Select **Save**.
-        - id: cli
-          desc: |
-            To ensure cross-database ownership chaining is disabled using the gcloud CLI:
-
-            ```bash
-            gcloud sql instances patch <instance-name> \
-              --database-flags="cross db ownership chaining=off"
-            ```
-
-            Note: This command replaces all database flags currently set on the instance and may trigger a restart. Include every existing flag in the `--database-flags` list along with `cross db ownership chaining=off`.
-        - id: terraform
-          desc: |
-            To ensure cross-database ownership chaining is disabled in Terraform, set the database flag in the settings block:
-
-            ```hcl
-            resource "google_sql_database_instance" "sqlserver" {
-              name             = "sqlserver-instance"
-              database_version = "SQLSERVER_2019_STANDARD"
-              region           = "us-central1"
-
-              settings {
-                tier = "db-custom-2-7680"
-
-                database_flags {
-                  name  = "cross db ownership chaining"
-                  value = "off"
-                }
-              }
-            }
-            ```
-    refs:
-      - url: https://docs.cloud.google.com/sql/docs/sqlserver/flags
-        title: Google Cloud Documentation - Configuring database flags for SQL Server
-  - uid: mondoo-gcp-security-cloud-sql-sqlserver-cross-db-ownership-chaining-disabled-gcp
-    filters: |
-      asset.platform == 'gcp-sql-sqlserver'
-    mql: |
-      gcp.sql.instance.settings.databaseFlags["cross db ownership chaining"] == "off"
-  - uid: mondoo-gcp-security-cloud-sql-sqlserver-cross-db-ownership-chaining-disabled-terraform-hcl
-    filters: |
-      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_sql_database_instance' && arguments['database_version'].contains('SQLSERVER'))
-    mql: |
-      # Require a 'cross db ownership chaining' flag to exist and be set to 'off' on every settings block of all SQL Server instances.
-      # Without the existence guard, .all() over a .where() that filters down to zero matches is vacuously true and the check would silently pass when the flag is omitted.
-      terraform.resources('google_sql_database_instance')
-        .where(arguments['database_version'].contains('SQLSERVER'))
-        .all(
-          blocks.where(type == 'settings') != empty &&
-          blocks.where(type == 'settings').all(
-            blocks.where(type == 'database_flags').where(
-              arguments['name'] == 'cross db ownership chaining'
-            ) != empty &&
-            blocks.where(type == 'database_flags')
-              .where(arguments['name'] == 'cross db ownership chaining')
-              .all(
-                arguments['value'] == 'off'
-              )
-          )
-        )
-  - uid: mondoo-gcp-security-cloud-sql-sqlserver-cross-db-ownership-chaining-disabled-terraform-plan
-    filters: |
-      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_sql_database_instance' && change.after.database_version.contains('SQLSERVER'))
-    mql: |
-      terraform.plan.resourceChanges
-        .where(
-          type == 'google_sql_database_instance' && change.after.database_version.contains('SQLSERVER')
-        )
-        .all(
-          change.after['settings'].all(
-            _['database_flags'].contains(name == 'cross db ownership chaining') &&
-            _['database_flags'].where(name == 'cross db ownership chaining').all(
-              _['value'] == 'off'
-            )
-          )
-        )
-  - uid: mondoo-gcp-security-cloud-sql-sqlserver-cross-db-ownership-chaining-disabled-terraform-state
-    filters: |
-      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_sql_database_instance' && values.database_version.contains('SQLSERVER'))
-    mql: |
-      terraform.state.resources
-        .where(type == 'google_sql_database_instance' && values.database_version.contains('SQLSERVER'))
-        .all(
-          values['settings'].all(
-            _['database_flags'].contains(name == 'cross db ownership chaining')
-          ) &&
-          values['settings'].all(
-            _['database_flags'].where(name == 'cross db ownership chaining').all(
-              _['value'] == 'off'
-            )
-          )
-        )
   - uid: mondoo-gcp-security-cloud-sql-sqlserver-contained-db-auth-disabled
     title: Ensure contained database authentication is disabled
     impact: 60
@@ -25289,7 +24919,7 @@ queries:
       desc: |
         This check verifies that authentication on a Cloud SQL for SQL Server instance flows through instance-level logins rather than credentials stored inside individual databases.
 
-        Contained database authentication lets SQL Server authenticate a user against a password hash held in the database itself, with no instance-level login involved. The `contained database authentication` flag is `on` by default on Cloud SQL, so the capability exists until it is explicitly disabled. Set it to `off` in the console under **Edit > Flags**, or run `gcloud sql instances patch <instance-name> --database-flags="contained database authentication=off"`.
+        Contained database authentication lets SQL Server authenticate a user against a password hash held in the database itself, with no instance-level login involved. Cloud SQL leaves the `contained database authentication` flag unset, and an unset flag means `off`, so the capability exists only after an operator turns it on. This check fails an instance with the flag set to `on`. Set it to `off` in the console under **Edit > Flags**, or run `gcloud sql instances patch <instance-name> --database-flags="contained database authentication=off"`.
 
         **Why this matters**
 
@@ -25310,7 +24940,7 @@ queries:
         3. Select **Edit** and scroll to the **Flags** section.
         4. Look for the `contained database authentication` flag and its value.
 
-        A passing instance shows the `contained database authentication` flag set to `off`. A failing instance shows the flag set to `on` or the flag is absent (which defaults to `on`).
+        A passing instance shows the `contained database authentication` flag set to `off` or does not list it. A failing instance shows the flag set to `on`.
 
         ### Audit via CLI
 
@@ -25321,7 +24951,7 @@ queries:
           --format="value(settings.databaseFlags)"
         ```
 
-        A passing instance returns a flag entry with `name: contained database authentication` and `value: off`. A failing instance returns a value of `on` or no entry for the flag.
+        A passing instance returns no entry for the flag, or an entry with `value: off`. A failing instance returns an entry with `value: on`.
       remediation:
         - id: console
           desc: |
@@ -25369,21 +24999,18 @@ queries:
     filters: |
       asset.platform == 'gcp-sql-sqlserver'
     mql: |
+      gcp.sql.instance.settings.databaseFlags["contained database authentication"] == empty ||
       gcp.sql.instance.settings.databaseFlags["contained database authentication"] == "off"
   - uid: mondoo-gcp-security-cloud-sql-sqlserver-contained-db-auth-disabled-terraform-hcl
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_sql_database_instance' && arguments['database_version'].contains('SQLSERVER'))
     mql: |
-      # Require a 'contained database authentication' flag to exist and be set to 'off' on every settings block of all SQL Server instances.
-      # Without the existence guard, .all() over a .where() that filters down to zero matches is vacuously true and the check would silently pass when the flag is omitted.
+      # An omitted flag leaves contained database authentication off, the Cloud SQL default.
       terraform.resources('google_sql_database_instance')
         .where(arguments['database_version'].contains('SQLSERVER'))
         .all(
           blocks.where(type == 'settings') != empty &&
           blocks.where(type == 'settings').all(
-            blocks.where(type == 'database_flags').where(
-              arguments['name'] == 'contained database authentication'
-            ) != empty &&
             blocks.where(type == 'database_flags')
               .where(arguments['name'] == 'contained database authentication')
               .all(
@@ -25401,7 +25028,6 @@ queries:
         )
         .all(
           change.after['settings'].all(
-            _['database_flags'].contains(name == 'contained database authentication') &&
             _['database_flags'].where(name == 'contained database authentication').all(
               _['value'] == 'off'
             )
@@ -25414,9 +25040,6 @@ queries:
       terraform.state.resources
         .where(type == 'google_sql_database_instance' && values.database_version.contains('SQLSERVER'))
         .all(
-          values['settings'].all(
-            _['database_flags'].contains(name == 'contained database authentication')
-          ) &&
           values['settings'].all(
             _['database_flags'].where(name == 'contained database authentication').all(
               _['value'] == 'off'
@@ -27171,11 +26794,11 @@ queries:
 
         ### Audit via CLI
 
-        1. Describe the bucket and inspect the `objectRetentionMode` field:
+        1. Describe the bucket and inspect its object retention mode:
 
         ```bash
         gcloud storage buckets describe gs://BUCKET_NAME \
-          --format="table(name,objectRetentionMode)"
+          --format="table(name,per_object_retention.mode)"
         ```
 
         A passing bucket returns `objectRetentionMode: Enabled`. A failing bucket returns an empty or absent `objectRetentionMode`.
@@ -27715,7 +27338,7 @@ queries:
 
         IAM-backed users inherit short-lived tokens and automatic rotation, and revoking the IAM principal ends database access in the same action.
 
-        The engine-managed accounts `root`, `postgres`, and `sqlserver` are deliberately exempt, since Cloud SQL provisions them and they cannot be replaced with IAM equivalents.
+        The engine-managed accounts `root`, `postgres`, and `sqlserver`, and the `##MS_...##` system logins SQL Server creates, are deliberately exempt, since Cloud SQL provisions them and they cannot be replaced with IAM equivalents. The Cloud SQL API omits the `type` field for built-in users, so a user with no type counts as built-in.
       audit: |
         ### Audit via Console
 
@@ -27738,7 +27361,7 @@ queries:
           --format="table(name,type)"
         ```
 
-        A passing instance returns all non-system users with a `type` of `CLOUD_IAM_USER`, `CLOUD_IAM_SERVICE_ACCOUNT`, or another IAM-backed type. A failing instance returns one or more users with `type: BUILT_IN` whose names are not `root`, `postgres`, or `sqlserver`.
+        A passing instance returns all non-system users with a `type` of `CLOUD_IAM_USER`, `CLOUD_IAM_SERVICE_ACCOUNT`, or another IAM-backed type. A failing instance returns one or more users with `type: BUILT_IN` whose names are not `root`, `postgres`, `sqlserver`, or a `##MS_...##` system login.
       remediation:
         - id: terraform
           desc: |
@@ -27805,7 +27428,9 @@ queries:
     filters: asset.platform == 'gcp-sql-mysql' || asset.platform == 'gcp-sql-postgresql' || asset.platform == 'gcp-sql-sqlserver'
     mql: |
       gcp.project.sqlService.instance.users.all(
-        type != "BUILT_IN" || name == "root" || name == "postgres" || name == "sqlserver"
+        type != empty && type != "BUILT_IN" ||
+        name == "root" || name == "postgres" || name == "sqlserver" ||
+        name == /^##MS_[A-Za-z]+##$/
       )
   - uid: mondoo-gcp-security-cloud-sql-users-use-iam-auth-terraform-hcl
     filters: |
@@ -28797,6 +28422,7 @@ queries:
         ```bash
         curl -s \
           -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+          -H "x-goog-user-project: PROJECT_ID" \
           "https://dlp.googleapis.com/v2/projects/PROJECT_ID/jobTriggers"
         ```
 
@@ -28858,6 +28484,7 @@ queries:
             ```bash
             curl -X PATCH \
               -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+              -H "x-goog-user-project: <project>" \
               -H "Content-Type: application/json" \
               -d '{"jobTrigger":{"status":"HEALTHY"},"updateMask":"status"}' \
               "https://dlp.googleapis.com/v2/projects/<project>/jobTriggers/<trigger-id>"
@@ -28932,6 +28559,7 @@ queries:
         ```bash
         curl -s \
           -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+          -H "x-goog-user-project: PROJECT_ID" \
           "https://dlp.googleapis.com/v2/projects/PROJECT_ID/inspectTemplates"
         ```
 
@@ -28992,6 +28620,7 @@ queries:
             ```bash
             curl -X PATCH \
               -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+              -H "x-goog-user-project: <project>" \
               -H "Content-Type: application/json" \
               -d @inspect-template.json \
               "https://dlp.googleapis.com/v2/projects/<project>/inspectTemplates/<template-id>"
@@ -30765,7 +30394,7 @@ queries:
     variants:
       - uid: mondoo-gcp-security-bigquery-aws-azure-connections-use-identity-federation-gcp
         tags:
-          mondoo.com/filter-title: GCP BigQuery
+          mondoo.com/filter-title: GCP Project
           mondoo.com/filter-icon: gcp
       - uid: mondoo-gcp-security-bigquery-aws-azure-connections-use-identity-federation-terraform-hcl
         tags:
@@ -30874,7 +30503,7 @@ queries:
       - url: https://docs.cloud.google.com/bigquery/docs/omni-azure-create-connection
         title: BigQuery Omni - Create Azure connection with identity federation
   - uid: mondoo-gcp-security-bigquery-aws-azure-connections-use-identity-federation-gcp
-    filters: asset.platform == 'gcp-bigquery-dataset'
+    filters: asset.platform == 'gcp-project'
     mql: |
       gcp.project.bigqueryService.connections.where(type == "AWS").all(
         properties['accessRole']['iamRoleId'] != empty
@@ -30951,7 +30580,7 @@ queries:
   - uid: mondoo-gcp-security-bigquery-cloudsql-connection-credentials-rotated-90-days
     title: Ensure BigQuery Cloud SQL connection credentials rotated within 90 days
     impact: 60
-    filters: asset.platform == 'gcp-bigquery-dataset'
+    filters: asset.platform == 'gcp-project'
     tags:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-15
@@ -31069,133 +30698,6 @@ queries:
   # field to evaluate and a state-only variant would not catch the drift this
   # check is designed to surface (an operator manually rebinding the connection
   # in the API to a default SA after creation).
-  - uid: mondoo-gcp-security-bigquery-cloud-resource-connection-sa-no-default
-    title: Ensure BigQuery Cloud Resource connection SAs are not default SAs
-    impact: 80
-    filters: asset.platform == 'gcp-bigquery-dataset'
-    tags:
-      compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
-      compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
-      compliance/iso-27001-2022: iso-27001-2022-a-8-2
-      compliance/nis-2: nis-2-21-2-i
-      compliance/nist-csf-1: nist-csf-1-pr-ac-4
-      compliance/nist-csf-2: nist-csf-2-pr-aa-05
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
-      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
-      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
-      compliance/pci-dss-4: pcidss-requirement-7-2-1
-      compliance/soc2-2017: soc2-control-cc6-3-3
-      compliance/vda-isa-5: vda-isa-5-4-2-1
-    mql: |
-      gcp.project.bigqueryService.connections.where(type == "CLOUD_RESOURCE").all(
-        properties['serviceAccountId'] == null ||
-        properties['serviceAccountId'].contains("-compute@developer.gserviceaccount.com") == false
-      )
-      gcp.project.bigqueryService.connections.where(type == "CLOUD_RESOURCE").all(
-        properties['serviceAccountId'] == null ||
-        properties['serviceAccountId'].contains("@appspot.gserviceaccount.com") == false
-      )
-    docs:
-      desc: |
-        This check verifies that a BigQuery Cloud Resource connection acts under a purpose-built identity rather than one of the project's default service accounts.
-
-        The connection's delegated service account must not end in `-compute@developer.gserviceaccount.com`, the default Compute Engine account, or `@appspot.gserviceaccount.com`, the default App Engine account. Both are auto-provisioned with the broad `roles/editor` primitive role. The console shows the identity in the **Service account** field of each connection under **External connections**, and `bq show --connection --location=LOCATION --format=prettyjson PROJECT_ID.LOCATION.CONNECTION_ID` reports it as `cloudResource.serviceAccountId`.
-
-        **Why this matters**
-
-        `roles/editor` grants write access to nearly every resource type in the project, which is orders of magnitude more than any single BigQuery integration requires. Everything the connection can be made to do inherits that reach.
-
-        Cloud Resource connections are the mechanism behind remote functions, BigLake tables, and Vertex AI remote models, so the code paths running under this identity include remote function bodies and `EXTERNAL_QUERY` calls, and for model-backed connections they include whatever a prompt injection persuades the model to attempt. Running any of those with project-editor rights means a single bad input can read secrets, modify storage, or deploy new resources anywhere in the project. Because default accounts are shared by many workloads at once, audit logs cannot distinguish an action taken through the connection from any other workload using the same identity, so the investigation afterwards stalls.
-
-        BigQuery auto-provisions the delegate service account for a Cloud Resource connection and it cannot be supplied by the operator, so the fix is to recreate the connection, then grant the fresh delegate only narrow roles: `roles/storage.objectViewer` on one specific bucket, or `roles/aiplatform.user` scoped to the model in use. Remove the `roles/editor` grant from the default service account once nothing else depends on it. A connection that reports no service account is not flagged.
-      audit: |
-        ### Audit via Console
-
-        1. Open the [Google Cloud Console](https://console.cloud.google.com/) and navigate to **BigQuery**.
-        2. In the Explorer panel, click **External connections**.
-        3. For each connection whose **Type** is **Cloud Resource**, open the connection details and locate the **Service account** field.
-        4. Verify the service account does not end with `-compute@developer.gserviceaccount.com` (default Compute Engine SA) or `@appspot.gserviceaccount.com` (default App Engine SA).
-
-        A passing connection shows a dedicated, purpose-built service account in the **Service account** field. A failing connection shows a default Compute Engine or App Engine service account.
-
-        ### Audit via CLI
-
-        1. List Cloud Resource connections:
-
-        ```bash
-        bq ls --connection --location=LOCATION --format=prettyjson --project_id=PROJECT_ID
-        ```
-
-        2. For each connection whose `type` is `CLOUD_RESOURCE`, inspect the delegated service account:
-
-        ```bash
-        bq show --connection --location=LOCATION --format=prettyjson PROJECT_ID.LOCATION.CONNECTION_ID
-        ```
-
-        A passing connection returns a `cloudResource.serviceAccountId` that does not contain `-compute@developer.gserviceaccount.com` or `@appspot.gserviceaccount.com`. A failing connection returns one of those default service account addresses.
-      remediation:
-        - id: terraform
-          desc: |
-            BigQuery auto-provisions the delegated service account for a Cloud Resource connection; it cannot be supplied in HCL. Declare the connection and grant the auto-provisioned account only the narrow roles it needs:
-
-            ```hcl
-            resource "google_bigquery_connection" "cloud_resource" {
-              connection_id = "cloud-resource"
-              location      = "us-central1"
-              cloud_resource {}
-            }
-
-            # BigQuery auto-provisions the delegated service account. Grant it only
-            # the narrow roles the connection needs:
-            resource "google_storage_bucket_iam_member" "cloud_resource_reader" {
-              bucket = google_storage_bucket.data.name
-              role   = "roles/storage.objectViewer"
-              member = "serviceAccount:${google_bigquery_connection.cloud_resource.cloud_resource[0].service_account_id}"
-            }
-            ```
-        - id: console
-          desc: |
-            Recreate the connection so BigQuery provisions a fresh Google-managed delegate service account:
-
-            1. Open **BigQuery** → **External connections** and note the flagged connection's settings.
-            2. Select **+ Add** → **Connections to external data sources**, choose **Vertex AI remote models, remote functions and BigLake (Cloud Resource)**, and create a replacement connection. BigQuery provisions a dedicated delegate service account automatically.
-            3. Grant the new delegate service account only the narrow roles the connection needs, for example `roles/storage.objectViewer` on a specific bucket.
-            4. Update queries and remote functions to reference the new connection, then delete the flagged connection.
-            5. Remove the `roles/editor` grant from the default service account, or disable the default service account entirely if no other workload depends on it.
-        - id: cli
-          desc: |
-            `bq mk --connection --connection_type=CLOUD_RESOURCE` auto-provisions a Google-managed delegated service account; you grant narrow roles to that SA rather than supplying your own.
-
-            Create (or recreate) the connection and read back the auto-provisioned SA:
-
-            ```bash
-            bq mk --connection \
-              --connection_type=CLOUD_RESOURCE \
-              --location=LOCATION \
-              CONNECTION_ID
-
-            bq show --connection --location=LOCATION --format=prettyjson \
-              PROJECT_ID.LOCATION.CONNECTION_ID
-            ```
-
-            The `cloudResource.serviceAccountId` field in the output is the delegated SA. Grant it only the narrow roles the connection needs (example for Cloud Storage):
-
-            ```bash
-            DELEGATE_SA=$(bq show --connection --location=LOCATION --format=json \
-              PROJECT_ID.LOCATION.CONNECTION_ID \
-              | jq -r '.cloudResource.serviceAccountId')
-
-            gcloud storage buckets add-iam-policy-binding gs://BUCKET_NAME \
-              --member="serviceAccount:${DELEGATE_SA}" \
-              --role=roles/storage.objectViewer
-            ```
-    refs:
-      - url: https://docs.cloud.google.com/bigquery/docs/create-cloud-resource-connection
-        title: Create and set up a Cloud resource connection
-      - url: https://docs.cloud.google.com/iam/docs/service-account-types#default
-        title: Types of service accounts
   - uid: mondoo-gcp-security-spanner-backup-schedule-cmek-encryption
     title: Ensure Spanner backup schedules use customer-managed encryption
     impact: 70
@@ -31235,7 +30737,7 @@ queries:
       desc: |
         This check verifies that the copies a Spanner backup schedule produces stay inside the same key management boundary as the live database.
 
-        A backup schedule carries its own encryption setting, distinct from the database's. On the **Backup schedules** page for a Spanner database, the **Encryption** column must read **Use database encryption** or **Customer-managed encryption key** rather than **Google-managed encryption key**; `gcloud spanner backup-schedules list` reports the same as `CUSTOMER_MANAGED_ENCRYPTION` or `USE_DATABASE_ENCRYPTION` in the `ENCRYPTION_TYPE` column, and a schedule left at `GOOGLE_DEFAULT_ENCRYPTION` fails.
+        A backup schedule carries its own encryption setting, distinct from the database's. On the **Backup schedules** page for a Spanner database, the **Encryption** column must read **Use database encryption** or **Customer-managed encryption key** rather than **Google-managed encryption key**; `gcloud spanner backup-schedules list` reports the same as `CUSTOMER_MANAGED_ENCRYPTION` or `USE_DATABASE_ENCRYPTION` in the `ENCRYPTION_TYPE` column, and a schedule left at `GOOGLE_DEFAULT_ENCRYPTION` fails. `USE_DATABASE_ENCRYPTION` passes only when the database itself uses a customer-managed key, because on a Google-managed database it produces Google-managed backups. Spanner creates a `default_daily_full_backup_schedule` with `USE_DATABASE_ENCRYPTION` on new databases, so a database without CMEK fails this check through that schedule as well.
 
         **Why this matters**
 
@@ -31267,7 +30769,7 @@ queries:
           --format="table(name,encryptionConfig.encryptionType)"
         ```
 
-        A passing schedule returns `CUSTOMER_MANAGED_ENCRYPTION` or `USE_DATABASE_ENCRYPTION` in the `ENCRYPTION_TYPE` column. A failing schedule returns `GOOGLE_DEFAULT_ENCRYPTION`.
+        A passing schedule returns `CUSTOMER_MANAGED_ENCRYPTION`, or `USE_DATABASE_ENCRYPTION` on a database that `gcloud spanner databases list --instance=INSTANCE_ID` shows with a KMS key. A failing schedule returns `GOOGLE_DEFAULT_ENCRYPTION`, or `USE_DATABASE_ENCRYPTION` on a database without a KMS key.
       remediation:
         - id: terraform
           desc: |
@@ -31328,41 +30830,45 @@ queries:
   - uid: mondoo-gcp-security-spanner-backup-schedule-cmek-encryption-gcp
     filters: asset.platform == 'gcp-spanner-instance'
     mql: |
+      cmekDatabases = gcp.spanner.instance.databases.where(encryptionConfig != empty).map(name)
       gcp.spanner.instance.backupSchedules.all(
         encryptionConfig['encryptionType'] == "CUSTOMER_MANAGED_ENCRYPTION" ||
-        encryptionConfig['encryptionType'] == "USE_DATABASE_ENCRYPTION"
+        encryptionConfig['encryptionType'] == "USE_DATABASE_ENCRYPTION" && databaseName.in(cmekDatabases)
       )
   - uid: mondoo-gcp-security-spanner-backup-schedule-cmek-encryption-terraform-hcl
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_spanner_backup_schedule')
     mql: |
+      plainDatabases = terraform.resources('google_spanner_database').where(blocks.where(type == 'encryption_config') == empty)
       terraform.resources('google_spanner_backup_schedule').all(
         blocks.where(type == 'encryption_config') != empty &&
         blocks.where(type == 'encryption_config').all(
           arguments['encryption_type'] == "CUSTOMER_MANAGED_ENCRYPTION" ||
-          arguments['encryption_type'] == "USE_DATABASE_ENCRYPTION"
+          arguments['encryption_type'] == "USE_DATABASE_ENCRYPTION" && plainDatabases == empty
         )
       )
   - uid: mondoo-gcp-security-spanner-backup-schedule-cmek-encryption-terraform-plan
     filters: |
       asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_spanner_backup_schedule')
     mql: |
+      plainDatabases = terraform.plan.resourceChanges.where(type == 'google_spanner_database' && change.after['encryption_config'] == empty)
       terraform.plan.resourceChanges.where(type == 'google_spanner_backup_schedule').all(
         change.after['encryption_config'] != empty &&
         change.after['encryption_config'].all(
           _['encryption_type'] == "CUSTOMER_MANAGED_ENCRYPTION" ||
-          _['encryption_type'] == "USE_DATABASE_ENCRYPTION"
+          _['encryption_type'] == "USE_DATABASE_ENCRYPTION" && plainDatabases == empty
         )
       )
   - uid: mondoo-gcp-security-spanner-backup-schedule-cmek-encryption-terraform-state
     filters: |
       asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_spanner_backup_schedule')
     mql: |
+      plainDatabases = terraform.state.resources.where(type == 'google_spanner_database' && values['encryption_config'] == empty)
       terraform.state.resources.where(type == 'google_spanner_backup_schedule').all(
         values['encryption_config'] != empty &&
         values['encryption_config'].all(
           _['encryption_type'] == "CUSTOMER_MANAGED_ENCRYPTION" ||
-          _['encryption_type'] == "USE_DATABASE_ENCRYPTION"
+          _['encryption_type'] == "USE_DATABASE_ENCRYPTION" && plainDatabases == empty
         )
       )
   - uid: mondoo-gcp-security-spanner-iam-no-primitive-roles
@@ -31592,210 +31098,6 @@ queries:
         values['role'] != "roles/owner" &&
         values['role'] != "roles/editor" &&
         values['role'] != "roles/viewer"
-      )
-  - uid: mondoo-gcp-security-spanner-iam-no-public-principals
-    title: Ensure Spanner IAM has no public or anonymous principals
-    impact: 100
-    tags:
-      compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
-      compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
-      compliance/iso-27001-2022: iso-27001-2022-a-5-15
-      compliance/nis-2: nis-2-21-2-i
-      compliance/nist-csf-1: nist-csf-1-pr-ac-4
-      compliance/nist-csf-2: nist-csf-2-pr-aa-05
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
-      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
-      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
-      compliance/pci-dss-4: pcidss-requirement-7-2-1
-      compliance/soc2-2017: soc2-control-cc6-1-3
-      compliance/vda-isa-5: vda-isa-5-4-2-1
-    variants:
-      - uid: mondoo-gcp-security-spanner-iam-no-public-principals-gcp
-        tags:
-          mondoo.com/filter-title: GCP Spanner
-          mondoo.com/filter-icon: gcp
-      - uid: mondoo-gcp-security-spanner-iam-no-public-principals-terraform-hcl
-        tags:
-          mondoo.com/filter-title: Terraform HCL
-          mondoo.com/filter-icon: terraform
-      - uid: mondoo-gcp-security-spanner-iam-no-public-principals-terraform-plan
-        tags:
-          mondoo.com/filter-title: Terraform Plan
-          mondoo.com/filter-icon: terraform
-      - uid: mondoo-gcp-security-spanner-iam-no-public-principals-terraform-state
-        tags:
-          mondoo.com/filter-title: Terraform State
-          mondoo.com/filter-icon: terraform
-    docs:
-      desc: |
-        This check verifies that no Spanner instance or database is reachable by a principal that stands for the general public.
-
-        `allUsers` means any caller on the internet with no authentication; `allAuthenticatedUsers` means any holder of a Google account anywhere. This check requires that neither appears as a member in any IAM binding on a Spanner instance or on any of its databases, reviewed from the **Permissions** page at both scopes or through `gcloud spanner instances get-iam-policy` and `gcloud spanner databases get-iam-policy`.
-
-        **Why this matters**
-
-        A single binding to `allUsers` opens the database to unauthenticated callers regardless of what else is configured. VPC Service Controls perimeters, Private Google Access, and organizational policies do not intervene, because the IAM policy authorizes the request before any of those controls would have a say.
-
-        What is behind that door is usually the system of record. Spanner holds customer records, financial ledgers, and session state, and publishing it breaches data protection obligations directly rather than through a chain of downstream effects.
-
-        These bindings are also almost never deliberate. They come from a broad script, a copied example, or a console mis-click, which means nobody is watching for the consequences, yet the exposure is immediate and total from the moment the policy is written.
-
-        Remove the bindings at both scopes with `gcloud spanner instances remove-iam-policy-binding` and `gcloud spanner databases remove-iam-policy-binding`, then re-grant the access to a specific service account, user, or group using an appropriate Spanner predefined role such as `roles/spanner.databaseReader` for read-only consumers. To stop the binding from returning, apply the `constraints/iam.allowedPolicyMemberDomains` organization policy so public principals cannot be added to any IAM policy across the organization. A companion check in this policy covers the related case of primitive roles bound to real identities.
-      audit: |
-        ### Audit via Console
-
-        1. Open the [Google Cloud Console](https://console.cloud.google.com/) and navigate to **Spanner**.
-        2. Select the instance and click **Permissions** in the left navigation.
-        3. Scan each binding for the principals `allUsers` or `allAuthenticatedUsers`.
-        4. For each database in the instance, select the database, click **Permissions**, and repeat the check.
-
-        A passing instance and its databases show no bindings with `allUsers` or `allAuthenticatedUsers` as a member. A failing instance or database shows at least one public-principal binding.
-
-        ### Audit via CLI
-
-        1. Check the instance-level IAM policy:
-
-        ```bash
-        gcloud spanner instances get-iam-policy INSTANCE_ID \
-          --format="json(bindings)" \
-          | jq '.bindings[] | select(.members[] | test("^allUsers$|^allAuthenticatedUsers$"))'
-        ```
-
-        2. Check each database-level IAM policy:
-
-        ```bash
-        gcloud spanner databases get-iam-policy DATABASE_ID \
-          --instance=INSTANCE_ID \
-          --format="json(bindings)" \
-          | jq '.bindings[] | select(.members[] | test("^allUsers$|^allAuthenticatedUsers$"))'
-        ```
-
-        A passing instance and database return no output from the `jq` filter. A failing instance or database returns one or more bindings that include `allUsers` or `allAuthenticatedUsers`.
-      remediation:
-        - id: terraform
-          desc: |
-            Manage Spanner IAM only via `google_spanner_*_iam_member` resources with explicit principals — never with `allUsers` or `allAuthenticatedUsers`:
-
-            ```hcl
-            resource "google_spanner_instance_iam_member" "reader" {
-              instance = google_spanner_instance.app.name
-              role     = "roles/spanner.databaseReader"
-              member   = "group:analytics@example.com" # never allUsers / allAuthenticatedUsers
-            }
-            ```
-
-            Audit existing bindings: import `google_spanner_instance_iam_policy` into state if the policy is managed elsewhere, then remove any public-principal members in the source HCL and re-apply.
-        - id: console
-          desc: |
-            Remove any public principal from the Spanner IAM policy:
-
-            1. Open **Spanner** → select the instance (and, if flagged, the database).
-            2. Select **Permissions**.
-            3. Locate any binding whose principal is `allUsers` or `allAuthenticatedUsers` and remove it.
-            4. Add specific principals (users, groups, service accounts) that need the access, using the narrowest appropriate role (for example `Cloud Spanner Database Reader` for read-only workloads).
-            5. Save and verify the policy no longer lists the public principals.
-        - id: cli
-          desc: |
-            Remove the public bindings from the instance:
-
-            ```bash
-            gcloud spanner instances remove-iam-policy-binding INSTANCE_ID \
-              --member=allUsers \
-              --role=ROLE_NAME
-
-            gcloud spanner instances remove-iam-policy-binding INSTANCE_ID \
-              --member=allAuthenticatedUsers \
-              --role=ROLE_NAME
-            ```
-
-            Repeat at the database scope for every flagged database:
-
-            ```bash
-            gcloud spanner databases remove-iam-policy-binding DATABASE_ID \
-              --instance=INSTANCE_ID \
-              --member=allUsers \
-              --role=ROLE_NAME
-            ```
-    refs:
-      - url: https://docs.cloud.google.com/spanner/docs/iam
-        title: Cloud Spanner - IAM roles and permissions
-      - url: https://docs.cloud.google.com/iam/docs/overview#principals
-        title: IAM - Public principals (allUsers, allAuthenticatedUsers)
-  - uid: mondoo-gcp-security-spanner-iam-no-public-principals-gcp
-    filters: asset.platform == 'gcp-spanner-instance'
-    mql: |
-      gcp.spanner.instance.iamPolicy.all(
-        members.none(_ == "allUsers" || _ == "allAuthenticatedUsers")
-      )
-      gcp.spanner.instance.databases.all(
-        iamPolicy.all(
-          members.none(_ == "allUsers" || _ == "allAuthenticatedUsers")
-        )
-      )
-  - uid: mondoo-gcp-security-spanner-iam-no-public-principals-terraform-hcl
-    filters: |
-      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_spanner_instance_iam_member') ||
-      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_spanner_instance_iam_binding') ||
-      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_spanner_database_iam_member') ||
-      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_spanner_database_iam_binding')
-    mql: |
-      terraform.resources('google_spanner_instance_iam_member').all(
-        arguments['member'] != "allUsers" &&
-        arguments['member'] != "allAuthenticatedUsers"
-      )
-      terraform.resources('google_spanner_instance_iam_binding').all(
-        arguments['members'].none(_ == "allUsers" || _ == "allAuthenticatedUsers")
-      )
-      terraform.resources('google_spanner_database_iam_member').all(
-        arguments['member'] != "allUsers" &&
-        arguments['member'] != "allAuthenticatedUsers"
-      )
-      terraform.resources('google_spanner_database_iam_binding').all(
-        arguments['members'].none(_ == "allUsers" || _ == "allAuthenticatedUsers")
-      )
-  - uid: mondoo-gcp-security-spanner-iam-no-public-principals-terraform-plan
-    filters: |
-      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_spanner_instance_iam_member') ||
-      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_spanner_instance_iam_binding') ||
-      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_spanner_database_iam_member') ||
-      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_spanner_database_iam_binding')
-    mql: |
-      terraform.plan.resourceChanges.where(type == 'google_spanner_instance_iam_member').all(
-        change.after['member'] != "allUsers" &&
-        change.after['member'] != "allAuthenticatedUsers"
-      )
-      terraform.plan.resourceChanges.where(type == 'google_spanner_instance_iam_binding').all(
-        change.after['members'].none(_ == "allUsers" || _ == "allAuthenticatedUsers")
-      )
-      terraform.plan.resourceChanges.where(type == 'google_spanner_database_iam_member').all(
-        change.after['member'] != "allUsers" &&
-        change.after['member'] != "allAuthenticatedUsers"
-      )
-      terraform.plan.resourceChanges.where(type == 'google_spanner_database_iam_binding').all(
-        change.after['members'].none(_ == "allUsers" || _ == "allAuthenticatedUsers")
-      )
-  - uid: mondoo-gcp-security-spanner-iam-no-public-principals-terraform-state
-    filters: |
-      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_spanner_instance_iam_member') ||
-      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_spanner_instance_iam_binding') ||
-      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_spanner_database_iam_member') ||
-      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_spanner_database_iam_binding')
-    mql: |
-      terraform.state.resources.where(type == 'google_spanner_instance_iam_member').all(
-        values['member'] != "allUsers" &&
-        values['member'] != "allAuthenticatedUsers"
-      )
-      terraform.state.resources.where(type == 'google_spanner_instance_iam_binding').all(
-        values['members'].none(_ == "allUsers" || _ == "allAuthenticatedUsers")
-      )
-      terraform.state.resources.where(type == 'google_spanner_database_iam_member').all(
-        values['member'] != "allUsers" &&
-        values['member'] != "allAuthenticatedUsers"
-      )
-      terraform.state.resources.where(type == 'google_spanner_database_iam_binding').all(
-        values['members'].none(_ == "allUsers" || _ == "allAuthenticatedUsers")
       )
   - uid: mondoo-gcp-security-memorystore-iam-auth-enabled
     title: Ensure Memorystore (Valkey/Redis) instances require IAM authentication
@@ -32321,103 +31623,6 @@ queries:
   # which is API-side telemetry not driven by a user-settable Terraform field.
   # A Terraform variant would be vacuously true and silently miss public-PSC
   # attachments configured outside Terraform.
-  - uid: mondoo-gcp-security-memorystore-no-public-psc
-    title: Ensure Memorystore Private Service Connect endpoints are not public
-    impact: 90
-    tags:
-      compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
-      compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
-      compliance/iso-27001-2022: iso-27001-2022-a-8-22
-      compliance/nis-2: nis-2-21-2-i
-      compliance/nist-csf-1: nist-csf-1-pr-ac-5
-      compliance/nist-csf-2: nist-csf-2-pr-ir-01
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
-      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
-      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
-      compliance/pci-dss-4: pcidss-requirement-1-3-1
-      compliance/soc2-2017: soc2-control-cc6-1-5
-      compliance/vda-isa-5: vda-isa-5-5-2-7
-    docs:
-      desc: |
-        This check verifies that every Private Service Connect (PSC) endpoint attached to a Memorystore instance terminates inside a consumer VPC rather than on the public internet.
-
-        Memorystore reaches clients through PSC attachments, and each attachment carries a connection type. Every attachment should carry the `PRIVATE_SERVICE_CONNECT` connection type, which lands the endpoint in a VPC you nominate; one with a connection type of `PUBLIC_ENDPOINT` is reachable from the internet. Review them under **Connectivity** on the instance details page, where each endpoint shows its connection type, or by inspecting the PSC connections returned by `gcloud memorystore instances describe INSTANCE_ID --location=LOCATION`. In Terraform, declare each endpoint with `desired_psc_auto_connections` naming the consumer network and project.
-
-        **Why this matters**
-
-        A public endpoint moves the cache from a private network segment onto the open internet in a single configuration value, and nothing about the instance otherwise changes to signal it. The attack surface expands from the workloads you placed in one VPC to every host that can route to Google.
-
-        IAM authentication narrows but does not close that. A publicly reachable cache still absorbs credential-stuffing, brute-force, and protocol-level attacks from any source, and if authentication is weak or disabled the endpoint is a direct unauthenticated path to read and modify cached data.
-
-        Availability suffers even where data access fails. An internet-reachable cache endpoint can be saturated by volumetric traffic that exhausts connection limits, taking the cache down without any successful authentication.
-
-        Private endpoints also let firewall rules and VPC Service Controls govern reachability at the network perimeter instead of leaving application-layer authentication as the only control.
-
-        A public-endpoint attachment cannot be edited in place; create a private connection in the consumer VPC, migrate clients, and remove the public one. An instance with no PSC attachments at all has no endpoint to expose and satisfies this check.
-      audit: |
-        ### Audit via Console
-
-        1. Open the [Google Cloud Console](https://console.cloud.google.com/) and navigate to **Memorystore > Instances**.
-        2. Select each instance.
-        3. On the instance details page, locate the **Connectivity** section. Review each listed **Private Service Connect** endpoint and confirm that no endpoint has **Connection type: Public endpoint**.
-
-        A passing instance shows only **Private Service Connect** endpoints with **Connection type: Private**. A failing instance shows at least one endpoint with **Connection type: Public endpoint**.
-
-        ### Audit via CLI
-
-        1. Describe each instance and inspect its PSC attachment details:
-
-        ```bash
-        gcloud memorystore instances describe INSTANCE_ID \
-          --location=LOCATION \
-          --format="json(pscAutoConnections)"
-        ```
-
-        A passing instance returns PSC connections where no entry contains `"connectionType": "PUBLIC_ENDPOINT"`. A failing instance returns at least one entry with `"connectionType": "PUBLIC_ENDPOINT"`.
-      remediation:
-        - id: terraform
-          desc: |
-            Declare every endpoint with `desired_psc_auto_connections` so each one terminates inside a consumer VPC. Never request a public-endpoint variant:
-
-            ```hcl
-            resource "google_memorystore_instance" "cache" {
-              instance_id = "my-instance"
-              location    = "us-central1"
-              shard_count = 3
-
-              desired_psc_auto_connections {
-                network    = google_compute_network.consumer_vpc.id
-                project_id = var.consumer_project_id
-              }
-            }
-            ```
-        - id: console
-          desc: |
-            Public-endpoint PSC connections must be replaced — they cannot be edited in place.
-
-            1. Go to **Memorystore > Instances** and select the affected instance.
-            2. Under **Connectivity**, identify any endpoint with **Connection type: Public endpoint**.
-            3. Create a new private PSC connection in the consumer VPC (`Private Service Connect`).
-            4. Migrate clients to the new endpoint and remove the public endpoint.
-        - id: cli
-          desc: |
-            ```bash
-            gcloud memorystore instances describe INSTANCE_ID \
-              --location=LOCATION \
-              --format="value(pscAutoConnections)"
-            ```
-
-            Recreate the instance without the public endpoint variant if any auto-connection has `connectionType: PUBLIC_ENDPOINT`.
-    refs:
-      - url: https://docs.cloud.google.com/memorystore/docs/valkey/networking
-        title: Memorystore for Valkey networking
-    filters: asset.platform == 'gcp-memorystore-instance'
-    mql: |
-      gcp.project.memorystoreService.instance.pscAttachmentDetails.all(
-        connectionType != "PUBLIC_ENDPOINT"
-      )
   - uid: mondoo-gcp-security-memorystore-engine-version-supported
     title: Ensure Memorystore instances run a current Valkey engine version
     impact: 70
@@ -32695,8 +31900,15 @@ queries:
             {
               "displayName": "STREAM_ID",
               "customerManagedEncryptionKey": "projects/PROJECT/locations/LOCATION/keyRings/RING/cryptoKeys/KEY",
-              "sourceConfig": {"sourceConnectionProfile": "projects/PROJECT/locations/LOCATION/connectionProfiles/SOURCE"},
-              "destinationConfig": {"destinationConnectionProfile": "projects/PROJECT/locations/LOCATION/connectionProfiles/DEST"}
+              "sourceConfig": {
+                "sourceConnectionProfile": "projects/PROJECT/locations/LOCATION/connectionProfiles/SOURCE",
+                "mysqlSourceConfig": {}
+              },
+              "destinationConfig": {
+                "destinationConnectionProfile": "projects/PROJECT/locations/LOCATION/connectionProfiles/DEST",
+                "gcsDestinationConfig": {"path": "/PATH", "avroFileFormat": {}}
+              },
+              "backfillAll": {}
             }
             EOF
             ```
@@ -32770,7 +31982,7 @@ queries:
       desc: |
         This check verifies that Datastream reaches its source databases over a network path the organization controls rather than through static service IP connectivity.
 
-        Static service IP connectivity requires the source database to allowlist Datastream's published, project-shared public IP ranges, so the source accepts inbound connections from public addresses that Google controls but shares across many customers. The connectivity method is shown for each profile under **Datastream > Connection profiles** in the Google Cloud console, and `gcloud datastream connection-profiles list` reports it as `CONNECTIVITY_TYPE`. This check requires a value other than `STATIC_SERVICE_IP_CONNECTIVITY`.
+        Static service IP connectivity requires the source database to allowlist Datastream's published, project-shared public IP ranges, so the source accepts inbound connections from public addresses that Google controls but shares across many customers. The connectivity method is shown for each profile under **Datastream > Connection profiles** in the Google Cloud console, and `gcloud datastream connection-profiles describe` returns it as a `staticServiceIpConnectivity`, `forwardSshConnectivity`, or `privateConnectivity` key. This check fails a source profile that uses `staticServiceIpConnectivity`. Cloud Storage and BigQuery destination profiles also report `staticServiceIpConnectivity`, but Datastream does not use it to reach a source, so they pass.
 
         **Why this matters**
 
@@ -32795,12 +32007,12 @@ queries:
         1. List all connection profiles and inspect their connectivity type:
 
         ```bash
-        gcloud datastream connection-profiles list \
+        gcloud datastream connection-profiles describe PROFILE_ID \
           --location=LOCATION \
-          --format="table(name,connectivityType)"
+          --format="yaml(staticServiceIpConnectivity,forwardSshConnectivity,privateConnectivity)"
         ```
 
-        A passing connection profile returns a `CONNECTIVITY_TYPE` value other than `STATIC_SERVICE_IP_CONNECTIVITY`. A failing connection profile returns `STATIC_SERVICE_IP_CONNECTIVITY`.
+        A passing connection profile returns a key other than `staticServiceIpConnectivity`. A failing connection profile returns `staticServiceIpConnectivity`.
       remediation:
         - id: terraform
           desc: |
@@ -32846,7 +32058,8 @@ queries:
               --location=LOCATION \
               --display-name=DISPLAY_NAME \
               --type=mysql \
-              --mysql-hostname=HOST --mysql-username=USER --mysql-password=PWD \
+              --mysql-hostname=HOST --mysql-port=3306 --mysql-username=USER \
+              --mysql-secret-manager-stored-password=projects/PROJECT/secrets/SECRET_NAME/versions/VERSION \
               --private-connection=PRIVATE_CONNECTION_ID
             ```
     refs:
@@ -32855,12 +32068,16 @@ queries:
   - uid: mondoo-gcp-security-datastream-no-static-service-ip-connectivity-gcp
     filters: asset.platform == 'gcp-datastream-connectionprofile'
     mql: |
+      gcp.project.datastreamService.connectionProfile.profileType == "gcs" ||
+      gcp.project.datastreamService.connectionProfile.profileType == "bigquery" ||
       gcp.project.datastreamService.connectionProfile.connectivityType != "staticServiceIp"
   - uid: mondoo-gcp-security-datastream-no-static-service-ip-connectivity-terraform-hcl
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_datastream_connection_profile')
     mql: |
       terraform.resources('google_datastream_connection_profile').all(
+        blocks.where(type == 'gcs_profile') != empty ||
+        blocks.where(type == 'bigquery_profile') != empty ||
         blocks.where(type == 'static_service_ip_connectivity').length == 0
       )
   - uid: mondoo-gcp-security-datastream-no-static-service-ip-connectivity-terraform-plan
@@ -32868,6 +32085,8 @@ queries:
       asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_datastream_connection_profile')
     mql: |
       terraform.plan.resourceChanges.where(type == 'google_datastream_connection_profile').all(
+        change.after['gcs_profile'] != empty ||
+        change.after['bigquery_profile'] != empty ||
         change.after['static_service_ip_connectivity'] == empty ||
         change.after['static_service_ip_connectivity'].length == 0
       )
@@ -32876,6 +32095,8 @@ queries:
       asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_datastream_connection_profile')
     mql: |
       terraform.state.resources.where(type == 'google_datastream_connection_profile').all(
+        values['gcs_profile'] != empty ||
+        values['bigquery_profile'] != empty ||
         values['static_service_ip_connectivity'] == empty ||
         values['static_service_ip_connectivity'].length == 0
       )
@@ -32918,7 +32139,7 @@ queries:
       desc: |
         This check verifies that Datastream connection profiles do not depend on an SSH bastion and stored SSH credentials to reach the source database.
 
-        Forward SSH connectivity keeps credentials, either an SSH private key or a password, on the connection profile resource itself and routes replication traffic through an intermediate bastion host. The connectivity method appears under **Datastream > Connection profiles** in the Google Cloud console, and `gcloud datastream connection-profiles list` reports `FORWARD_SSH_CONNECTIVITY` for profiles that use it. This check requires any other connectivity method.
+        Forward SSH connectivity keeps credentials, either an SSH private key or a password, on the connection profile resource itself and routes replication traffic through an intermediate bastion host. The connectivity method appears under **Datastream > Connection profiles** in the Google Cloud console, and `gcloud datastream connection-profiles describe` returns a `forwardSshConnectivity` key for profiles that use it. This check requires any other connectivity method.
 
         **Why this matters**
 
@@ -32943,12 +32164,12 @@ queries:
         1. List all connection profiles and check their connectivity type:
 
         ```bash
-        gcloud datastream connection-profiles list \
+        gcloud datastream connection-profiles describe PROFILE_ID \
           --location=LOCATION \
-          --format="table(name,connectivityType)"
+          --format="yaml(staticServiceIpConnectivity,forwardSshConnectivity,privateConnectivity)"
         ```
 
-        A passing connection profile returns a `CONNECTIVITY_TYPE` value other than `FORWARD_SSH_CONNECTIVITY`. A failing connection profile returns `FORWARD_SSH_CONNECTIVITY`.
+        A passing connection profile returns a key other than `forwardSshConnectivity`. A failing connection profile returns `forwardSshConnectivity`.
       remediation:
         - id: terraform
           desc: |
@@ -32981,7 +32202,8 @@ queries:
               --location=LOCATION \
               --display-name=DISPLAY_NAME \
               --type=mysql \
-              --mysql-hostname=HOST --mysql-username=USER --mysql-password=PWD \
+              --mysql-hostname=HOST --mysql-port=3306 --mysql-username=USER \
+              --mysql-secret-manager-stored-password=projects/PROJECT/secrets/SECRET_NAME/versions/VERSION \
               --private-connection=PRIVATE_CONNECTION_ID
             ```
     refs:
@@ -33118,27 +32340,31 @@ queries:
             4. Choose the secret and version, save, and verify the connection still passes the **Run test** check.
         - id: cli
           desc: |
-            The `--<engine>-secret-manager-stored-password` flag prefix varies by source engine. Use the variant that matches your profile type:
+            The `--<engine>-secret-manager-stored-password` flag prefix varies by source engine, and `--type` must name the same engine. Use the variant that matches your profile type:
 
             ```bash
             # MySQL profile
             gcloud datastream connection-profiles update PROFILE_ID \
               --location=LOCATION \
+              --type=mysql \
               --mysql-secret-manager-stored-password=projects/PROJECT/secrets/SECRET_NAME/versions/VERSION
 
             # PostgreSQL profile
             gcloud datastream connection-profiles update PROFILE_ID \
               --location=LOCATION \
+              --type=postgresql \
               --postgresql-secret-manager-stored-password=projects/PROJECT/secrets/SECRET_NAME/versions/VERSION
 
             # SQL Server profile
             gcloud datastream connection-profiles update PROFILE_ID \
               --location=LOCATION \
+              --type=sqlserver \
               --sqlserver-secret-manager-stored-password=projects/PROJECT/secrets/SECRET_NAME/versions/VERSION
 
             # Oracle profile
             gcloud datastream connection-profiles update PROFILE_ID \
               --location=LOCATION \
+              --type=oracle \
               --oracle-secret-manager-stored-password=projects/PROJECT/secrets/SECRET_NAME/versions/VERSION
             ```
     refs:
@@ -35982,7 +35208,7 @@ queries:
 
         ```bash
         gcloud filestore instances list \
-          --format='table(name,location,tier)'
+          --format='table(name.basename(),name.segment(3):label=LOCATION,tier)'
         ```
 
         2. For each instance, describe it to inspect the KMS key name:
@@ -40071,7 +39297,7 @@ queries:
   - uid: mondoo-gcp-security-pubsub-topic-message-storage-policy-configured-gcp
     filters: asset.platform == 'gcp-pubsub-topic'
     mql: |
-      gcp.project.pubsubService.topic.config.messageStoragePolicy != empty
+      gcp.project.pubsubService.topic.config.messageStoragePolicy.allowedPersistenceRegions != empty
   - uid: mondoo-gcp-security-pubsub-topic-message-storage-policy-configured-terraform-hcl
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_pubsub_topic')
@@ -40092,147 +39318,6 @@ queries:
     mql: |
       terraform.state.resources.where(type == 'google_pubsub_topic').all(
         values['message_storage_policy'] != empty
-      )
-  - uid: mondoo-gcp-security-pubsub-subscription-push-endpoint-https
-    title: Ensure Pub/Sub push subscriptions use HTTPS endpoints
-    impact: 80
-    tags:
-      compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-04
-      compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
-      compliance/iso-27001-2022: iso-27001-2022-a-8-24
-      compliance/nis-2: nis-2-21-2-h
-      compliance/nist-csf-1: nist-csf-1-pr-ds-2
-      compliance/nist-csf-2: nist-csf-2-pr-ds-02
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
-      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
-      compliance/owasp-top-10-2025: owasp-top-10-2025-a04
-      compliance/pci-dss-4: pcidss-requirement-4-2-1
-      compliance/soc2-2017: soc2-control-cc6-7-2
-      compliance/vda-isa-5: vda-isa-5-5-1-2
-    variants:
-      - uid: mondoo-gcp-security-pubsub-subscription-push-endpoint-https-gcp
-        tags:
-          mondoo.com/filter-title: GCP Pub/Sub Subscription
-          mondoo.com/filter-icon: gcp
-      - uid: mondoo-gcp-security-pubsub-subscription-push-endpoint-https-terraform-hcl
-        tags:
-          mondoo.com/filter-title: Terraform HCL
-          mondoo.com/filter-icon: terraform
-      - uid: mondoo-gcp-security-pubsub-subscription-push-endpoint-https-terraform-plan
-        tags:
-          mondoo.com/filter-title: Terraform Plan
-          mondoo.com/filter-icon: terraform
-      - uid: mondoo-gcp-security-pubsub-subscription-push-endpoint-https-terraform-state
-        tags:
-          mondoo.com/filter-title: Terraform State
-          mondoo.com/filter-icon: terraform
-    docs:
-      desc: |
-        This check verifies that Pub/Sub push delivery is encrypted in transit, requiring every push subscription endpoint to use HTTPS.
-
-        The endpoint URL is shown under **Delivery type** in the subscription details in **Pub/Sub > Subscriptions**, and `gcloud pubsub subscriptions describe` returns it as `pushConfig.pushEndpoint`. Update an existing subscription with `gcloud pubsub subscriptions modify-push-config --push-endpoint` pointing at an `https://` URL.
-
-        **Why this matters**
-
-        An endpoint reached over plain HTTP receives message payloads in cleartext, so anyone positioned on any network path between the Pub/Sub service and the endpoint can read the contents and modify them in flight. Whatever the topic carries, personal data, internal events, or credentials, travels exposed.
-
-        TLS also underpins delivery authentication. An HTTPS endpoint with a valid certificate can participate in Pub/Sub's push authentication flow, while a plain HTTP endpoint cannot, so the receiver has no cryptographic basis for believing the delivery came from Pub/Sub at all.
-
-        Encryption of data in transit is a baseline requirement in most compliance frameworks irrespective of how the data is classified, so cleartext push delivery is a finding even where the payload is not considered sensitive.
-
-        Point every push subscription at an HTTPS URL backed by a valid certificate, and enable Pub/Sub push authentication so deliveries carry a signed OIDC token. Validate that token at the receiving endpoint, which is what lets the endpoint reject forged or replayed deliveries rather than trusting anything that arrives at the URL.
-
-        Pull subscriptions have no push endpoint and are not in scope; a subscription with no push configuration passes.
-      audit: |
-        ### Audit via Console
-
-        1. Sign in to the [Google Cloud Console](https://console.cloud.google.com) and select the project.
-        2. Navigate to **Pub/Sub > Subscriptions**.
-        3. For each subscription, click the subscription name to view its details.
-        4. Under **Delivery type**, check whether the push endpoint URL begins with `https://`.
-
-        A passing push subscription shows an endpoint URL that starts with `https://`. A pull subscription has no push endpoint and is not in scope for this check. A failing push subscription shows an endpoint URL that starts with `http://`.
-
-        ### Audit via CLI
-
-        1. Describe each subscription and inspect the `pushEndpoint` field:
-
-        ```bash
-        gcloud pubsub subscriptions describe SUBSCRIPTION_NAME \
-          --format="value(pushConfig.pushEndpoint)"
-        ```
-
-        A passing push subscription returns a URL beginning with `https://`. A pull subscription returns an empty value, which is not a violation. A failing push subscription returns a URL beginning with `http://`.
-      remediation:
-        - id: console
-          desc: |
-            To update a push subscription to use an HTTPS endpoint using the Google Cloud Console:
-
-            1. Navigate to **Pub/Sub > Subscriptions** in the Google Cloud Console.
-            2. Select the subscription and click **Edit subscription**.
-            3. Under **Push endpoint URL**, update the endpoint to use an `https://` URL.
-            4. Click **Update**.
-        - id: cli
-          desc: |
-            To update a push subscription to use an HTTPS endpoint using the Google Cloud CLI:
-
-            ```bash
-            gcloud pubsub subscriptions modify-push-config SUBSCRIPTION_NAME \
-              --push-endpoint=https://your-endpoint.example.com/push
-            ```
-        - id: terraform
-          desc: |
-            To configure a push subscription with an HTTPS endpoint in Terraform:
-
-            ```hcl
-            resource "google_pubsub_subscription" "example" {
-              name  = "example-subscription"
-              topic = google_pubsub_topic.example.name
-
-              push_config {
-                push_endpoint = "https://your-endpoint.example.com/push"
-              }
-            }
-            ```
-    refs:
-      - url: https://docs.cloud.google.com/pubsub/docs/push
-        title: Pub/Sub push subscriptions
-  - uid: mondoo-gcp-security-pubsub-subscription-push-endpoint-https-gcp
-    filters: asset.platform == 'gcp-pubsub-subscription'
-    mql: |
-      gcp.project.pubsubService.subscription.config().pushConfig.endpoint == empty ||
-      gcp.project.pubsubService.subscription.config().pushConfig.endpoint == /^https:/
-  - uid: mondoo-gcp-security-pubsub-subscription-push-endpoint-https-terraform-hcl
-    filters: |
-      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_pubsub_subscription')
-    mql: |
-      terraform.resources('google_pubsub_subscription').all(
-        blocks.where(type == 'push_config') == empty ||
-        blocks.where(type == 'push_config').all(
-          arguments['push_endpoint'] == /^https:/
-        )
-      )
-  - uid: mondoo-gcp-security-pubsub-subscription-push-endpoint-https-terraform-plan
-    filters: |
-      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_pubsub_subscription')
-    mql: |
-      terraform.plan.resourceChanges.where(type == 'google_pubsub_subscription').all(
-        change.after['push_config'] == empty ||
-        change.after['push_config'].all(
-          _['push_endpoint'] == empty || _['push_endpoint'] == /^https:/
-        )
-      )
-  - uid: mondoo-gcp-security-pubsub-subscription-push-endpoint-https-terraform-state
-    filters: |
-      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_pubsub_subscription')
-    mql: |
-      terraform.state.resources.where(type == 'google_pubsub_subscription').all(
-        values['push_config'] == empty ||
-        values['push_config'].all(
-          _['push_endpoint'] == empty || _['push_endpoint'] == /^https:/
-        )
       )
   - uid: mondoo-gcp-security-pubsub-subscription-dead-letter-configured
     title: Ensure Pub/Sub subscriptions configure a dead-letter policy
@@ -40499,7 +39584,7 @@ queries:
       desc: |
         This check verifies that a Firestore database can be rewound to a moment before a destructive change, not only restored from the last scheduled export.
 
-        Point-in-time recovery, or PITR, retains database state so the database can be restored to any second within the past seven days. Under **Firestore > Databases**, the **Point-in-time recovery** field must show **Enabled**; `gcloud firestore databases describe DATABASE_ID` reports the same as `POINT_IN_TIME_RECOVERY_ENABLED`, and `gcloud firestore databases update DATABASE_ID --enable-pitr` turns it on.
+        Point-in-time recovery, or PITR, retains database state so the database can be restored to any second within the past seven days. Under **Firestore > Databases**, the **Point-in-time recovery** field must show **Enabled**; `gcloud firestore databases describe --database=DATABASE_ID` reports the same as `POINT_IN_TIME_RECOVERY_ENABLED`, and `gcloud firestore databases update --database=DATABASE_ID --enable-pitr` turns it on.
 
         **Why this matters**
 
@@ -40527,7 +39612,7 @@ queries:
         1. Describe the Firestore database and inspect the `pointInTimeRecoveryEnablement` field:
 
         ```bash
-        gcloud firestore databases describe DATABASE_ID \
+        gcloud firestore databases describe --database=DATABASE_ID \
           --format="value(pointInTimeRecoveryEnablement)"
         ```
 
@@ -40546,7 +39631,7 @@ queries:
             To enable point-in-time recovery on a Firestore database using the Google Cloud CLI:
 
             ```bash
-            gcloud firestore databases update DATABASE_ID \
+            gcloud firestore databases update --database=DATABASE_ID \
               --enable-pitr
             ```
         - id: terraform
@@ -41613,328 +40698,6 @@ queries:
         values['role'] != "roles/viewer"
       )
       terraform.state.resources.where(type == 'google_cloud_tasks_queue_iam_binding').all(
-        values['role'] != "roles/owner" &&
-        values['role'] != "roles/editor" &&
-        values['role'] != "roles/viewer"
-      )
-  - uid: mondoo-gcp-security-bigtable-iam-no-public-principals
-    title: Ensure Bigtable IAM has no public or anonymous principals
-    impact: 100
-    tags:
-      compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
-      compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
-      compliance/iso-27001-2022: iso-27001-2022-a-5-15
-      compliance/nis-2: nis-2-21-2-i
-      compliance/nist-csf-1: nist-csf-1-pr-ac-4
-      compliance/nist-csf-2: nist-csf-2-pr-aa-05
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
-      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
-      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
-      compliance/pci-dss-4: pcidss-requirement-7-2-1
-      compliance/soc2-2017: soc2-control-cc6-1-3
-      compliance/vda-isa-5: vda-isa-5-4-2-1
-    variants:
-      - uid: mondoo-gcp-security-bigtable-iam-no-public-principals-gcp
-        tags:
-          mondoo.com/filter-title: GCP Bigtable Instance
-          mondoo.com/filter-icon: gcp
-      - uid: mondoo-gcp-security-bigtable-iam-no-public-principals-terraform-hcl
-        tags:
-          mondoo.com/filter-title: Terraform HCL
-          mondoo.com/filter-icon: terraform
-      - uid: mondoo-gcp-security-bigtable-iam-no-public-principals-terraform-plan
-        tags:
-          mondoo.com/filter-title: Terraform Plan
-          mondoo.com/filter-icon: terraform
-      - uid: mondoo-gcp-security-bigtable-iam-no-public-principals-terraform-state
-        tags:
-          mondoo.com/filter-title: Terraform State
-          mondoo.com/filter-icon: terraform
-    docs:
-      desc: |
-        This check verifies that no Bigtable instance grants access to a principal that represents the public rather than a known identity.
-
-        `allUsers` admits any caller on the internet without authentication; `allAuthenticatedUsers` admits every holder of a Google account. This check requires that neither appears as a member in any IAM binding on a Cloud Bigtable instance. The policy is reviewed from the instance's **Permissions** page or with `gcloud bigtable instances get-iam-policy INSTANCE_ID`.
-
-        **Why this matters**
-
-        One binding to `allUsers` opens the instance to unauthenticated callers, and it does so above the layer where the rest of the perimeter operates. VPC Service Controls, Private Google Access, and organizational policies do not block a request that IAM has already authorized.
-
-        The data behind that binding is high-volume operational and analytics content: time-series metrics, user profiles, and event streams. Exposure at that scale is a data protection failure and a durable one, because there is no way to identify what was read or by whom during the window.
-
-        Bindings like these are almost always accidents. A broad script or a console error produces them far more often than any deliberate decision, so nobody is monitoring for the outcome even though the exposure begins the moment the policy is saved.
-
-        Remove the public bindings with `gcloud bigtable instances remove-iam-policy-binding`, then grant the access that was actually needed to a specific service account, user, or group using an appropriate Bigtable predefined role, for example `roles/bigtable.reader` for a read-only analytics consumer. Apply the `constraints/iam.allowedPolicyMemberDomains` organization policy so that future bindings to public principals are rejected across every project in the organization rather than caught after the fact. A companion check in this policy addresses primitive roles granted to named identities on the same instances.
-      audit: |
-        ### Audit via Console
-
-        1. Open the [Google Cloud Console](https://console.cloud.google.com/) and navigate to **Bigtable**.
-        2. Select the instance and click **Permissions** in the left navigation.
-        3. Scan each binding for the principals `allUsers` or `allAuthenticatedUsers`.
-
-        A passing instance shows no bindings with `allUsers` or `allAuthenticatedUsers` as a member. A failing instance shows at least one public-principal binding.
-
-        ### Audit via CLI
-
-        1. Check the instance-level IAM policy:
-
-        ```bash
-        gcloud bigtable instances get-iam-policy INSTANCE_ID \
-          --format="json(bindings)" \
-          | jq '.bindings[] | select(.members[] | test("^allUsers$|^allAuthenticatedUsers$"))'
-        ```
-
-        A passing instance returns no output from the `jq` filter. A failing instance returns one or more bindings that include `allUsers` or `allAuthenticatedUsers`.
-      remediation:
-        - id: terraform
-          desc: |
-            Manage Bigtable IAM only via `google_bigtable_instance_iam_member` resources with explicit principals — never with `allUsers` or `allAuthenticatedUsers`:
-
-            ```hcl
-            resource "google_bigtable_instance_iam_member" "reader" {
-              instance = google_bigtable_instance.app.name
-              role     = "roles/bigtable.reader"
-              member   = "group:analytics@example.com" # never allUsers / allAuthenticatedUsers
-            }
-            ```
-
-            Audit existing bindings: import `google_bigtable_instance_iam_policy` into state if the policy is managed elsewhere, then remove any public-principal members in the source HCL and re-apply.
-        - id: console
-          desc: |
-            Remove any public principal from the Bigtable IAM policy:
-
-            1. Open **Bigtable** → select the instance.
-            2. Select **Permissions**.
-            3. Locate any binding whose principal is `allUsers` or `allAuthenticatedUsers` and remove it.
-            4. Add specific principals (users, groups, service accounts) that need the access, using the narrowest appropriate role (for example `Bigtable Reader` for read-only workloads).
-            5. Save and verify the policy no longer lists the public principals.
-        - id: cli
-          desc: |
-            Remove the public bindings from the instance:
-
-            ```bash
-            gcloud bigtable instances remove-iam-policy-binding INSTANCE_ID \
-              --member=allUsers \
-              --role=ROLE_NAME
-
-            gcloud bigtable instances remove-iam-policy-binding INSTANCE_ID \
-              --member=allAuthenticatedUsers \
-              --role=ROLE_NAME
-            ```
-
-            Then grant the access to a specific principal:
-
-            ```bash
-            gcloud bigtable instances add-iam-policy-binding INSTANCE_ID \
-              --member=group:analytics@example.com \
-              --role=roles/bigtable.reader
-            ```
-    refs:
-      - url: https://docs.cloud.google.com/bigtable/docs/access-control
-        title: Cloud Bigtable - Access control with IAM
-      - url: https://docs.cloud.google.com/iam/docs/overview#principals
-        title: IAM - Public principals (allUsers, allAuthenticatedUsers)
-  - uid: mondoo-gcp-security-bigtable-iam-no-public-principals-gcp
-    filters: asset.platform == 'gcp-bigtable-instance'
-    mql: |
-      gcp.bigtable.instance.iamPolicy.all(
-        members.none(_ == "allUsers" || _ == "allAuthenticatedUsers")
-      )
-  - uid: mondoo-gcp-security-bigtable-iam-no-public-principals-terraform-hcl
-    filters: |
-      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_bigtable_instance_iam_member') ||
-      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_bigtable_instance_iam_binding')
-    mql: |
-      terraform.resources('google_bigtable_instance_iam_member').all(
-        arguments['member'] != "allUsers" &&
-        arguments['member'] != "allAuthenticatedUsers"
-      )
-      terraform.resources('google_bigtable_instance_iam_binding').all(
-        arguments['members'].none(_ == "allUsers" || _ == "allAuthenticatedUsers")
-      )
-  - uid: mondoo-gcp-security-bigtable-iam-no-public-principals-terraform-plan
-    filters: |
-      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_bigtable_instance_iam_member') ||
-      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_bigtable_instance_iam_binding')
-    mql: |
-      terraform.plan.resourceChanges.where(type == 'google_bigtable_instance_iam_member').all(
-        change.after['member'] != "allUsers" &&
-        change.after['member'] != "allAuthenticatedUsers"
-      )
-      terraform.plan.resourceChanges.where(type == 'google_bigtable_instance_iam_binding').all(
-        change.after['members'].none(_ == "allUsers" || _ == "allAuthenticatedUsers")
-      )
-  - uid: mondoo-gcp-security-bigtable-iam-no-public-principals-terraform-state
-    filters: |
-      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_bigtable_instance_iam_member') ||
-      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_bigtable_instance_iam_binding')
-    mql: |
-      terraform.state.resources.where(type == 'google_bigtable_instance_iam_member').all(
-        values['member'] != "allUsers" &&
-        values['member'] != "allAuthenticatedUsers"
-      )
-      terraform.state.resources.where(type == 'google_bigtable_instance_iam_binding').all(
-        values['members'].none(_ == "allUsers" || _ == "allAuthenticatedUsers")
-      )
-  - uid: mondoo-gcp-security-bigtable-iam-no-primitive-roles
-    title: Ensure Bigtable instance IAM grants no primitive roles
-    impact: 80
-    tags:
-      compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
-      compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
-      compliance/iso-27001-2022: iso-27001-2022-a-8-2
-      compliance/nis-2: nis-2-21-2-i
-      compliance/nist-csf-1: nist-csf-1-pr-ac-4
-      compliance/nist-csf-2: nist-csf-2-pr-aa-05
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
-      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
-      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
-      compliance/pci-dss-4: pcidss-requirement-7-2-1
-      compliance/soc2-2017: soc2-control-cc6-3-3
-      compliance/vda-isa-5: vda-isa-5-4-2-1
-    variants:
-      - uid: mondoo-gcp-security-bigtable-iam-no-primitive-roles-gcp
-        tags:
-          mondoo.com/filter-title: GCP Bigtable Instance
-          mondoo.com/filter-icon: gcp
-      - uid: mondoo-gcp-security-bigtable-iam-no-primitive-roles-terraform-hcl
-        tags:
-          mondoo.com/filter-title: Terraform HCL
-          mondoo.com/filter-icon: terraform
-      - uid: mondoo-gcp-security-bigtable-iam-no-primitive-roles-terraform-plan
-        tags:
-          mondoo.com/filter-title: Terraform Plan
-          mondoo.com/filter-icon: terraform
-      - uid: mondoo-gcp-security-bigtable-iam-no-primitive-roles-terraform-state
-        tags:
-          mondoo.com/filter-title: Terraform State
-          mondoo.com/filter-icon: terraform
-    docs:
-      desc: |
-        This check verifies that Bigtable access is granted through the service's own predefined roles instead of the project-wide primitive roles.
-
-        Bigtable offers fine-grained roles such as `roles/bigtable.admin`, `roles/bigtable.user`, and `roles/bigtable.reader`. This check requires that no IAM binding on a Cloud Bigtable instance grants `roles/owner`, `roles/editor`, or `roles/viewer`, reviewed from the instance's **Permissions** page or with `gcloud bigtable instances get-iam-policy INSTANCE_ID`.
-
-        **Why this matters**
-
-        A primitive role attached at a Bigtable instance is not a Bigtable-scoped grant. Primitive roles carry permissions across every resource type in the project, so an `roles/editor` binding made to let someone write rows also conveys Cloud Storage, Compute Engine, and dozens of other services along with it.
-
-        The grant then widens on its own. Google adds new Bigtable capabilities to the primitive roles over time, so a principal bound to `roles/editor` today holds permissions to features released later without any administrator action or review.
-
-        `roles/owner` additionally carries IAM modification rights, which means its holder can grant themselves or anyone else any further role on the instance. Every other constraint on that instance becomes advisory once one exists.
-
-        `roles/viewer` is the one that looks safe. It exposes table schemas, row data, and instance metadata, which is considerably more than the aggregate summaries most viewer-level principals were added to see.
-
-        Substitute the narrowest Bigtable role that covers the principal's real use, such as `roles/bigtable.reader` for read-only workloads or `roles/bigtable.user` for an application service account, using `gcloud bigtable instances remove-iam-policy-binding` followed by `add-iam-policy-binding`, and confirm the workflow still functions afterward. Managing these bindings as `google_bigtable_instance_iam_member` resources makes each role assignment explicit and reviewable in a pull request, and a quarterly review keeps stale or over-broad grants from accumulating.
-      audit: |
-        ### Audit via Console
-
-        1. Open the [Google Cloud Console](https://console.cloud.google.com/) and navigate to **Bigtable**.
-        2. Select the instance and click **Permissions** in the left navigation.
-        3. Review each binding in the IAM policy. Confirm no principal is granted `Owner`, `Editor`, or `Viewer`.
-
-        A passing instance shows no bindings to `roles/owner`, `roles/editor`, or `roles/viewer`. A failing instance shows at least one primitive-role binding.
-
-        ### Audit via CLI
-
-        1. Check the instance-level IAM policy:
-
-        ```bash
-        gcloud bigtable instances get-iam-policy INSTANCE_ID \
-          --format="json(bindings)" \
-          | jq '.bindings[] | select(.role == "roles/owner" or .role == "roles/editor" or .role == "roles/viewer")'
-        ```
-
-        A passing instance returns no output from the `jq` filter. A failing instance returns one or more bindings containing a primitive role.
-      remediation:
-        - id: terraform
-          desc: |
-            Manage Bigtable IAM via the dedicated `google_bigtable_instance_iam_*` resources, granting only the narrow Bigtable roles — not `roles/owner`, `roles/editor`, or `roles/viewer`:
-
-            ```hcl
-            resource "google_bigtable_instance_iam_member" "db_user" {
-              instance = google_bigtable_instance.app.name
-              role     = "roles/bigtable.user"
-              member   = "serviceAccount:app@my-project.iam.gserviceaccount.com"
-            }
-            ```
-        - id: console
-          desc: |
-            Replace each primitive-role binding with a fine-grained Bigtable role:
-
-            1. Open **Bigtable** → select the instance.
-            2. Select **Permissions**.
-            3. For each principal bound to Owner / Editor / Viewer, remove the primitive grant and add the narrow role that matches the principal's actual use (for example `Bigtable Administrator`, `Bigtable User`, or `Bigtable Reader`).
-            4. Save. Confirm with the principal that their workflow still works.
-        - id: cli
-          desc: |
-            Remove a primitive role binding from an instance and grant the fine-grained equivalent:
-
-            ```bash
-            gcloud bigtable instances remove-iam-policy-binding INSTANCE_ID \
-              --member=user:alice@example.com \
-              --role=roles/editor
-
-            gcloud bigtable instances add-iam-policy-binding INSTANCE_ID \
-              --member=user:alice@example.com \
-              --role=roles/bigtable.user
-            ```
-    refs:
-      - url: https://docs.cloud.google.com/bigtable/docs/access-control
-        title: Cloud Bigtable - Access control with IAM
-      - url: https://docs.cloud.google.com/iam/docs/roles-overview#basic
-        title: Roles overview
-  - uid: mondoo-gcp-security-bigtable-iam-no-primitive-roles-gcp
-    filters: asset.platform == 'gcp-bigtable-instance'
-    mql: |
-      gcp.bigtable.instance.iamPolicy.all(
-        role != "roles/owner" && role != "roles/editor" && role != "roles/viewer"
-      )
-  - uid: mondoo-gcp-security-bigtable-iam-no-primitive-roles-terraform-hcl
-    filters: |
-      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_bigtable_instance_iam_member') ||
-      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_bigtable_instance_iam_binding')
-    mql: |
-      terraform.resources('google_bigtable_instance_iam_member').all(
-        arguments['role'] != "roles/owner" &&
-        arguments['role'] != "roles/editor" &&
-        arguments['role'] != "roles/viewer"
-      )
-      terraform.resources('google_bigtable_instance_iam_binding').all(
-        arguments['role'] != "roles/owner" &&
-        arguments['role'] != "roles/editor" &&
-        arguments['role'] != "roles/viewer"
-      )
-  - uid: mondoo-gcp-security-bigtable-iam-no-primitive-roles-terraform-plan
-    filters: |
-      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_bigtable_instance_iam_member') ||
-      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_bigtable_instance_iam_binding')
-    mql: |
-      terraform.plan.resourceChanges.where(type == 'google_bigtable_instance_iam_member').all(
-        change.after['role'] != "roles/owner" &&
-        change.after['role'] != "roles/editor" &&
-        change.after['role'] != "roles/viewer"
-      )
-      terraform.plan.resourceChanges.where(type == 'google_bigtable_instance_iam_binding').all(
-        change.after['role'] != "roles/owner" &&
-        change.after['role'] != "roles/editor" &&
-        change.after['role'] != "roles/viewer"
-      )
-  - uid: mondoo-gcp-security-bigtable-iam-no-primitive-roles-terraform-state
-    filters: |
-      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_bigtable_instance_iam_member') ||
-      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_bigtable_instance_iam_binding')
-    mql: |
-      terraform.state.resources.where(type == 'google_bigtable_instance_iam_member').all(
-        values['role'] != "roles/owner" &&
-        values['role'] != "roles/editor" &&
-        values['role'] != "roles/viewer"
-      )
-      terraform.state.resources.where(type == 'google_bigtable_instance_iam_binding').all(
         values['role'] != "roles/owner" &&
         values['role'] != "roles/editor" &&
         values['role'] != "roles/viewer"
