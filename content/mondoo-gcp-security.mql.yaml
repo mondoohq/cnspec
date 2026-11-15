@@ -4024,7 +4024,7 @@ queries:
       desc: |
         This check verifies that a VM instance is reachable only from inside the VPC rather than directly from the internet.
 
-        A network interface becomes internet-reachable when it carries an external access configuration, which is what assigns a public IP. Google Cloud offers that option freely at instance creation. Instances that do not need direct inbound connectivity should stay on private addressing and reach the outside world through Cloud Load Balancing, Cloud NAT, or a VPN. In the Google Cloud console the setting is the `External IP` dropdown inside the network interface editor, which should read `None`.
+        A network interface becomes internet-reachable when it carries an external access configuration, which is what assigns a public IP. That covers an IPv4 access config and also an IPv6 access config, which a dual-stack interface carries only when it has an external IPv6 address. Google Cloud offers that option freely at instance creation. Instances that do not need direct inbound connectivity should stay on private addressing and reach the outside world through Cloud Load Balancing, Cloud NAT, or a VPN. In the Google Cloud console the setting is the `External IP` dropdown inside the network interface editor, which should read `None`.
 
         **Why this matters**
 
@@ -4048,7 +4048,7 @@ queries:
         gcloud compute instances list --format=json
         ```
 
-        1. Examine the JSON output for each instance. Ensure that the `networkInterfaces` array does not contain an `accessConfigs` section. The presence of `accessConfigs` indicates an external IP configuration. Note that the `natIP` field within `accessConfigs` might only appear for running instances or stopped instances with a static external IP. Stopped instances configured for ephemeral IPs might not show `natIP`.
+        1. Examine the JSON output for each instance. Ensure that no entry in the `networkInterfaces` array contains an `accessConfigs` or `ipv6AccessConfigs` section. Either one indicates an external IP configuration. Note that the `natIP` field within `accessConfigs` might only appear for running instances or stopped instances with a static external IP. Stopped instances configured for ephemeral IPs might not show `natIP`.
 
         Example indicating an external IP:
         ```json
@@ -4126,6 +4126,11 @@ queries:
             gcloud compute instances delete-access-config INSTANCE_NAME --zone=ZONE --access-config-name="ACCESS_CONFIG_NAME"
             ```
             Replace `INSTANCE_NAME`, `ZONE`, and `ACCESS_CONFIG_NAME` with the appropriate values.
+
+            3. An external IPv6 address is held in `ipv6AccessConfigs`, and Compute Engine refuses to delete an IPv6 access config directly. Switch the interface to IPv4 only instead, which removes the external IPv6 address:
+            ```bash
+            gcloud compute instances network-interfaces update INSTANCE_NAME --zone=ZONE --network-interface=nic0 --stack-type=IPV4_ONLY
+            ```
     refs:
       - url: https://docs.cloud.google.com/compute/docs/instances/create-start-instance
         title: Google Compute Engine Instance Documentation
@@ -4136,7 +4141,10 @@ queries:
       asset.platform == 'gcp-compute-instance'
       gcp.compute.instance.name != /^gke-/
     mql: |
-      gcp.compute.instance.nics.all(externalIpConfigs.where(type != "DIRECT_IPV6") == empty)
+      # externalIpConfigs holds both IPv4 access configs and IPv6 access configs. An IPv6 access
+      # config (DIRECT_IPV6) exists only for an external IPv6 address, which is as reachable from
+      # the internet as an external IPv4 address.
+      gcp.compute.instance.nics.all(externalIpConfigs == empty)
   - uid: mondoo-gcp-security-compute-instances-no-public-ip-terraform-hcl
     filters: |
       asset.platform == "terraform-hcl" &&
@@ -4145,7 +4153,8 @@ queries:
       terraform.resources('google_compute_instance').all(
         blocks.where(type == 'network_interface') != empty &&
         blocks.where(type == 'network_interface').all(
-          blocks.where(type == 'access_config') == empty
+          blocks.where(type == 'access_config') == empty &&
+          blocks.where(type == 'ipv6_access_config') == empty
         )
       )
   - uid: mondoo-gcp-security-compute-instances-no-public-ip-terraform-plan
@@ -4154,7 +4163,8 @@ queries:
     mql: |
       terraform.plan.resourceChanges.where(type == "google_compute_instance").all(
         change.after['network_interface'].all(
-          _['access_config'] == empty
+          _['access_config'] == empty &&
+          _['ipv6_access_config'] == empty
         )
       )
   - uid: mondoo-gcp-security-compute-instances-no-public-ip-terraform-state
@@ -4163,7 +4173,8 @@ queries:
     mql: |
       terraform.state.resources.where(type == "google_compute_instance").all(
         values['network_interface'].all(
-          _['access_config'] == empty
+          _['access_config'] == empty &&
+          _['ipv6_access_config'] == empty
         )
       )
   - uid: mondoo-gcp-security-compute-instances-no-default-service-account
@@ -10422,10 +10433,13 @@ queries:
       - url: https://docs.cloud.google.com/vpc/docs/vpc
         title: Google Cloud VPC Documentation
   - uid: mondoo-gcp-security-compute-subnetwork-flow-logs-enabled-gcp
-    filters: |
-      asset.platform == "gcp-compute-subnetwork"
-      gcp.compute.subnetwork.purpose == "PRIVATE" || gcp.compute.subnetwork.purpose == ""
-    mql: gcp.compute.subnetwork.enableFlowLogs == true
+    filters: asset.platform == "gcp-compute-subnetwork"
+    mql: |
+      # Proxy-only, Private Service Connect, and Private NAT subnets carry no VM traffic of
+      # their own, so the setting does not apply to them. Every other purpose, including
+      # PRIVATE, PRIVATE_RFC_1918, and an unset value, is assessed.
+      gcp.compute.subnetwork.purpose == /^(REGIONAL_MANAGED_PROXY|GLOBAL_MANAGED_PROXY|PRIVATE_SERVICE_CONNECT|PRIVATE_NAT|INTERNAL_HTTPS_LOAD_BALANCER)$/ ||
+        gcp.compute.subnetwork.enableFlowLogs == true
   - uid: mondoo-gcp-security-compute-subnetwork-flow-logs-enabled-terraform-hcl
     filters: |
       asset.platform == 'terraform-hcl' &&
@@ -10554,10 +10568,13 @@ queries:
       - url: https://docs.cloud.google.com/vpc/docs/vpc
         title: Google Cloud VPC Documentation
   - uid: mondoo-gcp-security-compute-subnetwork-private-google-access-enabled-gcp
-    filters: |
-      asset.platform == "gcp-compute-subnetwork"
-      gcp.compute.subnetwork.purpose == "PRIVATE" || gcp.compute.subnetwork.purpose == ""
-    mql: gcp.compute.subnetwork.privateIpGoogleAccess == true
+    filters: asset.platform == "gcp-compute-subnetwork"
+    mql: |
+      # Proxy-only, Private Service Connect, and Private NAT subnets carry no VM traffic of
+      # their own, so the setting does not apply to them. Every other purpose, including
+      # PRIVATE, PRIVATE_RFC_1918, and an unset value, is assessed.
+      gcp.compute.subnetwork.purpose == /^(REGIONAL_MANAGED_PROXY|GLOBAL_MANAGED_PROXY|PRIVATE_SERVICE_CONNECT|PRIVATE_NAT|INTERNAL_HTTPS_LOAD_BALANCER)$/ ||
+        gcp.compute.subnetwork.privateIpGoogleAccess == true
   - uid: mondoo-gcp-security-compute-subnetwork-private-google-access-enabled-terraform-hcl
     filters: |
       asset.platform == 'terraform-hcl' &&
@@ -16144,10 +16161,12 @@ queries:
       - url: https://docs.cloud.google.com/vpc/docs/subnets
         title: Subnets overview
   - uid: mondoo-gcp-security-compute-subnetwork-not-overly-broad-cidr-gcp
-    filters: |
-      asset.platform == "gcp-compute-subnetwork"
-      gcp.compute.subnetwork.purpose == "PRIVATE" || gcp.compute.subnetwork.purpose == ""
-    mql: gcp.compute.subnetwork.ipCidrRange != /^\d+\.\d+\.\d+\.\d+\/(([0-9]|1[0-5]))$/
+    filters: asset.platform == "gcp-compute-subnetwork"
+    mql: |
+      # Proxy-only, Private Service Connect, and Private NAT ranges hold no workloads. Every
+      # other purpose, including PRIVATE, PRIVATE_RFC_1918, and an unset value, is assessed.
+      gcp.compute.subnetwork.purpose == /^(REGIONAL_MANAGED_PROXY|GLOBAL_MANAGED_PROXY|PRIVATE_SERVICE_CONNECT|PRIVATE_NAT|INTERNAL_HTTPS_LOAD_BALANCER)$/ ||
+        gcp.compute.subnetwork.ipCidrRange != /^\d+\.\d+\.\d+\.\d+\/(([0-9]|1[0-5]))$/
   - uid: mondoo-gcp-security-compute-subnetwork-not-overly-broad-cidr-terraform-hcl
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_compute_subnetwork')
@@ -26696,7 +26715,7 @@ queries:
       desc: |
         This check verifies that outbound internet traffic follows only the egress paths the organization intends.
 
-        Every VPC already has a system-generated default route to the internet gateway. This check looks at routes with a destination of `0.0.0.0/0` and requires that none of them names the default internet gateway as its next hop. Routes are reviewed under `VPC network` then `Routes`, filtered by destination `0.0.0.0/0`, and a route is removed with `gcloud compute routes delete <route-name>`.
+        Every VPC already has a system-generated default route to the internet gateway, and a second one for `::/0` once it has a subnet with external IPv6. This check looks at routes with a destination of `0.0.0.0/0` or `::/0` that name the default internet gateway as their next hop and accepts only the system-generated shape: named `default-route-` followed by 16 hexadecimal digits, priority 1000, no network tags, the fixed description, and one per network and address family. A route that copies the name and description but differs in priority or tags, or a second gateway route on the same network, fails. Routes are reviewed under `VPC network` then `Routes`, filtered by destination `0.0.0.0/0`, and a route is removed with `gcloud compute routes delete <route-name>`.
 
         **Why this matters**
 
@@ -26718,15 +26737,15 @@ queries:
 
         ### Audit via CLI
 
-        1. List all custom routes with a destination of `0.0.0.0/0` and check whether any use the default internet gateway as the next hop:
+        1. List the routes with a destination of `0.0.0.0/0` or `::/0` and check which use the default internet gateway as the next hop:
 
         ```bash
         gcloud compute routes list \
-          --filter="destRange=0.0.0.0/0" \
-          --format="table(name,destRange,nextHopGateway,description)"
+          --filter='destRange=("0.0.0.0/0","::/0")' \
+          --format="table(name,network.basename(),destRange,nextHopGateway.basename(),priority,tags.list(),description)"
         ```
 
-        A passing project returns, among routes whose `nextHopGateway` is the default internet gateway, only the system-generated ones: one per network, named `default-route-` followed by 16 hexadecimal digits, with the description `Default route to the Internet.`. A failing project returns any other route whose `nextHopGateway` is set to the default internet gateway URL.
+        A passing project returns, among routes whose `nextHopGateway` is the default internet gateway, only the system-generated ones: at most one per network for each of `0.0.0.0/0` and `::/0`, named `default-route-` followed by 16 hexadecimal digits, priority `1000`, no tags, and the description `Default route to the Internet.` or `IPv6 default route to the Internet`. A failing project returns any other route whose `nextHopGateway` is the default internet gateway, or two such routes for the same destination on one network.
       remediation:
         - id: terraform
           desc: |
@@ -26785,19 +26804,29 @@ queries:
   - uid: mondoo-gcp-security-compute-route-no-internet-gateway-to-sensitive-subnets-gcp
     filters: asset.platform == 'gcp-project'
     mql: |
-      # Each VPC network is created with one system-generated default route to the internet
-      # gateway, named default-route-<16 hex digits> with this fixed description. The API has no
-      # other field that tells it apart from a route an administrator added.
-      gcp.project.computeService.routes.where(
-        destRange == "0.0.0.0/0" && nextHopGateway != empty
-      ).all(
-        name == /^default-route-[0-9a-f]{16}$/ && description == "Default route to the Internet."
+      # Each VPC network gets one system-generated default route to the internet gateway per
+      # address family: named default-route-<16 hex digits>, priority 1000, no tags, and a
+      # fixed description. No API field marks a route as system-generated, and an administrator
+      # can create a route with the same name pattern and description, so the shape is checked
+      # in full and a second gateway route for the same family on the same network fails.
+      internetGatewayRoutes = gcp.project.computeService.routes.where(
+        destRange == /^(0\.0\.0\.0|::)\/0$/ && nextHopGateway != empty
       )
+      internetGatewayRoutes.all(
+        name == /^default-route-[0-9a-f]{16}$/ &&
+        nextHopGateway == /\/global\/gateways\/default-internet-gateway$/ &&
+        priority == 1000 &&
+        tags == empty
+      )
+      internetGatewayRoutes.where(destRange == "0.0.0.0/0").all(description == "Default route to the Internet.")
+      internetGatewayRoutes.where(destRange == "::/0").all(description == "IPv6 default route to the Internet")
+      internetGatewayRoutes.where(destRange == "0.0.0.0/0").map(network.name).duplicates == empty
+      internetGatewayRoutes.where(destRange == "::/0").map(network.name).duplicates == empty
   - uid: mondoo-gcp-security-compute-route-no-internet-gateway-to-sensitive-subnets-terraform-hcl
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'google_compute_route')
     mql: |
-      terraform.resources('google_compute_route').where(arguments['dest_range'] == "0.0.0.0/0").all(
+      terraform.resources('google_compute_route').where(arguments['dest_range'] == /^(0\.0\.0\.0|::)\/0$/).all(
         arguments['next_hop_gateway'] == null || arguments['next_hop_gateway'] == ""
       )
   - uid: mondoo-gcp-security-compute-route-no-internet-gateway-to-sensitive-subnets-terraform-plan
@@ -26805,7 +26834,7 @@ queries:
       asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'google_compute_route')
     mql: |
       terraform.plan.resourceChanges
-        .where(type == 'google_compute_route' && change.after['dest_range'] == "0.0.0.0/0")
+        .where(type == 'google_compute_route' && change.after['dest_range'] == /^(0\.0\.0\.0|::)\/0$/)
         .all(
           change.after['next_hop_gateway'] == null || change.after['next_hop_gateway'] == ""
         )
@@ -26814,7 +26843,7 @@ queries:
       asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'google_compute_route')
     mql: |
       terraform.state.resources
-        .where(type == 'google_compute_route' && values['dest_range'] == "0.0.0.0/0")
+        .where(type == 'google_compute_route' && values['dest_range'] == /^(0\.0\.0\.0|::)\/0$/)
         .all(
           values['next_hop_gateway'] == null || values['next_hop_gateway'] == ""
         )
