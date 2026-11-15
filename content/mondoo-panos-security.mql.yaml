@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-panos-security
     name: Mondoo Palo Alto Networks PAN-OS Security
-    version: 2.0.6
+    version: 2.0.7
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -117,12 +117,14 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-6-3-3
       compliance/soc2-2017: soc2-control-cc7-1-2
       compliance/vda-isa-5: vda-isa-5-5-2-1
-    mql: panos.system.avVersion != ""
+    mql: |
+      panos.system.avVersion != empty
+      panos.system.avVersion != "0"
     docs:
       desc: |
         This check verifies that the firewall has antivirus content installed.
 
-        Antivirus content is a separate update stream from the Applications and Threats package. It carries the malware signatures the antivirus profile uses to inspect files moving over HTTP, SMTP, IMAP, POP3, FTP, and SMB, and it is released on a much faster cadence than threat content. The installed version is listed as the Antivirus package under Device > Dynamic Updates, and this check requires it to be present rather than blank.
+        Antivirus content is a separate update stream from the Applications and Threats package. It carries the malware signatures the antivirus profile uses to inspect files moving over HTTP, SMTP, IMAP, POP3, FTP, and SMB, and it is released on a much faster cadence than threat content. The installed version is listed as the Antivirus package under Device > Dynamic Updates, and this check requires an installed version. A device without antivirus content reports the version as 0.
 
         **Why this matters**
 
@@ -151,7 +153,7 @@ queries:
            show system info | match av-version
            ```
 
-        If the command returns a non-empty `av-version` value, the check passes. If the value is empty, the check fails.
+        If `av-version` reports a version such as `9172-10351`, the check passes. If it reports `0` or is empty, no content of that type is installed and the check fails.
       remediation:
         - id: console
           desc: |
@@ -171,10 +173,14 @@ queries:
           desc: |
             **Using the CLI**
 
-            Download and install the latest antivirus content:
+            Antivirus content requires Applications and Threats content. On a device without it, `request anti-virus upgrade check` answers that threat content must be updated first, so install that content as described in the application content check of this policy before you continue.
+
+            Check for, download, and install the latest antivirus content. The download runs as a job; wait until `show jobs id <job-id>` reports it finished before you install:
 
             ```text
+            request anti-virus upgrade check
             request anti-virus upgrade download latest
+            show jobs id <job-id>
             request anti-virus upgrade install version latest
             ```
 
@@ -201,12 +207,14 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-6-3-3
       compliance/soc2-2017: soc2-control-cc7-1-2
       compliance/vda-isa-5: vda-isa-5-5-2-1
-    mql: panos.system.appVersion != ""
+    mql: |
+      panos.system.appVersion != empty
+      panos.system.appVersion != "0"
     docs:
       desc: |
         This check verifies that the firewall has application identification content installed.
 
-        Application content is the decoder and signature set that lets the firewall name the application behind a session instead of inferring it from the port number. It ships in the same Applications and Threats package as threat content, and the installed version is shown under Device > Dynamic Updates. This check requires an application content version to be present.
+        Application content is the decoder and signature set that lets the firewall name the application behind a session instead of inferring it from the port number. It ships in the same Applications and Threats package as threat content, and the installed version is shown under Device > Dynamic Updates. This check requires an installed application content version. A device without it reports the version as 0.
 
         **Why this matters**
 
@@ -235,7 +243,7 @@ queries:
            show system info | match app-version
            ```
 
-        If the command returns a non-empty `app-version` value, the check passes. If the value is empty, the check fails.
+        If `app-version` reports a version such as `9172-10351`, the check passes. If it reports `0` or is empty, no content of that type is installed and the check fails.
       remediation:
         - id: console
           desc: |
@@ -258,8 +266,12 @@ queries:
 
             Download and install the latest application and threat content:
 
+            The download runs as a job; wait until `show jobs id <job-id>` reports it finished before you install:
+
             ```text
+            request content upgrade check
             request content upgrade download latest
+            show jobs id <job-id>
             request content upgrade install version latest
             ```
 
@@ -276,15 +288,15 @@ queries:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
       compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/hipaa: false
       compliance/iso-27001-2022: iso-27001-2022-a-8-20
       compliance/nis-2: nis-2-21-2-e
       compliance/nist-csf-1: nist-csf-1-pr-ac-5
       compliance/nist-csf-2: nist-csf-2-pr-ir-01
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
-      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-14-2
       compliance/owasp-top-10-2025: owasp-top-10-2025-a02
-      compliance/pci-dss-4: pcidss-requirement-1-3-1
+      compliance/pci-dss-4: false
       compliance/soc2-2017: soc2-control-cc6-6-4
       compliance/vda-isa-5: vda-isa-5-5-2-3
     mql: |
@@ -434,7 +446,7 @@ queries:
       - url: https://docs.paloaltonetworks.com/ngfw/administration/firewall-administration
         title: Firewall Administration
   - uid: mondoo-panos-security-operational-mode-normal
-    title: Ensure device operational mode is normal
+    title: Ensure the device runs in normal or FIPS-CC operational mode
     impact: 100
     tags:
       compliance/bsi-sys-1-5: false
@@ -451,12 +463,12 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-2-2-1
       compliance/soc2-2017: soc2-control-cc7-1-1
       compliance/vda-isa-5: vda-isa-5-5-2-1
-    mql: panos.system.operationalMode.downcase == "normal"
+    mql: panos.system.operationalMode.downcase.in(["normal", "fips-cc"])
     docs:
       desc: |
-        This check verifies that the firewall is running in normal operational mode.
+        This check verifies that the firewall is running in normal or FIPS-CC operational mode.
 
-        PAN-OS reports an operational mode describing which runtime the system booted into. Normal mode is the state in which the dataplane forwards traffic and the security policy is enforced; other states, such as maintenance mode or a partially initialized boot, mean the system is not doing that work. The mode appears in the General Information section of the Dashboard and in the output of `show system info`, and this check requires it to be normal.
+        PAN-OS reports an operational mode describing which runtime the system booted into. Normal mode is the state in which the dataplane forwards traffic and the security policy is enforced; other states, such as maintenance mode or a partially initialized boot, mean the system is not doing that work. The mode appears in the General Information section of the Dashboard and in the output of `show system info`, and this check requires it to be normal or fips-cc. FIPS-CC mode enforces the same security policy as normal mode with a restricted set of cryptographic algorithms, so it passes.
 
         **Why this matters**
 
@@ -466,7 +478,7 @@ queries:
 
         The mode is also a signal about hardware. Appliances that fail power-on diagnostics or lose a dataplane processor often come up degraded rather than refusing to boot, so an unexpected operational mode is frequently the first visible symptom of a failing device.
 
-        Firewalls deliberately placed in FIPS-CC mode, or being rebuilt during a maintenance window, will fail this check by design; confirm the mode against the change record before treating it as an incident. Pair the check with out-of-band console access, because a device found in maintenance mode cannot be recovered over the network.
+        A firewall being rebuilt during a maintenance window fails this check while the work is under way; confirm the mode against the change record before treating it as an incident. Pair the check with out-of-band console access, because a device found in maintenance mode cannot be recovered over the network.
       audit: |
         ### Audit via the PAN-OS CLI
 
@@ -477,7 +489,7 @@ queries:
            show system info | match oper
            ```
 
-        If `operational-mode` reports `normal`, the check passes. If it reports any other value, the check fails.
+        If `operational-mode` reports `normal` or `fips-cc`, the check passes. If it reports any other value, the check fails.
       remediation:
         - id: console
           desc: |
@@ -534,12 +546,14 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-6-3-3
       compliance/soc2-2017: soc2-control-cc7-1-2
       compliance/vda-isa-5: vda-isa-5-5-2-1
-    mql: panos.system.threatVersion != ""
+    mql: |
+      panos.system.threatVersion != empty
+      panos.system.threatVersion != "0"
     docs:
       desc: |
         This check verifies that the firewall has threat prevention content installed.
 
-        Threat content is the signature package behind vulnerability protection, anti-spyware, and the rest of the intrusion prevention engine. It arrives through the Applications and Threats update, and the installed version is shown under Device > Dynamic Updates and in the Dashboard's General Information panel. This check requires a threat content version to be present rather than blank.
+        Threat content is the signature package behind vulnerability protection, anti-spyware, and the rest of the intrusion prevention engine. It arrives through the Applications and Threats update, and the installed version is shown under Device > Dynamic Updates and in the Dashboard's General Information panel. This check requires an installed threat content version. A device without threat content reports the version as 0, which is the state of a newly launched VM-Series firewall until its first content update.
 
         **Why this matters**
 
@@ -568,7 +582,7 @@ queries:
            show system info | match threat-version
            ```
 
-        If the command returns a non-empty `threat-version` value, the check passes. If the value is empty, the check fails.
+        If `threat-version` reports a version such as `9172-10351`, the check passes. If it reports `0` or is empty, no content of that type is installed and the check fails.
       remediation:
         - id: console
           desc: |
@@ -593,8 +607,12 @@ queries:
 
             Download and install the latest threat content:
 
+            The download runs as a job; wait until `show jobs id <job-id>` reports it finished before you install:
+
             ```text
+            request content upgrade check
             request content upgrade download latest
+            show jobs id <job-id>
             request content upgrade install version latest
             ```
 
@@ -611,15 +629,15 @@ queries:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
       compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/hipaa: false
       compliance/iso-27001-2022: iso-27001-2022-a-8-20
       compliance/nis-2: nis-2-21-2-e
       compliance/nist-csf-1: nist-csf-1-pr-ac-5
       compliance/nist-csf-2: nist-csf-2-pr-ir-01
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
-      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-14-2
       compliance/owasp-top-10-2025: owasp-top-10-2025-a02
-      compliance/pci-dss-4: pcidss-requirement-1-3-1
+      compliance/pci-dss-4: false
       compliance/soc2-2017: soc2-control-cc6-6-4
       compliance/vda-isa-5: vda-isa-5-5-2-3
     mql: |
@@ -698,15 +716,15 @@ queries:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
       compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/hipaa: false
       compliance/iso-27001-2022: iso-27001-2022-a-8-23
       compliance/nis-2: nis-2-21-2-e
       compliance/nist-csf-1: nist-csf-1-pr-ac-5
       compliance/nist-csf-2: nist-csf-2-pr-ir-01
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
-      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-14-2
       compliance/owasp-top-10-2025: owasp-top-10-2025-a02
-      compliance/pci-dss-4: pcidss-requirement-1-3-1
+      compliance/pci-dss-4: false
       compliance/soc2-2017: soc2-control-cc6-6-4
       compliance/vda-isa-5: vda-isa-5-5-2-3
     mql: |
@@ -793,12 +811,14 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-6-3-3
       compliance/soc2-2017: soc2-control-cc7-1-2
       compliance/vda-isa-5: vda-isa-5-5-2-1
-    mql: panos.system.wildfireVersion != ""
+    mql: |
+      panos.system.wildfireVersion != empty
+      panos.system.wildfireVersion != "0"
     docs:
       desc: |
         This check verifies that the firewall has WildFire content installed.
 
-        WildFire content is the fast-turnaround signature feed generated from cloud sandbox verdicts across Palo Alto Networks' customer base. Where antivirus content is a daily package, WildFire signatures are published within minutes of a sample being convicted, which closes the window between a new payload appearing somewhere in the world and this firewall being able to recognize it. The installed version is listed as the WildFire package under Device > Dynamic Updates, and this check requires it to be present.
+        WildFire content is the fast-turnaround signature feed generated from cloud sandbox verdicts across Palo Alto Networks' customer base. Where antivirus content is a daily package, WildFire signatures are published within minutes of a sample being convicted, which closes the window between a new payload appearing somewhere in the world and this firewall being able to recognize it. The installed version is listed as the WildFire package under Device > Dynamic Updates, and this check requires an installed version. A device without WildFire content reports the version as 0.
 
         **Why this matters**
 
@@ -827,7 +847,7 @@ queries:
            show system info | match wildfire-version
            ```
 
-        If the command returns a non-empty `wildfire-version` value, the check passes. If the value is empty, the check fails.
+        If `wildfire-version` reports a version such as `9172-10351`, the check passes. If it reports `0` or is empty, no content of that type is installed and the check fails.
       remediation:
         - id: console
           desc: |
@@ -845,15 +865,19 @@ queries:
             4. Enable **Install**
             5. Click **OK** and commit the configuration
 
-            Note: An active WildFire license is required to receive content updates at the every-minute interval. Without a license, WildFire signatures are delivered only through the daily Applications and Threats update.
+            Note: An active WildFire license is required to receive content updates at the every-minute interval. Without a license, WildFire signatures reach the firewall only through the daily antivirus update.
         - id: cli
           desc: |
             **Using the CLI**
 
             Download and install the latest WildFire content:
 
+            The download runs as a job; wait until `show jobs id <job-id>` reports it finished before you install:
+
             ```text
+            request wildfire upgrade check
             request wildfire upgrade download latest
+            show jobs id <job-id>
             request wildfire upgrade install version latest
             ```
 
@@ -870,15 +894,15 @@ queries:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
       compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/hipaa: false
       compliance/iso-27001-2022: iso-27001-2022-a-8-20
       compliance/nis-2: nis-2-21-2-e
       compliance/nist-csf-1: nist-csf-1-pr-ac-5
       compliance/nist-csf-2: nist-csf-2-pr-ir-01
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
-      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-14-2
       compliance/owasp-top-10-2025: owasp-top-10-2025-a02
-      compliance/pci-dss-4: pcidss-requirement-1-3-1
+      compliance/pci-dss-4: false
       compliance/soc2-2017: soc2-control-cc6-6-4
       compliance/vda-isa-5: vda-isa-5-5-2-3
     mql: |
@@ -961,13 +985,13 @@ queries:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
       compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
-      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
       compliance/nis-2: nis-2-21-2-e
       compliance/nist-csf-1: nist-csf-1-pr-ac-5
       compliance/nist-csf-2: nist-csf-2-pr-ir-01
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
-      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
       compliance/owasp-top-10-2025: owasp-top-10-2025-a02
       compliance/pci-dss-4: pcidss-requirement-1-3-1
       compliance/soc2-2017: soc2-control-cc6-6-4
@@ -1050,13 +1074,13 @@ queries:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
       compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
-      compliance/iso-27001-2022: iso-27001-2022-a-8-22
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
       compliance/nis-2: nis-2-21-2-e
       compliance/nist-csf-1: nist-csf-1-pr-ac-5
       compliance/nist-csf-2: nist-csf-2-pr-ir-01
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-5
-      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
       compliance/owasp-top-10-2025: owasp-top-10-2025-a02
       compliance/pci-dss-4: pcidss-requirement-1-3-1
       compliance/soc2-2017: soc2-control-cc6-6-4
@@ -1139,7 +1163,7 @@ queries:
       compliance/dora: dora-art-10
       compliance/hipaa: hipaa-security-ss164-312-b-audit-controls
       compliance/iso-27001-2022: iso-27001-2022-a-8-15
-      compliance/nis-2: nis-2-21-2-g
+      compliance/nis-2: nis-2-21-2-b
       compliance/nist-csf-1: nist-csf-1-de-ae-3
       compliance/nist-csf-2: nist-csf-2-de-ae-02
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-au-3
@@ -1408,31 +1432,30 @@ queries:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
       compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
-      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/hipaa: hipaa-security-ss164-308-a-5-ii-b-security-awareness-training-and-tools-protection-from-malicious-software
+      compliance/iso-27001-2022: iso-27001-2022-a-8-7
       compliance/nis-2: nis-2-21-2-e
       compliance/nist-csf-1: nist-csf-1-de-cm-4
       compliance/nist-csf-2: nist-csf-2-de-cm-01
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-3
       compliance/nist-sp-800-171: nist-sp-800-171--3-14-2
       compliance/owasp-top-10-2025: owasp-top-10-2025-a02
-      compliance/pci-dss-4: pcidss-requirement-1-3-1
+      compliance/pci-dss-4: false
       compliance/soc2-2017: soc2-control-cc7-1-2
       compliance/vda-isa-5: vda-isa-5-5-2-3
     mql: |
       panos.securityRules.
         where(action == "allow" && disabled == false).
         all(
-          profileGroup != "" ||
-          virusProfile != "" ||
-          spywareProfile != "" ||
-          vulnerabilityProfile != ""
+          effectiveAntivirusProfile != null ||
+          effectiveAntiSpywareProfile != null ||
+          effectiveVulnerabilityProfile != null
         )
     docs:
       desc: |
         This check verifies that enabled allow rules apply threat inspection through a security profile or profile group.
 
-        Profiles are what cause allowed traffic to be examined for exploits, malware, and spyware; a rule without one permits the session and inspects nothing. The setting is on the Actions tab of each rule under Policies > Security, and this check requires an enabled allow rule to name either a profile group or at least one of the antivirus, anti-spyware, and vulnerability protection profiles.
+        Profiles are what cause allowed traffic to be examined for exploits, malware, and spyware; a rule without one permits the session and inspects nothing. The setting is on the Actions tab of each rule under Policies > Security, and this check requires at least one antivirus, anti-spyware, or vulnerability protection profile to apply to every enabled allow rule, either attached to the rule itself or contained in the profile group the rule names. A profile group that holds none of those three profile types does not count.
 
         **Why this matters**
 
@@ -1450,7 +1473,7 @@ queries:
         2. Navigate to **Policies → Security**.
         3. Review the **Profile** column for every enabled rule with an **Allow** action.
 
-        If every enabled allow rule has a security profile or profile group attached, the check passes. If any enabled allow rule has an empty Profile column, the check fails.
+        If every enabled allow rule has an antivirus, anti-spyware, or vulnerability protection profile attached, directly or through its profile group, the check passes. If any enabled allow rule has none of them, the check fails. For a rule that names a group, open the group under **Objects → Security Profile Groups** to see which profiles it holds.
 
         ### Audit via the PAN-OS CLI
 
@@ -1461,7 +1484,7 @@ queries:
            show config running xpath devices/entry/vsys/entry/rulebase/security
            ```
 
-        If every enabled allow rule contains a `profile-setting` with a group or with virus, spyware, or vulnerability profiles, the check passes. If any lacks one, the check fails.
+        If every enabled allow rule has a `virus`, `spyware`, or `vulnerability` profile under `profile-setting profiles`, or names a `profile-setting group` whose entry under `profile-group` holds one of them, the check passes. If any lacks all three, the check fails. List the profile groups with `show config running xpath devices/entry/vsys/entry/profile-group`.
       remediation:
         - id: console
           desc: |
@@ -1523,7 +1546,7 @@ queries:
     mql: |
       panos.securityRules.
         where(action == "allow" && disabled == false).
-        all(urlFilteringProfile != "" || profileGroup != "")
+        all(effectiveUrlFilteringProfile != null)
     docs:
       desc: |
         This check verifies that enabled allow rules apply URL filtering to the web traffic they permit.
@@ -1546,7 +1569,7 @@ queries:
         2. Navigate to **Policies → Security**.
         3. Review the **Profile** column for every enabled rule with an **Allow** action.
 
-        If every enabled allow rule has a URL Filtering profile or a profile group attached, the check passes. If any enabled allow rule has neither, the check fails.
+        If every enabled allow rule has a URL Filtering profile attached, directly or through a profile group that contains one, the check passes. If any enabled allow rule has neither, or names a group without a URL Filtering profile, the check fails.
 
         ### Audit via the PAN-OS CLI
 
@@ -1557,7 +1580,7 @@ queries:
            show config running xpath devices/entry/vsys/entry/rulebase/security
            ```
 
-        If every enabled allow rule references a `url-filtering` profile or a profile-setting group, the check passes. If any lacks both, the check fails.
+        If every enabled allow rule references a `url-filtering` profile, or names a `profile-setting group` whose entry under `profile-group` contains `url-filtering`, the check passes. If any lacks both, the check fails. List the profile groups with `show config running xpath devices/entry/vsys/entry/profile-group`.
       remediation:
         - id: console
           desc: |
@@ -1595,7 +1618,7 @@ queries:
       compliance/dora: dora-art-10
       compliance/hipaa: hipaa-security-ss164-312-b-audit-controls
       compliance/iso-27001-2022: iso-27001-2022-a-8-15
-      compliance/nis-2: nis-2-21-2-g
+      compliance/nis-2: nis-2-21-2-b
       compliance/nist-csf-1: nist-csf-1-de-ae-3
       compliance/nist-csf-2: nist-csf-2-de-ae-02
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-au-3
@@ -1761,21 +1784,21 @@ queries:
       compliance/bsi-sys-1-5: false
       compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
       compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
-      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/hipaa: hipaa-security-ss164-308-a-5-ii-b-security-awareness-training-and-tools-protection-from-malicious-software
+      compliance/iso-27001-2022: iso-27001-2022-a-8-7
       compliance/nis-2: nis-2-21-2-e
       compliance/nist-csf-1: nist-csf-1-de-cm-4
       compliance/nist-csf-2: nist-csf-2-de-cm-01
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-3
       compliance/nist-sp-800-171: nist-sp-800-171--3-14-2
       compliance/owasp-top-10-2025: owasp-top-10-2025-a02
-      compliance/pci-dss-4: pcidss-requirement-1-3-1
+      compliance/pci-dss-4: false
       compliance/soc2-2017: soc2-control-cc7-1-2
       compliance/vda-isa-5: vda-isa-5-5-2-3
     mql: |
       panos.securityRules.
         where(action == "allow" && disabled == false).
-        all(wildFireAnalysisProfile != "" || profileGroup != "")
+        all(effectiveWildfireAnalysisProfile != null)
     docs:
       desc: |
         This check verifies that enabled allow rules forward unknown files for sandbox analysis.
@@ -1798,7 +1821,7 @@ queries:
         2. Navigate to **Policies → Security**.
         3. Review the **Profile** column for every enabled rule with an **Allow** action.
 
-        If every enabled allow rule has a WildFire Analysis profile or a profile group attached, the check passes. If any enabled allow rule has neither, the check fails.
+        If every enabled allow rule has a WildFire Analysis profile attached, directly or through a profile group that contains one, the check passes. If any enabled allow rule has neither, or names a group without a WildFire Analysis profile, the check fails.
 
         ### Audit via the PAN-OS CLI
 
@@ -1809,7 +1832,7 @@ queries:
            show config running xpath devices/entry/vsys/entry/rulebase/security
            ```
 
-        If every enabled allow rule references a `wildfire-analysis` profile or a profile-setting group, the check passes. If any lacks both, the check fails.
+        If every enabled allow rule references a `wildfire-analysis` profile, or names a `profile-setting group` whose entry under `profile-group` contains `wildfire-analysis`, the check passes. If any lacks both, the check fails. List the profile groups with `show config running xpath devices/entry/vsys/entry/profile-group`.
       remediation:
         - id: console
           desc: |
@@ -1852,7 +1875,7 @@ queries:
       compliance/iso-27001-2022: iso-27001-2022-a-8-20
       compliance/nis-2: nis-2-21-2-e
       compliance/nist-csf-1: nist-csf-1-pr-ac-3
-      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-7
       compliance/nist-sp-800-171: nist-sp-800-171--3-4-6
       compliance/owasp-top-10-2025: owasp-top-10-2025-a01
@@ -1972,7 +1995,7 @@ queries:
 
         The availability cost is separate and just as real. VPN peers, NAT rules, address objects, and remote monitoring all reference the interface address, and a lease renewal that returns a different one breaks them at once, usually outside a change window and without an obvious cause.
 
-        Small branch and consumer-broadband deployments are the legitimate exception, where the upstream provider offers nothing but DHCP. In those cases decline the default route from the server and configure a static one instead, and restrict what the interface accepts to the minimum the link requires.
+        Two deployments are legitimate exceptions. Small branch and consumer-broadband sites often get nothing but DHCP from the upstream provider; there, decline the default route from the server and configure a static one instead. VM-Series firewalls in public clouds such as AWS and Azure commonly take their dataplane addresses by DHCP from the cloud network, where only the cloud platform answers DHCP requests. This check fails them too, so record those interfaces as exceptions rather than assigning addresses that drift from what the cloud platform has allocated.
       audit: |
         ### Audit via the PAN-OS web interface
 
@@ -2195,7 +2218,7 @@ queries:
     filters: panos.ikeGateways != empty
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-02
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-14
       compliance/dora: dora-art-9
       compliance/hipaa: hipaa-security-ss164-312-d-person-or-entity-authentication
       compliance/iso-27001-2022: iso-27001-2022-a-8-24
@@ -2257,20 +2280,22 @@ queries:
             4. Navigate to **Network → Network Profiles → IKE Gateways**
             5. Select each IKE gateway
             6. In the **Authentication** tab, change the type to **Certificate**
-            7. Select the **Local Certificate** and **Certificate Profile**
+            7. Select the **Local Certificate** and **Certificate Profile**, and set **Local Identification** and **Peer Identification** to the identities in the two certificates
             8. Coordinate with the remote peer to also configure certificate authentication
             9. Click **OK** and commit the configuration
         - id: cli
           desc: |
             **Using the CLI**
 
-            Switch the gateway from pre-shared key to certificate authentication. The tunnel stays down until the remote peer is also reconfigured for certificate authentication, so coordinate the change. The `set` and `delete` commands edit the candidate configuration; `commit` activates the change on the running configuration.
+            Switch the gateway from pre-shared key to certificate authentication. The tunnel stays down until the remote peer is also reconfigured for certificate authentication, so coordinate the change. A certificate-authenticated gateway needs a local and a peer identification; without them the commit fails with `peer ID must be defined` or `lacks my_id`, so set both. The local identity must be one the local certificate carries, such as its subject DN; PAN-OS refuses any other value. The peer identity here is the FQDN in the peer's certificate. The `set` and `delete` commands edit the candidate configuration; `commit` activates the change on the running configuration.
 
             ```text
             configure
             delete network ike gateway <gateway-name> authentication pre-shared-key
             set network ike gateway <gateway-name> authentication certificate local-certificate name <cert-name>
             set network ike gateway <gateway-name> authentication certificate certificate-profile <profile-name>
+            set network ike gateway <gateway-name> local-id type dn id <local-certificate-subject>
+            set network ike gateway <gateway-name> peer-id type fqdn id <peer-fqdn>
             commit
             ```
 
@@ -2283,7 +2308,7 @@ queries:
     filters: panos.ikeGateways != empty
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-04
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
       compliance/dora: dora-art-9
       compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
       compliance/iso-27001-2022: iso-27001-2022-a-8-9
@@ -2291,9 +2316,9 @@ queries:
       compliance/nist-csf-1: nist-csf-1-de-cm-1
       compliance/nist-csf-2: nist-csf-2-de-cm-01
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
-      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
+      compliance/nist-sp-800-171: false
       compliance/owasp-top-10-2025: owasp-top-10-2025-a02
-      compliance/pci-dss-4: pcidss-requirement-4-2-1
+      compliance/pci-dss-4: false
       compliance/soc2-2017: soc2-control-cc7-2-1
       compliance/vda-isa-5: vda-isa-5-5-1-2
     mql: |
@@ -2367,7 +2392,7 @@ queries:
       - url: https://docs.paloaltonetworks.com/network-security/ipsec-vpn/administration/get-started-with-ipsec-vpn-site-to-site/site-to-site-vpn-overview
         title: Site-to-Site VPN Overview
   - uid: mondoo-panos-security-ike-no-aggressive-mode
-    title: Ensure IKEv1 gateways do not use aggressive mode
+    title: Ensure IKEv1 gateways accept main mode only
     impact: 80
     filters: panos.ikeGateways != empty
     tags:
@@ -2388,12 +2413,12 @@ queries:
     mql: |
       panos.ikeGateways.
         where(disabled == false && version != "ikev2").
-        none(ikev1ExchangeMode == "aggressive")
+        all(ikev1ExchangeMode == "main")
     docs:
       desc: |
         This check verifies that IKEv1 gateways negotiate in main mode rather than aggressive mode.
 
-        IKEv1 phase 1 can run as a six-message main mode exchange or a three-message aggressive mode exchange. The exchange mode is set under Advanced Options on each gateway under Network > Network Profiles > IKE Gateways, and this check requires that no enabled gateway capable of IKEv1 is set to aggressive.
+        IKEv1 phase 1 can run as a six-message main mode exchange or a three-message aggressive mode exchange. The exchange mode is set under Advanced Options on each gateway under Network > Network Profiles > IKE Gateways, and this check requires every enabled gateway capable of IKEv1 to be set to main. The default, auto, initiates in main mode but accepts aggressive mode when the other side proposes it, so the exchange that exposes the key hash can still take place, and the check fails it.
 
         **Why this matters**
 
@@ -2411,7 +2436,7 @@ queries:
         2. Navigate to **Network → Network Profiles → IKE Gateways**.
         3. For each enabled IKEv1 gateway, open **Advanced Options** and review the **Exchange Mode** setting.
 
-        If no enabled IKEv1 gateway uses **Aggressive** exchange mode, the check passes. If any enabled IKEv1 gateway uses aggressive mode, the check fails.
+        If every enabled IKEv1 gateway uses **Main** exchange mode, the check passes. If any enabled IKEv1 gateway uses **Aggressive** or **Auto**, the check fails.
 
         ### Audit via the PAN-OS CLI
 
@@ -2422,7 +2447,7 @@ queries:
            show config running xpath devices/entry/network/ike/gateway
            ```
 
-        If no enabled IKEv1 gateway shows `protocol/ikev1/exchange-mode aggressive`, the check passes. If any does, the check fails.
+        If every enabled gateway whose `protocol/version` is not `ikev2` shows `protocol/ikev1/exchange-mode main`, the check passes. If any shows `aggressive` or `auto`, or has no `exchange-mode`, which means auto, the check fails.
       remediation:
         - id: console
           desc: |
@@ -2430,7 +2455,7 @@ queries:
 
             1. Navigate to **Network → Network Profiles → IKE Gateways**
             2. Select each IKEv1 gateway
-            3. In the **Advanced Options** section, change the **Exchange Mode** from **Aggressive** to **Main** or **Auto**
+            3. In the **Advanced Options** section, set the **Exchange Mode** to **Main**
             4. Coordinate with the remote peer to also use main mode
             5. Click **OK** and commit the configuration
 
@@ -2539,7 +2564,7 @@ queries:
     filters: panos.ipsecTunnels != empty
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-04
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
       compliance/dora: dora-art-9
       compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
       compliance/iso-27001-2022: iso-27001-2022-a-8-9
@@ -2547,9 +2572,9 @@ queries:
       compliance/nist-csf-1: nist-csf-1-de-cm-1
       compliance/nist-csf-2: nist-csf-2-de-cm-01
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
-      compliance/nist-sp-800-171: nist-sp-800-171--3-13-6
+      compliance/nist-sp-800-171: false
       compliance/owasp-top-10-2025: owasp-top-10-2025-a02
-      compliance/pci-dss-4: pcidss-requirement-4-2-1
+      compliance/pci-dss-4: false
       compliance/soc2-2017: soc2-control-cc7-2-1
       compliance/vda-isa-5: vda-isa-5-5-1-2
     mql: |
@@ -2643,17 +2668,17 @@ queries:
       compliance/vda-isa-5: vda-isa-5-5-1-2
     mql: |
       panos.decryptionRules.
-        where(action == "decrypt" && disabled == false).
-        all(decryptionProfile != "")
+        where(action.in(["decrypt", "decrypt-and-forward"]) && disabled == false).
+        all(decryptionProfile != empty && decryptionProfile != "default")
     docs:
       desc: |
-        This check verifies that enabled decryption rules with a decrypt action apply a decryption profile.
+        This check verifies that enabled decryption rules that decrypt traffic apply a decryption profile of their own.
 
-        A decryption profile sets the rules for the sessions being decrypted: the minimum TLS version, the permitted cipher suites and key exchange algorithms, and what to do about expired, untrusted, or unsupported certificates. Profiles live under Objects > Decryption > Decryption Profile and are attached on the Options tab of each rule under Policies > Decryption, where this check requires every enabled decrypt rule to name one.
+        A decryption profile sets the rules for the sessions being decrypted: the minimum TLS version, the permitted cipher suites and key exchange algorithms, and what to do about expired, untrusted, or unsupported certificates. Profiles live under Objects > Decryption > Decryption Profile and are attached on the Options tab of each rule under Policies > Decryption, where this check requires every enabled rule with the decrypt or decrypt-and-forward action to name one other than the predefined profile `default`. A rule that names no profile gets `default` as well, as `show running decryption-policy` lists, and that profile carries no settings, so naming it is the same as naming none.
 
         **Why this matters**
 
-        When the firewall decrypts a session it becomes the TLS client for the real server, and the security of that outbound connection is now the firewall's decision rather than the browser's. Without a profile that decision defaults to accepting far more than any modern client would: obsolete protocol versions, weak ciphers, and certificates that fail validation.
+        When the firewall decrypts a session it becomes the TLS client for the real server, and the security of that outbound connection is now the firewall's decision rather than the browser's. Without a profile of its own, that decision falls to the empty predefined `default` profile, which blocks neither expired certificates nor untrusted issuers, so the firewall accepts certificates no modern client would.
 
         The result is worse than not decrypting at all. The user's browser sees a valid certificate issued by the firewall and shows a lock, so every signal the endpoint would have used to warn them is replaced by a reassuring one, while the connection the firewall actually made to the server was never validated. An attacker intercepting beyond the firewall is invisible to both ends.
 
@@ -2667,7 +2692,7 @@ queries:
         2. Navigate to **Policies → Decryption**.
         3. For each enabled rule with a **Decrypt** action, review the **Decryption Profile** column.
 
-        If every enabled decrypt rule has a decryption profile attached, the check passes. If any enabled decrypt rule has none, the check fails.
+        If every enabled decrypt rule has a decryption profile other than `default` attached, the check passes. If any enabled decrypt rule has none or uses `default`, the check fails.
 
         ### Audit via the PAN-OS CLI
 
@@ -2678,7 +2703,7 @@ queries:
            show config running xpath devices/entry/vsys/entry/rulebase/decryption
            ```
 
-        If every enabled decrypt rule contains a `profile` value, the check passes. If any lacks one, the check fails.
+        If every enabled rule with `action decrypt` or `action decrypt-and-forward` contains a `profile` value other than `default`, the check passes. If any lacks one or names `default`, the check fails. `show running decryption-policy` lists the profile each rule applies, `default` included.
       remediation:
         - id: console
           desc: |
@@ -2696,10 +2721,12 @@ queries:
           desc: |
             **Using the CLI**
 
-            Attach a decryption profile to a decryption rule. The `set` command edits the candidate configuration; `commit` activates the change on the running configuration.
+            Create a decryption profile that blocks expired certificates and untrusted issuers and requires TLS 1.2 or later, then attach it to each decryption rule. The `set` commands edit the candidate configuration; `commit` activates the change on the running configuration.
 
             ```text
             configure
+            set profiles decryption <decryption-profile> ssl-forward-proxy block-expired-certificate yes block-untrusted-issuer yes
+            set profiles decryption <decryption-profile> ssl-protocol-settings min-version tls1-2
             set rulebase decryption rules <rule-name> profile <decryption-profile>
             commit
             ```
@@ -2717,7 +2744,7 @@ queries:
       compliance/dora: dora-art-10
       compliance/hipaa: hipaa-security-ss164-312-b-audit-controls
       compliance/iso-27001-2022: iso-27001-2022-a-8-15
-      compliance/nis-2: nis-2-21-2-g
+      compliance/nis-2: nis-2-21-2-b
       compliance/nist-csf-1: nist-csf-1-de-ae-3
       compliance/nist-csf-2: nist-csf-2-de-ae-02
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-au-3
@@ -2870,7 +2897,7 @@ queries:
 
             ```text
             configure
-            set network virtual-router <vr-name> routing-table ip static-route default-route destination 0.0.0.0/0 nexthop ip-address <gateway-ip> interface <egress-interface>
+            set network virtual-router <vr-name> routing-table ip static-route default-route destination 0.0.0.0/0 interface <egress-interface> nexthop ip-address <gateway-ip>
             commit
             ```
 
@@ -2891,21 +2918,27 @@ queries:
       compliance/iso-27001-2022: iso-27001-2022-a-8-20
       compliance/nis-2: false
       compliance/nist-csf-1: nist-csf-1-pr-ac-5
-      compliance/nist-csf-2: false
+      compliance/nist-csf-2: nist-csf-2-pr-aa-03
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-3
       compliance/nist-sp-800-171: nist-sp-800-171--3-13-15
       compliance/owasp-top-10-2025: owasp-top-10-2025-a07
-      compliance/pci-dss-4: pcidss-requirement-1-3-1
+      compliance/pci-dss-4: false
       compliance/soc2-2017: false
       compliance/vda-isa-5: vda-isa-5-5-2-7
     mql: |
       panos.virtualRouters.where(ospf.enable == true).
-        all(ospfAreas.all(interfaces().all(authProfile != "")))
+        all(
+          ospfAreas.all(
+            interfaces().
+              where(enable == true && passive == false).
+              all(authProfile != empty)
+          )
+        )
     docs:
       desc: |
         This check verifies that OSPF interfaces require authentication before forming an adjacency.
 
-        An OSPF authentication profile carries a password or an MD5 key that neighbors must present for their packets to be accepted. Profiles are defined in the OSPF configuration of each virtual router under Network > Virtual Routers and referenced by the interfaces in each area, where this check requires every OSPF-enabled interface to name one.
+        An OSPF authentication profile carries a password or an MD5 key that neighbors must present for their packets to be accepted. Profiles are defined in the OSPF configuration of each virtual router under Network > Virtual Routers and referenced by the interfaces in each area, where this check requires every enabled OSPF interface that forms adjacencies to name one. Passive interfaces advertise their subnet without sending hellos or forming adjacencies, so they are not required to.
 
         **Why this matters**
 
@@ -2923,7 +2956,7 @@ queries:
         2. Navigate to **Network → Virtual Routers** and select a virtual router running OSPF.
         3. Open the **OSPF → Areas** tab and review the **Auth Profile** setting for each interface.
 
-        If every OSPF interface has an authentication profile assigned, the check passes. If any OSPF interface has none, the check fails.
+        If every enabled OSPF interface that is not passive has an authentication profile assigned, the check passes. If any has none, the check fails. A passive interface sends no hellos and forms no adjacency, so it needs no profile.
 
         ### Audit via the PAN-OS CLI
 
@@ -2934,7 +2967,7 @@ queries:
            show config running xpath devices/entry/network/virtual-router
            ```
 
-        If every OSPF area interface contains an `authentication` value, the check passes. If any lacks one, the check fails.
+        If every OSPF area interface with `enable yes` and `passive no` contains an `authentication` value, the check passes. If any lacks one, the check fails.
       remediation:
         - id: console
           desc: |
@@ -2979,21 +3012,27 @@ queries:
       compliance/iso-27001-2022: iso-27001-2022-a-8-20
       compliance/nis-2: false
       compliance/nist-csf-1: nist-csf-1-pr-ac-5
-      compliance/nist-csf-2: false
+      compliance/nist-csf-2: nist-csf-2-pr-aa-03
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-3
       compliance/nist-sp-800-171: nist-sp-800-171--3-13-15
       compliance/owasp-top-10-2025: owasp-top-10-2025-a07
-      compliance/pci-dss-4: pcidss-requirement-1-3-1
+      compliance/pci-dss-4: false
       compliance/soc2-2017: false
       compliance/vda-isa-5: vda-isa-5-5-2-7
     mql: |
       panos.virtualRouters.where(ospf.enable == true).
-        all(ospfAreas.all(virtualLinks().all(authProfile != "")))
+        all(
+          ospfAreas.all(
+            virtualLinks().
+              where(enable == true).
+              all(authProfile != empty)
+          )
+        )
     docs:
       desc: |
         This check verifies that OSPF virtual links require authentication.
 
-        A virtual link is a logical adjacency carrying backbone traffic across a transit area, used when an area has no direct attachment to area 0. Virtual links are configured per area in the OSPF settings of a virtual router under Network > Virtual Routers, and this check requires each of them to reference an authentication profile.
+        A virtual link is a logical adjacency carrying backbone traffic across a transit area, used when an area has no direct attachment to area 0. Virtual links are configured per area in the OSPF settings of a virtual router under Network > Virtual Routers, and this check requires each enabled virtual link to reference an authentication profile.
 
         **Why this matters**
 
@@ -3011,7 +3050,7 @@ queries:
         2. Navigate to **Network → Virtual Routers** and select a virtual router running OSPF.
         3. Open the **OSPF → Areas** tab and review the **Auth Profile** setting for each virtual link.
 
-        If every OSPF virtual link has an authentication profile assigned, the check passes. If any virtual link has none, the check fails.
+        If every enabled OSPF virtual link has an authentication profile assigned, the check passes. If any has none, the check fails.
 
         ### Audit via the PAN-OS CLI
 
@@ -3022,7 +3061,7 @@ queries:
            show config running xpath devices/entry/network/virtual-router
            ```
 
-        If every OSPF virtual link contains an `authentication` value, the check passes. If any lacks one, the check fails.
+        If every OSPF virtual link with `enable yes` contains an `authentication` value, the check passes. If any lacks one, the check fails.
       remediation:
         - id: console
           desc: |
@@ -3072,7 +3111,7 @@ queries:
       compliance/nist-sp-800-171: nist-sp-800-171--3-4-2
       compliance/owasp-top-10-2025: owasp-top-10-2025-a02
       compliance/pci-dss-4: pcidss-requirement-2-2-1
-      compliance/soc2-2017: false
+      compliance/soc2-2017: soc2-control-cc7-1-1
       compliance/vda-isa-5: vda-isa-5-5-2-1
     mql: |
       panos.virtualRouters.where(ospf.enable == true).
@@ -3150,12 +3189,12 @@ queries:
       compliance/iso-27001-2022: iso-27001-2022-a-8-20
       compliance/nis-2: false
       compliance/nist-csf-1: nist-csf-1-pr-ac-5
-      compliance/nist-csf-2: false
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
       compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
       compliance/owasp-top-10-2025: owasp-top-10-2025-a02
       compliance/pci-dss-4: pcidss-requirement-1-3-1
-      compliance/soc2-2017: false
+      compliance/soc2-2017: soc2-control-cc6-6-4
       compliance/vda-isa-5: vda-isa-5-5-2-7
     mql: |
       panos.virtualRouters.where(ospf.enable == true).
