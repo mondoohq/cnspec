@@ -170,7 +170,6 @@ policies:
           - uid: mondoo-azure-security-compute-unattached-disks-encrypted
           - uid: mondoo-azure-security-compute-disk-public-access-disabled
           - uid: mondoo-azure-security-compute-vm-password-auth-disabled
-          - uid: mondoo-azure-security-compute-disk-encryption-set-cmk
           - uid: mondoo-azure-security-compute-disk-encryption-set-auto-rotation
           - uid: mondoo-azure-security-compute-disk-access-private-endpoints
           - uid: mondoo-azure-security-vm-secure-boot-enabled
@@ -215,7 +214,6 @@ policies:
         checks:
           - uid: mondoo-azure-security-acr-admin-user-disabled
           - uid: mondoo-azure-security-acr-public-access-disabled
-          - uid: mondoo-azure-security-acr-content-trust-enabled
           - uid: mondoo-azure-security-acr-cmk-encryption
           - uid: mondoo-azure-security-acr-network-default-deny
           - uid: mondoo-azure-security-acr-private-endpoints
@@ -447,8 +445,6 @@ policies:
           - uid: mondoo-azure-security-recovery-vault-private-endpoints
           - uid: mondoo-azure-security-recovery-vault-cmk-encryption
           - uid: mondoo-azure-security-recovery-vault-job-failure-alerts
-          - uid: mondoo-azure-security-recovery-vault-backup-policies
-          - uid: mondoo-azure-security-recovery-vault-critical-op-alerts
       - title: Azure Synapse Analytics
         docs:
           desc: |
@@ -10307,7 +10303,7 @@ queries:
         **Automated Audit with Azure CLI:**
 
         ```bash
-        az aks show --resource-group <ResourceGroupName> --name <ClusterName> --query "securityProfile.runCommandDisabled"
+        az aks show --resource-group <ResourceGroupName> --name <ClusterName> --query "apiServerAccessProfile.disableRunCommand"
         ```
 
         **Automated Audit with PowerShell:**
@@ -10654,7 +10650,7 @@ queries:
         **Automated Audit with Azure CLI:**
 
         ```bash
-        az aks show --resource-group <ResourceGroupName> --name <ClusterName> --query "apiServerAccessProfile.enablePrivateClusterPublicFQDN"
+        az aks show --resource-group <ResourceGroupName> --name <ClusterName> --query "apiServerAccessProfile.enablePrivateClusterPublicFqdn"
         ```
 
         **Automated Audit with PowerShell:**
@@ -13844,7 +13840,7 @@ queries:
         List all VMs and their public IP addresses:
 
         ```bash
-        az vm list-ip-addresses --query "[].{VMName:virtualMachine.name, PublicIPs:virtualMachine.network.publicIpAddresses[].ipAddress}" -o table
+        az vm list-ip-addresses --query "[].{VMName:virtualMachine.name, PublicIPs:virtualMachine.network.publicIpAddresses[].ipAddress}" -o json
         ```
 
         **Automated Audit with PowerShell:**
@@ -18553,7 +18549,7 @@ queries:
         **Automated Audit with Azure CLI:**
 
         ```bash
-        az batch account list --query "[].{Name:name, ResourceGroup:resourceGroup, AllowedAuthModes:allowedAuthenticationModes}" -o table
+        az batch account list --query "[].{Name:name, ResourceGroup:resourceGroup, AllowedAuthModes:allowedAuthenticationModes}" -o json
         ```
 
         **Automated Audit with PowerShell:**
@@ -18723,7 +18719,7 @@ queries:
         **Automated Audit with Azure CLI:**
 
         ```bash
-        az batch account list --query "[].{Name:name, ResourceGroup:resourceGroup, Encryption:encryption}" -o table
+        az batch account list --query "[].{Name:name, ResourceGroup:resourceGroup, Encryption:encryption}" -o json
         ```
 
         **Automated Audit with PowerShell:**
@@ -19826,7 +19822,7 @@ queries:
         **Automated Audit with Azure CLI:**
 
         ```bash
-        az aks show --name <ClusterName> --resource-group <ResourceGroupName> --query "{EncryptionAtHost: agentPoolProfiles[].enableEncryptionAtHost, DiskCSI: storageProfile.diskCSIDriver.enabled}"
+        az aks show --name <ClusterName> --resource-group <ResourceGroupName> --query "{EncryptionAtHost: agentPoolProfiles[].enableEncryptionAtHost, DiskCSI: storageProfile.diskCsiDriver.enabled}"
         ```
       remediation:
         - id: portal
@@ -21468,7 +21464,7 @@ queries:
       desc: |
         This check verifies that the cluster's API server presents no public network path whatsoever.
 
-        Private cluster mode alone does not always settle this: the public FQDN and endpoint can remain active alongside it. The property this check reads is `publicNetworkAccess`, which must be `Disabled`. The Azure portal exposes no toggle for an existing cluster; private API server connectivity is chosen on the **Networking** tab at creation, or applied with `az aks create --enable-private-cluster --disable-public-fqdn`. A cluster already using API Server VNet Integration can be converted in place with the equivalent `az aks update`.
+        Private cluster mode alone does not settle this: the public FQDN stays active alongside it unless it is disabled. The check passes when the cluster is a private cluster with its public FQDN disabled, or when the cluster's `publicNetworkAccess` property is `Disabled`. The Azure CLI sets the first through `--enable-private-cluster --disable-public-fqdn` and has no flag for the second. The Azure portal exposes no toggle for an existing cluster; private API server connectivity is chosen on the **Networking** tab at creation, or applied with `az aks create --enable-private-cluster --disable-public-fqdn`. A cluster already using API Server VNet Integration can be converted in place with the equivalent `az aks update`.
 
         **Why this matters**
 
@@ -21485,12 +21481,12 @@ queries:
         1. Navigate to **Kubernetes services** in the Azure Portal.
         2. Select an AKS cluster.
         3. Go to **Networking** under **Settings**.
-        4. Verify that **Public network access** is set to **Disabled**.
+        4. Verify that API server access is private and that the public FQDN is disabled.
 
         **Automated Audit with Azure CLI:**
 
         ```bash
-        az aks list --query "[].{Name:name, ResourceGroup:resourceGroup, PublicNetworkAccess:apiServerAccessProfile.enableVnetIntegration}" -o table
+        az aks list --query "[].{Name:name, ResourceGroup:resourceGroup, PrivateCluster:apiServerAccessProfile.enablePrivateCluster, PublicFqdn:apiServerAccessProfile.enablePrivateClusterPublicFqdn, PublicNetworkAccess:publicNetworkAccess}" -o table
         ```
       remediation:
         - id: portal
@@ -21571,7 +21567,8 @@ queries:
     filters: |
       asset.platform == "azure-aks-cluster"
     mql: |
-      azure.subscription.aksService.cluster.publicNetworkAccess == "Disabled"
+      azure.subscription.aksService.cluster.publicNetworkAccess == "Disabled" ||
+        azure.subscription.aksService.cluster.enablePrivateCluster == true && azure.subscription.aksService.cluster.enablePrivateClusterPublicFQDN == false
   - uid: mondoo-azure-security-aks-public-network-access-disabled-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_kubernetes_cluster")
     mql: |
@@ -21649,7 +21646,7 @@ queries:
 
         Support coverage is the hard boundary. A cluster running an unsupported Kubernetes version receives no Microsoft security patches and no support, so known vulnerabilities in it stay open indefinitely. Automating the upgrade also removes the operational failure mode where a patch release is delayed or forgotten because of a scheduling conflict or an understaffed team.
 
-        The check accepts any channel other than `none`, so `patch`, `stable`, `rapid`, and `node-image` all pass; choose the one matching your tolerance for change and pair it with a maintenance window. Node operating system images move on a separate channel that a companion check in this policy covers.
+        The check fails when the channel is `none` or unset and accepts any other channel, so `patch`, `stable`, `rapid`, and `node-image` all pass; choose the one matching your tolerance for change and pair it with a maintenance window. Node operating system images move on a separate channel that a companion check in this policy covers.
       audit: |
         **Automated Audit with Azure CLI:**
 
@@ -31057,187 +31054,6 @@ queries:
       bicep.resources.where(type == "Microsoft.ContainerRegistry/registries").all(
         properties["publicNetworkAccess"] == "Disabled"
       )
-  - uid: mondoo-azure-security-acr-content-trust-enabled
-    title: Ensure ACR content trust is enabled
-    impact: 70
-    tags:
-      compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: false
-      compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-c-1-integrity
-      compliance/iso-27001-2022: iso-27001-2022-a-8-24
-      compliance/nis-2: nis-2-21-2-h
-      compliance/nist-csf-1: nist-csf-1-pr-ds-6
-      compliance/nist-csf-2: nist-csf-2-pr-ps-05
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-7
-      compliance/nist-sp-800-171: nist-sp-800-171--3-14-1
-      compliance/owasp-top-10-2025: owasp-top-10-2025-a08
-      compliance/pci-dss-4: false
-      compliance/soc2-2017: soc2-control-cc7-1-1
-      compliance/vda-isa-5: vda-isa-5-5-1-1
-    variants:
-      - uid: mondoo-azure-security-acr-content-trust-enabled-azure
-        tags:
-          mondoo.com/filter-title: Azure Container Registry
-          mondoo.com/filter-icon: azure
-      - uid: mondoo-azure-security-acr-content-trust-enabled-terraform-hcl
-        tags:
-          mondoo.com/filter-title: Terraform HCL
-          mondoo.com/filter-icon: terraform
-      - uid: mondoo-azure-security-acr-content-trust-enabled-terraform-plan
-        tags:
-          mondoo.com/filter-title: Terraform Plan
-          mondoo.com/filter-icon: terraform
-      - uid: mondoo-azure-security-acr-content-trust-enabled-terraform-state
-        tags:
-          mondoo.com/filter-title: Terraform State
-          mondoo.com/filter-icon: terraform
-      - uid: mondoo-azure-security-acr-content-trust-enabled-bicep
-        tags:
-          mondoo.com/filter-title: Bicep
-          mondoo.com/filter-icon: bicep
-    docs:
-      desc: |
-        This check verifies that the registry requires images to be cryptographically signed, so a consumer can prove an image is the one its publisher pushed.
-
-        Content trust implements image signing through Docker Notary. You enable it under **Content trust** in the **Policies** section of the **Container registries** blade, with `az acr config content-trust update --status enabled`, or through `properties.policies.trustPolicy.status` set to `enabled` with `type` set to `Notary`. It is a Premium SKU feature.
-
-        **Why this matters**
-
-        Without signing, there is no cryptographic link between the image a team built and the image a cluster pulls. The registry asserts that a tag maps to some content, and every consumer takes that assertion on faith.
-
-        That gap is where supply chain attacks live. An attacker who can push to a repository, or who compromises the pipeline that does, can substitute a modified image carrying injected code, and nothing downstream will notice because nothing downstream is verifying anything.
-
-        Signing closes the loop from build to deployment. Publishers sign what they produce, consumers verify before running it, and a tampered or unauthorized image fails verification instead of starting. Verification also establishes who published the image, so provenance becomes something a deployment gate can evaluate rather than something documented in a wiki.
-
-        The `azurerm` provider no longer models the trust policy on the registry resource, so the Terraform form of this check also accepts an `azapi_update_resource` that sets the same registry policy. Enabling the policy makes signing available and expected; consumers still have to be configured to verify signatures for the control to bite.
-      audit: |
-        **Manual Audit via Azure Portal:**
-
-        1. Navigate to **Container registries** in the Azure Portal.
-        2. Select a container registry.
-        3. Go to **Content trust** under **Policies**.
-        4. Verify that content trust is **Enabled**.
-      remediation:
-        - id: portal
-          desc: |
-            To enable content trust using the Azure Portal:
-
-            1. Navigate to **Container registries** in the Azure Portal.
-            2. Select the container registry (must be Premium SKU).
-            3. Go to **Content trust** under **Policies**.
-            4. Set content trust to **Enabled**.
-        - id: cli
-          desc: |
-            To enable content trust on a Premium ACR using the Azure CLI:
-
-            ```bash
-            az acr config content-trust update \
-              --registry <RegistryName> \
-              --resource-group <ResourceGroupName> \
-              --status enabled
-            ```
-
-            Docker Content Trust is being retired. Since May 31, 2026 it cannot be enabled on a registry that has never had it enabled, and it is removed entirely on March 31, 2028. It is also not supported on a registry encrypted with a customer-managed key. A registry that cannot enable it should sign images with the Notary Project instead.
-        - id: terraform
-          desc: |
-            The azurerm provider no longer exposes the registry trust policy on the registry resource, so set it on the registry with the azapi provider:
-
-            ```hcl
-            resource "azurerm_container_registry" "example" {
-              name                = "exampleregistry"
-              resource_group_name = azurerm_resource_group.example.name
-              location            = azurerm_resource_group.example.location
-              sku                 = "Premium"
-            }
-
-            resource "azapi_update_resource" "acr_content_trust" {
-              type        = "Microsoft.ContainerRegistry/registries@2023-07-01"
-              resource_id = azurerm_container_registry.example.id
-
-              body = {
-                properties = {
-                  policies = {
-                    trustPolicy = {
-                      type   = "Notary"
-                      status = "enabled"
-                    }
-                  }
-                }
-              }
-            }
-            ```
-        - id: bicep
-          desc: |
-            ```bicep
-            resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' = {
-              name: 'exampleregistry'
-              location: resourceGroup().location
-              sku: {
-                name: 'Premium'
-              }
-              properties: {
-                policies: {
-                  trustPolicy: {
-                    status: 'enabled'
-                    type: 'Notary'
-                  }
-                }
-              }
-            }
-            ```
-    refs:
-      - url: https://learn.microsoft.com/en-us/azure/container-registry/container-registry-content-trust
-        title: Content trust in Azure Container Registry
-  - uid: mondoo-azure-security-acr-content-trust-enabled-azure
-    filters: |
-      asset.platform == "azure-container-registry"
-    mql: |
-      azure.subscription.containerRegistry.registry.policies.trustPolicyEnabled == true
-  - uid: mondoo-azure-security-acr-content-trust-enabled-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_container_registry" || nameLabel == "azapi_update_resource")
-    mql: |
-      # Older azurerm versions carry the trust policy as an argument on the
-      # registry; current ones do not model it at all, so an azapi update of the
-      # registry policy satisfies this check too. The first disjunct is guarded
-      # because .all() passes vacuously on an empty list.
-      terraform.resources("azurerm_container_registry") != empty &&
-      terraform.resources("azurerm_container_registry").all(
-        arguments['trust_policy_enabled'] == true
-      ) ||
-      terraform.resources("azapi_update_resource").
-        where(arguments['type'] == /Microsoft.ContainerRegistry\/registries/).any(
-          arguments['body'].first['properties']['policies']['trustPolicy']['status'] == "enabled" ||
-          arguments['body'].properties.policies.trustPolicy.status == "enabled"
-        )
-  - uid: mondoo-azure-security-acr-content-trust-enabled-terraform-plan
-    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_container_registry" || type == "azapi_update_resource")
-    mql: |
-      terraform.plan.resourceChanges.where(type == "azurerm_container_registry") != empty &&
-      terraform.plan.resourceChanges.where(type == "azurerm_container_registry").all(
-        change.after['trust_policy_enabled'] == true
-      ) ||
-      terraform.plan.resourceChanges.where(type == "azapi_update_resource").any(
-        change.after['type'] == /Microsoft.ContainerRegistry\/registries/ &&
-        change.after['body'].properties.policies.trustPolicy.status == "enabled"
-      )
-  - uid: mondoo-azure-security-acr-content-trust-enabled-terraform-state
-    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_container_registry" || type == "azapi_update_resource")
-    mql: |
-      terraform.state.resources.where(type == "azurerm_container_registry") != empty &&
-      terraform.state.resources.where(type == "azurerm_container_registry").all(
-        values['trust_policy_enabled'] == true
-      ) ||
-      terraform.state.resources.where(type == "azapi_update_resource").any(
-        values['type'] == /Microsoft.ContainerRegistry\/registries/ &&
-        values['output'].properties.policies.trustPolicy.status == "enabled"
-      )
-  - uid: mondoo-azure-security-acr-content-trust-enabled-bicep
-    filters: asset.platform == "bicep" && bicep.resources.any(type == "Microsoft.ContainerRegistry/registries")
-    mql: |
-      bicep.resources.where(type == "Microsoft.ContainerRegistry/registries").all(
-        properties["policies"]["trustPolicy"]["status"] == "enabled"
-      )
   - uid: mondoo-azure-security-acr-cmk-encryption
     title: Ensure ACR uses customer-managed key encryption
     impact: 70
@@ -32795,168 +32611,6 @@ queries:
       bicep.resources.where(type == "Microsoft.Storage/storageAccounts/encryptionScopes").all(
         properties["requireInfrastructureEncryption"] == true
       )
-  - uid: mondoo-azure-security-compute-disk-encryption-set-cmk
-    title: Ensure disk encryption sets use customer-managed keys
-    impact: 70
-    tags:
-      compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
-      compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-a-2-iv-access-control-encryption-and-decryption
-      compliance/iso-27001-2022: iso-27001-2022-a-8-24
-      compliance/nis-2: nis-2-21-2-h
-      compliance/nist-csf-1: nist-csf-1-pr-ds-1
-      compliance/nist-csf-2: nist-csf-2-pr-ds-01
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-28
-      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
-      compliance/owasp-top-10-2025: owasp-top-10-2025-a04
-      compliance/pci-dss-4: pcidss-requirement-3-5-1
-      compliance/soc2-2017: soc2-control-cc6-1-10
-      compliance/vda-isa-5: vda-isa-5-5-1-1
-    variants:
-      - uid: mondoo-azure-security-compute-disk-encryption-set-cmk-azure
-        tags:
-          mondoo.com/filter-title: Azure Subscription
-          mondoo.com/filter-icon: azure
-      - uid: mondoo-azure-security-compute-disk-encryption-set-cmk-terraform-hcl
-        tags:
-          mondoo.com/filter-title: Terraform HCL
-          mondoo.com/filter-icon: terraform
-      - uid: mondoo-azure-security-compute-disk-encryption-set-cmk-terraform-plan
-        tags:
-          mondoo.com/filter-title: Terraform Plan
-          mondoo.com/filter-icon: terraform
-      - uid: mondoo-azure-security-compute-disk-encryption-set-cmk-terraform-state
-        tags:
-          mondoo.com/filter-title: Terraform State
-          mondoo.com/filter-icon: terraform
-      - uid: mondoo-azure-security-compute-disk-encryption-set-cmk-bicep
-        tags:
-          mondoo.com/filter-title: Bicep
-          mondoo.com/filter-icon: bicep
-    docs:
-      desc: |
-        This check verifies that a disk encryption set actually binds disks to a key your organization owns, rather than existing as a wrapper around platform-managed encryption.
-
-        A disk encryption set is the object that connects managed disks, snapshots, and images to a single Azure Key Vault key, so it is the natural place to enforce key ownership once for many volumes. The check accepts an encryption type of `EncryptionAtRestWithCustomerKey` or `EncryptionAtRestWithPlatformAndCustomerKeys`, the latter being double encryption with both a platform key and yours. In the portal the value is chosen on the Disk encryption sets blade at creation. From the CLI it is `az disk-encryption-set create --key-url --source-vault --encryption-type EncryptionAtRestWithCustomerKey`. In Terraform the set must carry a `key_vault_key_id`; in Bicep the equivalent is `activeKey.keyUrl`.
-
-        **Why this matters**
-
-        Platform-managed keys give the organization no visibility into when a key is used and no say in when it rotates. There is no record to review and no lever to pull if a disk needs to be made unreadable in a hurry.
-
-        A Customer-Managed Key (CMK) supplies both. Key operations flow through Azure Key Vault, which logs each one, and the key can be rotated on a schedule you set or revoked outright, at which point every disk bound to the set stops being readable. That is the control regulated workloads are usually asked to demonstrate when they must show ownership of the material protecting stored data.
-
-        Doing this at the level of the encryption set rather than the individual disk keeps protection consistent as volumes are created and destroyed, because a single set governs the key for everything attached to it.
-
-        An encryption set is only useful once disks point at it. Companion checks in this policy confirm that OS disks, data disks, and snapshots actually reference one.
-      audit: |
-        **Manual Audit via Azure Portal:**
-
-        1. Navigate to **Disk encryption sets** in the Azure Portal.
-        2. Select a disk encryption set.
-        3. Verify that the encryption type includes **Customer-managed key**.
-
-        **Automated Audit with Azure CLI:**
-
-        ```bash
-        az disk-encryption-set list --query "[].{Name:name, EncryptionType:encryptionType}" -o table
-        ```
-      remediation:
-        - id: portal
-          desc: |
-            To configure a disk encryption set with customer-managed keys using the Azure Portal:
-
-            1. Navigate to **Disk encryption sets** in the Azure Portal.
-            2. Select **Create**.
-            3. Set **Encryption type** to **Encryption at rest with a customer-managed key**.
-            4. Select the Azure Key Vault and key.
-            5. Complete the creation.
-        - id: cli
-          desc: |
-            To create a disk encryption set with customer-managed keys using the Azure CLI:
-
-            ```bash
-            az disk-encryption-set create \
-              --name <DiskEncryptionSetName> \
-              --resource-group <ResourceGroupName> \
-              --key-url <KeyVaultKeyUrl> \
-              --source-vault <KeyVaultId> \
-              --encryption-type EncryptionAtRestWithCustomerKey
-            ```
-        - id: terraform
-          desc: |
-            To configure a disk encryption set with customer-managed keys in Terraform:
-
-            ```hcl
-            resource "azurerm_disk_encryption_set" "example" {
-              name                = "example-des"
-              resource_group_name = azurerm_resource_group.example.name
-              location            = azurerm_resource_group.example.location
-              key_vault_key_id    = azurerm_key_vault_key.example.id
-              encryption_type     = "EncryptionAtRestWithCustomerKey"
-
-              identity {
-                type = "SystemAssigned"
-              }
-            }
-            ```
-        - id: bicep
-          desc: |
-            To configure a disk encryption set with customer-managed keys in Bicep:
-
-            ```bicep
-            resource diskEncryptionSet 'Microsoft.Compute/diskEncryptionSets@2023-10-02' = {
-              name: 'example-des'
-              location: resourceGroup().location
-              identity: {
-                type: 'SystemAssigned'
-              }
-              properties: {
-                activeKey: {
-                  keyUrl: keyVaultKey.properties.keyUriWithVersion
-                  sourceVault: {
-                    id: keyVault.id
-                  }
-                }
-                encryptionType: 'EncryptionAtRestWithCustomerKey'
-              }
-            }
-            ```
-    refs:
-      - url: https://learn.microsoft.com/en-us/azure/virtual-machines/disk-encryption-overview
-        title: Overview of managed disk encryption options
-  - uid: mondoo-azure-security-compute-disk-encryption-set-cmk-azure
-    filters: |
-      asset.platform == "azure"
-    mql: |
-      azure.subscription.compute.diskEncryptionSets.all(
-        encryptionType == "EncryptionAtRestWithCustomerKey" ||
-        encryptionType == "EncryptionAtRestWithPlatformAndCustomerKeys"
-      )
-  - uid: mondoo-azure-security-compute-disk-encryption-set-cmk-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_disk_encryption_set")
-    mql: |
-      terraform.resources("azurerm_disk_encryption_set").all(
-        arguments['key_vault_key_id'] != empty
-      )
-  - uid: mondoo-azure-security-compute-disk-encryption-set-cmk-terraform-plan
-    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_disk_encryption_set")
-    mql: |
-      terraform.plan.resourceChanges.where(type == "azurerm_disk_encryption_set").all(
-        change.after['key_vault_key_id'] != empty
-      )
-  - uid: mondoo-azure-security-compute-disk-encryption-set-cmk-terraform-state
-    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_disk_encryption_set")
-    mql: |
-      terraform.state.resources.where(type == "azurerm_disk_encryption_set").all(
-        values['key_vault_key_id'] != empty
-      )
-  - uid: mondoo-azure-security-compute-disk-encryption-set-cmk-bicep
-    filters: asset.platform == "bicep" && bicep.resources.any(type == "Microsoft.Compute/diskEncryptionSets")
-    mql: |
-      bicep.resources.where(type == "Microsoft.Compute/diskEncryptionSets").all(
-        properties["activeKey"]["keyUrl"] != empty
-      )
   - uid: mondoo-azure-security-compute-disk-encryption-set-auto-rotation
     title: Ensure disk encryption sets have auto key rotation enabled
     impact: 60
@@ -33723,7 +33377,7 @@ queries:
         **Automated Audit with Azure CLI:**
 
         ```bash
-        az disk-access list --query "[].{Name:name, PrivateEndpoints:privateEndpointConnections}" -o table
+        az disk-access list --query "[].{Name:name, PrivateEndpoints:privateEndpointConnections[].privateEndpoint.id}" -o json
         ```
       remediation:
         - id: portal
@@ -35438,7 +35092,7 @@ queries:
       desc: |
         This check verifies that a Recovery Services vault raises an Azure Monitor alert when a backup job fails.
 
-        The property is `alertsForAllJobFailures` under the vault's monitoring settings. Enable it under Recovery Services vaults, the vault, then Properties under Settings, in Monitoring settings, or with `az backup vault backup-properties set --job-failure-alerts Enable`. To make the alert reach a person, create an action group and attach it to the built-in `Backup Job Failures` alert rule scoped to the vault.
+        The property is `alertsForAllJobFailures` under the vault's monitoring settings. Enable it under Recovery Services vaults, the vault, then Properties under Settings, in Monitoring settings, or with `az backup vault backup-properties set --job-failure-alerts Enable`. To make the alert reach a person, create an action group and an alert processing rule that adds it to alerts raised on the vault.
 
         **Why this matters**
 
@@ -35448,7 +35102,7 @@ queries:
 
         Alerting turns the failure into a signal at the moment it happens. Backup and security teams can then determine whether the cause is an ordinary misconfiguration or deliberate interference, and an unexplained cluster of failures becomes a reason to begin incident response before the primary attack starts.
 
-        The setting defaults to enabled on new vaults, so this check most often catches a vault where it was explicitly turned off or reset. Declaring it explicitly in infrastructure as code prevents that drift from going unnoticed.
+        The setting defaults to enabled, and a vault that carries no monitoring settings at all uses that default, so only a vault where the setting is explicitly `Disabled` fails. Declaring it explicitly in infrastructure as code prevents that drift from going unnoticed.
       audit: |
         **Manual Audit via Azure Portal:**
 
@@ -35535,7 +35189,7 @@ queries:
     filters: |
       asset.platform == "azure-recovery-services-vault"
     mql: |
-      azure.subscription.recoveryServices.vault.monitoringSettings.alertsForAllJobFailures == "Enabled"
+      azure.subscription.recoveryServices.vault.monitoringSettings.alertsForAllJobFailures != "Disabled"
   - uid: mondoo-azure-security-recovery-vault-job-failure-alerts-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_recovery_services_vault")
     mql: |
@@ -35563,389 +35217,6 @@ queries:
     mql: |
       bicep.resources.where(type == "Microsoft.RecoveryServices/vaults").all(
         properties["monitoringSettings"]["azureMonitorAlertSettings"]["alertsForAllJobFailures"] != "Disabled"
-      )
-  - uid: mondoo-azure-security-recovery-vault-backup-policies
-    title: Ensure Recovery Services Vaults have backup policies
-    impact: 60
-    tags:
-      compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-bcr-08
-      compliance/dora: dora-art-12
-      compliance/hipaa: hipaa-security-ss164-308-a-7-ii-a-contingency-plan-data-backup-plan
-      compliance/iso-27001-2022: iso-27001-2022-a-8-13
-      compliance/nis-2: nis-2-21-2-c
-      compliance/nist-csf-1: nist-csf-1-pr-ip-4
-      compliance/nist-csf-2: nist-csf-2-pr-ds-11
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cp-9
-      compliance/nist-sp-800-171: nist-sp-800-171--3-8-9
-      compliance/owasp-top-10-2025: false
-      compliance/pci-dss-4: false
-      compliance/soc2-2017: soc2-control-cc9-1-1
-      compliance/vda-isa-5: vda-isa-5-3-1-2
-    variants:
-      - uid: mondoo-azure-security-recovery-vault-backup-policies-azure
-        tags:
-          mondoo.com/filter-title: Azure Recovery Services Vault
-          mondoo.com/filter-icon: azure
-      - uid: mondoo-azure-security-recovery-vault-backup-policies-terraform-hcl
-        tags:
-          mondoo.com/filter-title: Terraform HCL
-          mondoo.com/filter-icon: terraform
-      - uid: mondoo-azure-security-recovery-vault-backup-policies-terraform-plan
-        tags:
-          mondoo.com/filter-title: Terraform Plan
-          mondoo.com/filter-icon: terraform
-      - uid: mondoo-azure-security-recovery-vault-backup-policies-terraform-state
-        tags:
-          mondoo.com/filter-title: Terraform State
-          mondoo.com/filter-icon: terraform
-      - uid: mondoo-azure-security-recovery-vault-backup-policies-bicep
-        tags:
-          mondoo.com/filter-title: Bicep
-          mondoo.com/filter-icon: bicep
-    docs:
-      desc: |
-        This check verifies that a Recovery Services vault actually has backup policies defined, meaning it is configured to protect something.
-
-        A backup policy defines the schedule, the retention, and the scope of backup operations. Review them under Recovery Services vaults, the vault, then Backup policies under Manage. From the command line, `az backup policy get-default-for-vm` produces a template to customize before creating it with `az backup policy create` and attaching workloads with `az backup protection enable-for-vm`.
-
-        **Why this matters**
-
-        An empty vault is a control that exists on paper only. Workloads associated with it have no automated protection whatsoever, so a destructive event, whether ransomware, an insider, or an accidental deletion, has no recovery path at all.
-
-        Ransomware operators reconnoiter backup infrastructure before they act, and a vault with no policies tells them exactly what they want to know: there is nothing to restore from, so the ransom is the only option available to the victim. That gives the attacker maximum leverage before a single file is encrypted.
-
-        The absence can also be evidence rather than an oversight. A vault that previously held policies and now holds none may mean an attacker has already removed them as a preparatory step, which makes an unexpected empty vault worth investigating as pre-attack activity rather than treating it as a backlog item.
-
-        Documented backup policies are also what regulatory frameworks expect as evidence of data protection and recovery capability.
-
-        The Terraform version of this check is presence-only: it confirms that at least one `azurerm_backup_policy_vm`, `azurerm_backup_policy_vm_workload`, or `azurerm_backup_policy_file_share` resource is declared alongside a vault, without correlating each policy to a specific vault through `recovery_vault_name`. A configuration with several vaults where only one has a policy still passes there. The Azure runtime form enforces the per-vault rule and is authoritative.
-      audit: |
-        **Manual Audit via Azure Portal:**
-
-        1. Navigate to **Recovery Services vaults** in the Azure Portal.
-        2. Select a vault.
-        3. Go to **Backup policies** under **Manage**.
-        4. Verify that at least one backup policy exists.
-
-        **When this check runs against Terraform:** The Terraform version of this check is presence-only. It verifies that at least one `azurerm_backup_policy_vm`, `azurerm_backup_policy_vm_workload`, or `azurerm_backup_policy_file_share` resource is declared when a vault is, but it does not correlate each policy back to a specific vault via `recovery_vault_name`. A configuration with multiple vaults where only one has an associated policy still passes against Terraform HCL, plan, or state. The Azure runtime check enforces the strict per-vault rule and is authoritative.
-      remediation:
-        - id: portal
-          desc: |
-            To create a backup policy using the Azure Portal:
-
-            1. Navigate to **Recovery Services vaults** in the Azure Portal.
-            2. Select the vault.
-            3. Go to **Backup policies** under **Manage**.
-            4. Select **+ Add**.
-            5. Choose the workload type and configure the schedule and retention.
-            6. Save the policy.
-        - id: cli
-          desc: |
-            Generate a policy template, customize the schedule and retention, create the policy on the vault, then protect a workload such as an Azure VM using the Azure CLI:
-
-            ```bash
-            az backup policy get-default-for-vm \
-              --resource-group <ResourceGroupName> \
-              --vault-name <VaultName> > policy.json
-            ```
-
-            Edit `policy.json` to set `schedulePolicy`, `retentionPolicy`, and `timeZone` to match your RPO/RTO. The schema is documented at [Azure Backup policies for Azure VMs](https://learn.microsoft.com/en-us/azure/backup/backup-azure-vms-introduction). Then:
-
-            ```bash
-            az backup policy create \
-              --resource-group <ResourceGroupName> \
-              --vault-name <VaultName> \
-              --name <PolicyName> \
-              --backup-management-type AzureIaasVM \
-              --workload-type VM \
-              --policy @policy.json
-
-            az vm show \
-              --name <VMName> \
-              --resource-group <ResourceGroupName> \
-              --query id \
-              --output tsv
-
-            az backup protection enable-for-vm \
-              --resource-group <ResourceGroupName> \
-              --vault-name <VaultName> \
-              --vm <VMResourceId> \
-              --policy-name <PolicyName>
-            ```
-        - id: terraform
-          desc: |
-            Define a backup policy alongside the vault. For Azure VM backups:
-
-            ```hcl
-            resource "azurerm_recovery_services_vault" "example" {
-              name                = "example-vault"
-              resource_group_name = azurerm_resource_group.example.name
-              location            = azurerm_resource_group.example.location
-              sku                 = "Standard"
-            }
-
-            resource "azurerm_backup_policy_vm" "example" {
-              name                = "example-vm-backup-policy"
-              resource_group_name = azurerm_resource_group.example.name
-              recovery_vault_name = azurerm_recovery_services_vault.example.name
-
-              backup {
-                frequency = "Daily"
-                time      = "23:00"
-              }
-
-              retention_daily {
-                count = 30
-              }
-            }
-            ```
-
-            Use `azurerm_backup_policy_file_share` for Azure Files workloads and `azurerm_backup_policy_vm_workload` for SQL Server or SAP HANA backups.
-        - id: bicep
-          desc: |
-            Backup policies are configured as child resources of the vault. Example for a VM backup policy:
-
-            ```bicep
-            resource backupPolicy 'Microsoft.RecoveryServices/vaults/backupPolicies@2024-04-01' = {
-              parent: vault
-              name: 'example-vm-policy'
-              properties: {
-                backupManagementType: 'AzureIaasVM'
-                schedulePolicy: {
-                  schedulePolicyType: 'SimpleSchedulePolicy'
-                  scheduleRunFrequency: 'Daily'
-                  scheduleRunTimes: [
-                    '2024-01-01T02:00:00Z'
-                  ]
-                }
-                retentionPolicy: {
-                  retentionPolicyType: 'LongTermRetentionPolicy'
-                  dailySchedule: {
-                    retentionTimes: [
-                      '2024-01-01T02:00:00Z'
-                    ]
-                    retentionDuration: {
-                      count: 30
-                      durationType: 'Days'
-                    }
-                  }
-                }
-              }
-            }
-            ```
-    refs:
-      - url: https://learn.microsoft.com/en-us/azure/backup/backup-azure-arm-vms-prepare
-        title: Prepare to back up Azure VMs
-  - uid: mondoo-azure-security-recovery-vault-backup-policies-azure
-    filters: |
-      asset.platform == "azure-recovery-services-vault"
-    mql: |
-      azure.subscription.recoveryServices.vault.backupPolicies.length > 0
-  # Presence-only: verifies that at least one backup policy resource is declared when a vault is.
-  # Does not correlate each policy back to a specific vault via recovery_vault_name, so a config
-  # with two vaults and only one policy would still pass. Per-vault correlation requires a
-  # cross-resource reference walk that this MQL does not perform.
-  - uid: mondoo-azure-security-recovery-vault-backup-policies-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_recovery_services_vault")
-    mql: |
-      terraform.resources.where(
-        nameLabel == "azurerm_backup_policy_vm" ||
-        nameLabel == "azurerm_backup_policy_vm_workload" ||
-        nameLabel == "azurerm_backup_policy_file_share"
-      ).length > 0
-  - uid: mondoo-azure-security-recovery-vault-backup-policies-terraform-plan
-    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_recovery_services_vault")
-    mql: |
-      terraform.plan.resourceChanges.where(
-        type == "azurerm_backup_policy_vm" ||
-        type == "azurerm_backup_policy_vm_workload" ||
-        type == "azurerm_backup_policy_file_share"
-      ).length > 0
-  - uid: mondoo-azure-security-recovery-vault-backup-policies-terraform-state
-    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_recovery_services_vault")
-    mql: |
-      terraform.state.resources.where(
-        type == "azurerm_backup_policy_vm" ||
-        type == "azurerm_backup_policy_vm_workload" ||
-        type == "azurerm_backup_policy_file_share"
-      ).length > 0
-  - uid: mondoo-azure-security-recovery-vault-backup-policies-bicep
-    filters: asset.platform == "bicep" && bicep.resources.any(type == "Microsoft.RecoveryServices/vaults/backupPolicies")
-    mql: |
-      bicep.resources.where(type == "Microsoft.RecoveryServices/vaults/backupPolicies").all(
-        properties["backupManagementType"] != empty
-      )
-  - uid: mondoo-azure-security-recovery-vault-critical-op-alerts
-    title: Ensure Recovery Vaults alert on critical operations
-    impact: 70
-    tags:
-      compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-log-03
-      compliance/dora: dora-art-10
-      compliance/hipaa: hipaa-security-ss164-312-b-audit-controls
-      compliance/iso-27001-2022: iso-27001-2022-a-8-16
-      compliance/nis-2: nis-2-21-2-c
-      compliance/nist-csf-1: nist-csf-1-de-ae-5
-      compliance/nist-csf-2: nist-csf-2-de-ae-08
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-4
-      compliance/nist-sp-800-171: false
-      compliance/owasp-top-10-2025: owasp-top-10-2025-a09
-      compliance/pci-dss-4: false
-      compliance/soc2-2017: soc2-control-cc7-2-1
-      compliance/vda-isa-5: vda-isa-5-5-2-4
-    variants:
-      - uid: mondoo-azure-security-recovery-vault-critical-op-alerts-azure
-        tags:
-          mondoo.com/filter-title: Azure Recovery Services Vault
-          mondoo.com/filter-icon: azure
-      - uid: mondoo-azure-security-recovery-vault-critical-op-alerts-terraform-hcl
-        tags:
-          mondoo.com/filter-title: Terraform HCL
-          mondoo.com/filter-icon: terraform
-      - uid: mondoo-azure-security-recovery-vault-critical-op-alerts-terraform-plan
-        tags:
-          mondoo.com/filter-title: Terraform Plan
-          mondoo.com/filter-icon: terraform
-      - uid: mondoo-azure-security-recovery-vault-critical-op-alerts-terraform-state
-        tags:
-          mondoo.com/filter-title: Terraform State
-          mondoo.com/filter-icon: terraform
-      - uid: mondoo-azure-security-recovery-vault-critical-op-alerts-bicep
-        tags:
-          mondoo.com/filter-title: Bicep
-          mondoo.com/filter-icon: bicep
-    docs:
-      desc: |
-        This check verifies that a Recovery Services vault alerts on critical operations such as stopping protection, deleting backup data, and changing security settings.
-
-        The property is `alertsForCriticalOperations` under the vault's classic alert settings. Enable it under Recovery Services vaults, the vault, then Properties under Settings, in Monitoring settings, or with `az backup vault backup-properties set --classic-alerts Enable`. Route the resulting alerts to a person by creating an action group and attaching it to the vault's built-in alert rules through the Backup center, Alerts, Manage notifications workflow.
-
-        **Why this matters**
-
-        The operations this covers are the ones an attacker performs immediately before a destructive attack. Stopping protection and deleting backup data are not routine administration; when they happen unexpectedly they are either a serious mistake or a deliberate step toward removing the victim's ability to recover.
-
-        Without alerting, those operations are recorded and nothing more. An attacker can quietly dismantle backup protection over hours, and the change is discovered only when someone attempts a restore that is no longer possible, which is invariably after the damage is done.
-
-        An alert at the moment of the operation gives teams a chance to intervene while intervention still matters. Soft delete and immutability provide the window; the alert is what tells someone the window has opened, so unauthorized operations can be investigated and, where the vault's protections allow it, reversed.
-
-        It also produces accountability. Every high-impact change to backup configuration leaves a notification trail beyond the activity log, which is what makes after-the-fact review of who changed what tractable.
-
-        This setting defaults to enabled on new vaults, so a failure usually indicates it was explicitly turned off. Declaring it explicitly in infrastructure as code keeps that from drifting again.
-      audit: |
-        **Manual Audit via Azure Portal:**
-
-        1. Navigate to **Recovery Services vaults** in the Azure Portal.
-        2. Select a vault.
-        3. Go to **Properties** under **Settings**.
-        4. Under **Monitoring settings**, verify that **Alerts for critical operations** is enabled.
-      remediation:
-        - id: portal
-          desc: |
-            To enable critical operation alerts using the Azure Portal:
-
-            1. Navigate to **Recovery Services vaults** in the Azure Portal.
-            2. Select the vault.
-            3. Go to **Properties** under **Settings**.
-            4. Under **Monitoring settings**, select **Update**.
-            5. Enable **Alerts for critical operations**.
-            6. Save the changes.
-        - id: cli
-          desc: |
-            To enable critical operation alerts using the Azure CLI:
-
-            ```bash
-            az backup vault backup-properties set \
-              --name <VaultName> \
-              --resource-group <ResourceGroupName> \
-              --classic-alerts Enable
-            ```
-
-            `--classic-alerts Enable` sets `alertsForCriticalOperations` to `Enabled` in the vault's classic alert settings, which is the value the check reads. Selecting **Use only Azure Monitor alerts** in the vault's monitoring settings, or running the command with `--classic-alerts Disable`, sets it back to `Disabled` and the check fails again.
-
-            To make alerts raised on the vault reach a person, create an action group and an alert processing rule that adds it to those alerts. `<ActionGroupResourceId>` is the `id` that the action group command returns and `<VaultResourceId>` is the vault's resource ID:
-
-            ```bash
-            az monitor action-group create \
-              --name <ActionGroupName> \
-              --resource-group <ResourceGroupName> \
-              --short-name <ShortName> \
-              --action email <ReceiverName> <EmailAddress>
-            ```
-
-            Then create an alert processing rule of type **Apply action group** with the vault as its scope and that action group as its action, under **Monitor**, **Alerts**, **Alert processing rules** in the portal, or with `az monitor alert-processing-rule create --rule-type AddActionGroups --scopes <VaultResourceId> --action-groups <ActionGroupResourceId>` from the `alertsmanagement` CLI extension.
-        - id: terraform
-          desc: |
-            To enable critical operation alerts in Terraform. The default is `true`, so leaving the `monitoring` block off also passes; declaring it explicitly prevents drift:
-
-            ```hcl
-            resource "azurerm_recovery_services_vault" "example" {
-              name                = "example-vault"
-              location            = azurerm_resource_group.example.location
-              resource_group_name = azurerm_resource_group.example.name
-              sku                 = "Standard"
-
-              monitoring {
-                alerts_for_critical_operation_failures_enabled = true
-              }
-            }
-            ```
-        - id: bicep
-          desc: |
-            To enable critical operation alerts in Bicep:
-
-            ```bicep
-            resource vault 'Microsoft.RecoveryServices/vaults@2024-04-01' = {
-              name: 'example-vault'
-              location: resourceGroup().location
-              sku: {
-                name: 'RS0'
-                tier: 'Standard'
-              }
-              properties: {
-                monitoringSettings: {
-                  classicAlertSettings: {
-                    alertsForCriticalOperations: 'Enabled'
-                  }
-                }
-              }
-            }
-            ```
-    refs:
-      - url: https://learn.microsoft.com/en-us/azure/backup/backup-azure-monitoring-built-in-monitor
-        title: Monitor Azure Backup with Azure Monitor
-  - uid: mondoo-azure-security-recovery-vault-critical-op-alerts-azure
-    filters: |
-      asset.platform == "azure-recovery-services-vault"
-    mql: |
-      azure.subscription.recoveryServices.vault.monitoringSettings.alertsForCriticalOperations == "Enabled"
-  - uid: mondoo-azure-security-recovery-vault-critical-op-alerts-terraform-hcl
-    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_recovery_services_vault")
-    mql: |
-      terraform.resources("azurerm_recovery_services_vault").all(
-        blocks.where(type == "monitoring").all(
-          arguments['alerts_for_critical_operation_failures_enabled'] != false
-        )
-      )
-  - uid: mondoo-azure-security-recovery-vault-critical-op-alerts-terraform-plan
-    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_recovery_services_vault")
-    mql: |
-      terraform.plan.resourceChanges.where(type == "azurerm_recovery_services_vault").all(
-        change.after['monitoring'] == empty ||
-        change.after['monitoring'].all(_['alerts_for_critical_operation_failures_enabled'] != false)
-      )
-  - uid: mondoo-azure-security-recovery-vault-critical-op-alerts-terraform-state
-    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_recovery_services_vault")
-    mql: |
-      terraform.state.resources.where(type == "azurerm_recovery_services_vault").all(
-        values['monitoring'] == empty ||
-        values['monitoring'].all(_['alerts_for_critical_operation_failures_enabled'] != false)
-      )
-  - uid: mondoo-azure-security-recovery-vault-critical-op-alerts-bicep
-    filters: asset.platform == "bicep" && bicep.resources.any(type == "Microsoft.RecoveryServices/vaults")
-    mql: |
-      bicep.resources.where(type == "Microsoft.RecoveryServices/vaults").all(
-        properties["monitoringSettings"]["classicAlertSettings"]["alertsForCriticalOperations"] != "Disabled"
       )
   - uid: mondoo-azure-security-servicebus-local-auth-disabled
     title: Ensure Service Bus namespaces disable local authentication
@@ -38118,7 +37389,7 @@ queries:
       asset.platform == "azure-container-app" &&
       azure.subscription.containerAppService.containerApp.registries.length > 0
     mql: |
-      azure.subscription.containerAppService.containerApp.registryAuthUsesIdentity == true
+      azure.subscription.containerAppService.containerApp.registries.all(_["identity"] != empty)
   - uid: mondoo-azure-security-container-app-managed-identity-registries-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_container_app")
     mql: |
