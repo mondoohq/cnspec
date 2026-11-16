@@ -118,7 +118,7 @@ PROVIDER_MAP = {
     "neon": ("kislerdm/neon", "~> 0.15"),
     "netlify": ("netlify/netlify", "~> 0.4"),
     "openstack": ("terraform-provider-openstack/openstack", "~> 3.0"),
-    "portainer": ("portainer/portainer", "~> 2.0"),
+    "portainer": ("portainer/portainer", "~> 3.0"),
     "snowflake": ("snowflakedb/snowflake", "~> 2.0"),
     "stackit": ("stackitcloud/stackit", "~> 0.111"),
     "tailscale": ("tailscale/tailscale", "~> 0.29"),
