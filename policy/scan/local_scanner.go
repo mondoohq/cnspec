@@ -1780,12 +1780,14 @@ func (s *localAssetScanner) runPolicy() (*policy.ResolvedPolicy, error) {
 
 	var resolvedPolicy *policy.ResolvedPolicy
 	err = s.retryUpstream("ResolveAndUpdateJobs", func() error {
-		var err error
-		resolvedPolicy, err = resolver.ResolveAndUpdateJobs(s.job.Ctx, &policy.UpdateAssetJobsReq{
-			AssetMrn:     s.job.Asset.Mrn,
-			AssetFilters: filters,
+		return upstream.RetryRateLimited(s.job.Ctx, "ResolveAndUpdateJobs", rateLimitBudget, func() error {
+			var err error
+			resolvedPolicy, err = resolver.ResolveAndUpdateJobs(s.job.Ctx, &policy.UpdateAssetJobsReq{
+				AssetMrn:     s.job.Asset.Mrn,
+				AssetFilters: filters,
+			})
+			return err
 		})
-		return err
 	})
 	if err != nil {
 		return resolvedPolicy, err

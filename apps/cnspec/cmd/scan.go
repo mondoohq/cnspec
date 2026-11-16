@@ -450,7 +450,7 @@ func getCobraScanConfig(cmd *cobra.Command, runtime *providers.Runtime, cliRes *
 		reportType = scan.ReportType_NONE
 	}
 
-	features := opts.GetFeatures()
+	features := withRateLimitRetry(opts.GetFeatures())
 	// --output-scan-db requires the SQLite scan-db datalake (UploadResultsV2);
 	// turn it on automatically so users don't have to know about the feature flag.
 	if viper.GetString("output-scan-db") != "" && !features.IsActive(mql.UploadResultsV2) {

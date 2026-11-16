@@ -5,6 +5,7 @@ package scan
 
 import (
 	"context"
+	"errors"
 	"math/rand/v2"
 	"os"
 	"strings"
@@ -27,6 +28,10 @@ const (
 	// defaultUpstreamWait is how long one call keeps retrying a transient
 	// error: long enough to outlast a server restart.
 	defaultUpstreamWait = 2 * time.Minute
+
+	// rateLimitBudget is how long one call waits out a busy platform: it has to
+	// fit inside the timeout of a scan installed on a managed fleet.
+	rateLimitBudget = 3 * time.Minute
 
 	upstreamRetryBaseWait = time.Second
 	upstreamRetryMaxWait  = 15 * time.Second
@@ -123,6 +128,9 @@ func (r *upstreamRetry) do(ctx context.Context, what string, fn func() error) er
 		if err == nil {
 			r.setDown(false)
 			return nil
+		}
+		if errors.Is(err, upstream.ErrRateLimitBudgetSpent) {
+			return err
 		}
 		if !upstream.RetryableRPCError(err) {
 			return err

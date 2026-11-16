@@ -35,6 +35,15 @@ var featuresCmd = &cobra.Command{
 	},
 }
 
+// withRateLimitRetry tells the platform this client waits and retries when it
+// is refused as busy, so the platform may refuse instead of queueing.
+func withRateLimitRetry(f mql.Features) mql.Features {
+	if f.IsActive(mql.RateLimitRetry) {
+		return f
+	}
+	return append(f, byte(mql.RateLimitRetry))
+}
+
 func init() {
 	rootCmd.AddCommand(featuresCmd)
 }
