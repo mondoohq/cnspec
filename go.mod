@@ -45,8 +45,8 @@ require (
 	github.com/tliron/glsp v0.2.2
 	github.com/xeipuuv/gojsonschema v1.2.0
 	github.com/zclconf/go-cty v1.20.0
-	go.mondoo.com/mondoo-go v0.0.0-20261107000730-1a4a4b03bbd7
-	go.mondoo.com/mql v0.0.0-20261110171849-d5c4aaac2abe
+	go.mondoo.com/mondoo-go v0.0.0-20261112084338-6bd209e2cc03
+	go.mondoo.com/mql v0.0.0-20261117054927-24ad6670f9f4
 	go.mondoo.com/ranger-rpc v0.8.2
 	gocloud.dev v0.48.0
 	golang.org/x/sync v0.25.0
@@ -170,7 +170,6 @@ require (
 	github.com/go-git/gcfg v1.5.1-0.20230307220236-3a3c6141e376 // indirect
 	github.com/go-git/go-billy/v5 v5.9.2 // indirect
 	github.com/go-git/go-git/v5 v5.19.3 // indirect
-	github.com/go-jose/go-jose/v3 v3.0.5 // indirect
 	github.com/go-jose/go-jose/v4 v4.1.9 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
