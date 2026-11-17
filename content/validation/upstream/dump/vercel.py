@@ -55,17 +55,25 @@ POLICY_FILE = CONTENT_DIR / "mondoo-vercel-security.mql.yaml"
 # from npm; regenerate after `npm i -g vercel@<new>` and bump this.
 VERCEL_VERSION = "65.16.0"
 
-# A command entry in a `Commands:` section: leading indent, a lowercase
-# command name, an optional `short | long` alias pair, then whitespace
-# before the argument/description columns. Section sub-headers in the
-# top-level help ("Basic", "Advanced") are Capitalized, so the lowercase
-# anchor excludes them.
+# A command entry in a command section: leading indent, a lowercase
+# command name, an optional `short | long` alias pair, then either the
+# column gap before the description or a single space before an
+# `<arg>` / `[arg]` placeholder (`add <name>  Add an ...`). Section
+# headers are Capitalized, so the lowercase anchor excludes them.
 _COMMAND_LINE_RE = re.compile(
-    r"^(\s+)([a-z][a-z0-9-]*)\s*(?:\|\s*([a-z][a-z0-9-]*))?\s{2,}\S"
+    r"^(\s+)([a-z][a-z0-9-]*)\s*(?:\|\s*([a-z][a-z0-9-]*))?(?:\s{2,}\S| [<\[])"
 )
 
-# A section header line like "Commands:", "Options:", "Global Options:".
-_SECTION_HEADER_RE = re.compile(r"^\s*[A-Z][A-Za-z ]*:\s*$")
+# A section header line like "Commands:", "Options:", "Global Options:",
+# or a top-level category ("Projects and Configuration:"). Subcommand
+# help ends with `Global Options: See \`vercel --help\``, so trailing
+# text after the colon is allowed.
+_SECTION_HEADER_RE = re.compile(r"^([A-Z][A-Za-z ]*):(?:\s|$)")
+
+# Sections that never list commands. Every other section does: a
+# subcommand's help has one `Commands:` section, while the top-level help
+# groups commands under category headers ("Deploy and Develop:", ...).
+_NON_COMMAND_SECTIONS = {"Options", "Global Options", "Examples"}
 
 # A long flag anywhere in help text. Short flags (-y) are not validated
 # because remediation snippets use long forms.
@@ -82,47 +90,48 @@ def run_help(path: str) -> str:
 
 
 def parse_commands_section(text: str) -> list[tuple[str, str | None]]:
-    """Return (name, alias) pairs from the `Commands:` section, or []."""
-    lines = text.splitlines()
-    start = None
-    for i, line in enumerate(lines):
-        if re.match(r"^\s*Commands:\s*$", line):
-            start = i + 1
-            break
-    if start is None:
-        return []
+    """Return (name, alias) pairs from every command-listing section."""
+    # Group lines by the section header above them; lines before the
+    # first header (banner, usage, description) belong to no section.
+    sections: list[tuple[str, list[str]]] = []
+    for line in text.splitlines():
+        if m := _SECTION_HEADER_RE.match(line):
+            sections.append((m.group(1), []))
+        elif sections:
+            sections[-1][1].append(line)
 
-    # The section runs to the next header (Options:, Global Options:,
-    # Examples:, …) or EOF.
-    block = []
-    for line in lines[start:]:
-        if _SECTION_HEADER_RE.match(line):
-            break
-        block.append(line)
-
-    candidates = [
-        (m.group(1), m.group(2), m.group(3))
-        for line in block
-        if (m := _COMMAND_LINE_RE.match(line))
-    ]
-    if not candidates:
-        return []
-
-    # Command entries share the shallowest indent in the block; anything
-    # deeper is a wrapped description line that happens to start with a
-    # lowercase word ("for a Project").
-    base_indent = min(len(indent) for indent, _, _ in candidates)
-    return [
-        (name, alias)
-        for indent, name, alias in candidates
-        if len(indent) == base_indent
-    ]
+    result: list[tuple[str, str | None]] = []
+    for header, block in sections:
+        if header in _NON_COMMAND_SECTIONS:
+            continue
+        candidates = [
+            (m.group(1), m.group(2), m.group(3))
+            for line in block
+            if (m := _COMMAND_LINE_RE.match(line))
+        ]
+        if not candidates:
+            continue
+        # Command entries share the shallowest indent in the block; anything
+        # deeper is a wrapped description line that happens to start with a
+        # lowercase word ("for a Project").
+        base_indent = min(len(indent) for indent, _, _ in candidates)
+        result.extend(
+            (name, alias)
+            for indent, name, alias in candidates
+            if len(indent) == base_indent
+        )
+    return result
 
 
 def parse_flags(text: str) -> list[str]:
     """Return the long flags (own + global) documented in the help text."""
     start = text.find("Options:")
     scope = text[start:] if start != -1 else text
+    # Example invocations combine flags from other commands
+    # (`vercel deploy --yes`); only the option tables count.
+    end = scope.find("\nExamples:")
+    if end != -1:
+        scope = scope[:end]
     return sorted(set(_FLAG_RE.findall(scope)))
 
 
@@ -203,6 +212,13 @@ def walk(roots: list[str]) -> tuple[dict[str, dict], dict[str, str]]:
                     if child not in visited:
                         next_queue.append(child)
             queue = next_queue
+
+    # Subcommand help points at `vercel --help` for the global options
+    # instead of listing them, and they are valid on every command.
+    global_flags = set(root_node["flags"])
+    for path, node in commands.items():
+        if path:
+            node["flags"] = sorted(global_flags | set(node["flags"]))
 
     return commands, aliases
 
