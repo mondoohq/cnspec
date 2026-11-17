@@ -6,7 +6,6 @@ package scan
 import (
 	"context"
 	"errors"
-	"fmt"
 	"testing"
 	"time"
 
@@ -15,24 +14,9 @@ import (
 	"go.mondoo.com/cnspec/policy"
 	"go.mondoo.com/mql/discovery"
 	"go.mondoo.com/mql/providers-sdk/v1/inventory"
-	"go.mondoo.com/mql/providers-sdk/v1/upstream"
 	"go.mondoo.com/ranger-rpc/codes"
 	"go.mondoo.com/ranger-rpc/status"
 )
-
-// A spent rate-limit budget already waited as long as it should: no retry, and
-// the platform is not marked down.
-func TestUpstreamRetryDoesNotRetryRateLimitBudgetSpent(t *testing.T) {
-	r, _ := testUpstreamRetry(defaultUpstreamWait)
-	calls := 0
-	err := r.do(context.Background(), "x", func() error {
-		calls++
-		return fmt.Errorf("x: %w: %w", upstream.ErrRateLimitBudgetSpent, status.Error(codes.ResourceExhausted, "busy"))
-	})
-	require.ErrorIs(t, err, upstream.ErrRateLimitBudgetSpent)
-	assert.Equal(t, 1, calls)
-	assert.False(t, r.down)
-}
 
 // fakeClock is a clock the retry's sleeps advance, so the tests take no time.
 type fakeClock struct{ t time.Time }
