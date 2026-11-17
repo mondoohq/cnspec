@@ -49,7 +49,7 @@ cnspec aibom ssh user@host -o cyclonedx-json       # remote host agent & model d
 cnspec aibom docker image:tag -o cyclonedx-json    # container AI BOM
 ```
 
-**Rationale:** CycloneDX defines [BOM as an umbrella standard](https://cyclonedx.org/capabilities/) with SBOM, ML-BOM, CBOM, HBOM, etc. as peer types. A dedicated `cnspec aibom` command keeps the naming clear and avoids overloading `cnspec sbom` with `--type` flags that change its fundamental behavior. The two commands share format rendering infrastructure (`cyclonedx.go`) but have separate query packs and generators.
+**Rationale:** CycloneDX defines [BOM as an umbrella standard](https://cyclonedx.org/specification/overview/) with SBOM, ML-BOM, CBOM, HBOM, etc. as peer types. A dedicated `cnspec aibom` command keeps the naming clear and avoids overloading `cnspec sbom` with `--type` flags that change its fundamental behavior. The two commands share format rendering infrastructure (`cyclonedx.go`) but have separate query packs and generators.
 
 ### 2. Data model
 
@@ -233,7 +233,7 @@ The `cnspec aibom` command uses MQL resources from the OS provider and cloud pro
 ## Consequences
 
 **Advantages:**
-- Dedicated `cnspec aibom` command — clear separation from `cnspec sbom`, aligned with [CycloneDX BOM taxonomy](https://cyclonedx.org/capabilities/)
+- Dedicated `cnspec aibom` command — clear separation from `cnspec sbom`, aligned with [CycloneDX BOM taxonomy](https://cyclonedx.org/specification/overview/)
 - Full AI supply chain visibility — models, agents, guardrails, knowledge bases, compute access, and AI dependencies in a single BOM
 - Continuous & policy-driven — unlike one-shot generators, cnspec can enforce completeness thresholds and security baselines across fleets of models
 - Multi-cloud + local — single tool covers cloud platforms (AWS, GCP, Azure), inference APIs (OpenAI, Anthropic), model registries (HuggingFace, Ollama), local runtimes (vLLM), and local coding agents (25 types)
