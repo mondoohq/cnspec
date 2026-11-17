@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-unifi-security
     name: Mondoo Ubiquiti UniFi Security
-    version: 1.3.3
+    version: 2.0.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -48,11 +48,7 @@ policies:
           - uid: mondoo-unifi-security-dns-filtering-enabled
           - uid: mondoo-unifi-security-honeypot-enabled
           - uid: mondoo-unifi-security-dpi-enabled
-      - title: VPN Security
-        checks:
-          - uid: mondoo-unifi-security-vpn-servers-modern-protocol
-          - uid: mondoo-unifi-security-vpn-tunnels-active
-          - uid: mondoo-unifi-security-vpn-clients-modern-protocol
+          - uid: mondoo-unifi-security-ips-covers-all-networks
       - title: Gateway Security
         checks:
           - uid: mondoo-unifi-security-upnp-disabled
@@ -60,6 +56,7 @@ policies:
           - uid: mondoo-unifi-security-icmp-redirects-disabled
           - uid: mondoo-unifi-security-syn-cookies-enabled
           - uid: mondoo-unifi-security-geo-ip-filtering-enabled
+          - uid: mondoo-unifi-security-no-inbound-allow-from-internet
       - title: Switch Security
         checks:
           - uid: mondoo-unifi-security-dhcp-snooping-enabled
@@ -956,27 +953,26 @@ queries:
     impact: 80
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-log-08
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-09
       compliance/dora: dora-art-10
       compliance/hipaa: hipaa-security-ss164-312-b-audit-controls
       compliance/iso-27001-2022: iso-27001-2022-a-8-16
       compliance/nis-2: nis-2-21-2-b
       compliance/nist-csf-1: nist-csf-1-de-cm-1
-      compliance/nist-csf-2: nist-csf-2-de-cm-09
+      compliance/nist-csf-2: nist-csf-2-de-cm-01
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-4
       compliance/nist-sp-800-171: nist-sp-800-171--3-14-6
-      compliance/owasp-top-10-2025: owasp-top-10-2025-a02
-      compliance/pci-dss-4: pcidss-requirement-10-2-1
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a09
+      compliance/pci-dss-4: pcidss-requirement-11-5-1
       compliance/soc2-2017: soc2-control-cc7-2-1
       compliance/vda-isa-5: vda-isa-5-5-2-4
     mql: |
-      unifi.siteSettings.threatManagement.enabled == true
-      unifi.siteSettings.threatManagement.ipsMode == "ips"
+      unifi.siteSettings.threatManagement.ipsMode.in(["ips", "ipsInline"])
     docs:
       desc: |
         This check verifies that the site's threat management engine is turned on and set to block attacks rather than only record them.
 
-        Threat management lives under **Settings > Security > Threat Management** in the UniFi Network application. Two states matter here: **IDS**, which inspects traffic and raises an alert, and **IPS**, which inspects traffic and drops what matches. The check requires threat management to be enabled and the mode to be **IPS**. It applies to a site fronted by a UniFi gateway such as a UDM or USG, because the inspection runs there and needs a downloaded signature set.
+        Threat management lives under **Settings > Security > Threat Management** in the UniFi Network application. Two states matter here: **IDS**, which inspects traffic and raises an alert, and **IPS**, which inspects traffic and drops what matches. The check requires the mode to be **IPS**, which also means threat management is on. It applies to a site fronted by a UniFi gateway such as a UDM or USG, because the inspection runs there and needs a downloaded signature set.
 
         **Why this matters**
 
@@ -2632,7 +2628,7 @@ queries:
       desc: |
         This check verifies that networks defined for guests cannot route to the rest of the site.
 
-        In the UniFi Network application a network is created under **Settings > Networks** with a purpose, and one of the available purposes is guest. The check selects every network whose purpose is guest and requires **Network Isolation** to be enabled on it, which is the setting that stops traffic on that VLAN from reaching other VLANs at the site.
+        In the UniFi Network application a network is created under **Settings > Networks** with a purpose, and one of the available purposes is guest. The check selects every network whose purpose is guest and requires one of two boundaries. On a controller that uses the zone-based firewall, the network must sit in the built-in **Hotspot** zone, whose default policies block traffic to the other zones. On a controller that does not, **Network Isolation** must be enabled on the network, which is the setting that stops traffic on that VLAN from reaching other VLANs at the site.
 
         **Why this matters**
 
@@ -2650,17 +2646,19 @@ queries:
 
         1. Sign in to the UniFi Network web application.
         2. Go to **Settings > Networks**.
-        3. Select each network with a guest purpose and review the **Network Isolation** setting.
+        3. Select each network with a guest purpose and note its firewall zone and the **Network Isolation** setting.
+        4. On a controller with the zone-based firewall, go to **Settings > Security > Firewall Zones** (the location varies by controller version) and confirm each guest network is assigned to the **Hotspot** zone.
 
-        If every guest network has **Network Isolation** enabled, the check passes. If any guest network has it disabled, the check fails.
+        If every guest network is in the **Hotspot** zone or has **Network Isolation** enabled, the check passes. If any guest network has neither, the check fails.
       remediation:
         - id: console
           desc: |
-            To enable network isolation on a guest network using the UniFi Network web application:
+            To isolate a guest network using the UniFi Network web application:
 
             1. Go to **Settings > Networks**.
             2. Select each guest or IoT network.
-            3. Enable **Network Isolation** to prevent inter-VLAN routing.
+            3. On a controller with the zone-based firewall, assign the network to the **Hotspot** zone, and do not add policies that allow traffic from that zone to the **Internal** zone.
+            4. On a controller without the zone-based firewall, enable **Network Isolation** to prevent inter-VLAN routing.
         # No cli remediation: network configuration is controller-managed; the device SSH CLI cannot change it and the controller overwrites local changes on provision.
         - id: terraform
           desc: |
@@ -2682,7 +2680,12 @@ queries:
   - uid: mondoo-unifi-security-guest-network-isolation-unifi
     filters: asset.platform == "unifi"
     mql: |
-      unifi.networks.where(purpose == "guest").all(networkIsolationEnabled == true)
+      unifi.networks
+        .where(purpose == "guest")
+        .all(
+          networkIsolationEnabled == true ||
+          id.in(unifi.firewallZones.where(zoneKey == "hotspot").map(networks.map(id)).flat)
+        )
   - uid: mondoo-unifi-security-guest-network-isolation-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "unifi_network")
     mql: |
@@ -2741,7 +2744,7 @@ queries:
       desc: |
         This check verifies that LAN networks forward multicast only to the ports that asked for it.
 
-        IGMP snooping is enabled per network under **Settings > Networks** in the advanced section of the UniFi Network application. With it on, the switch watches group membership messages and forwards a multicast stream only out of the ports where a host has joined that group. The check evaluates the networks in the LAN interface group and requires the setting to be enabled on each of them.
+        IGMP snooping is enabled per network under **Settings > Networks** in the advanced section of the UniFi Network application. With it on, the switch watches group membership messages and forwards a multicast stream only out of the ports where a host has joined that group. The check evaluates the networks in the LAN interface group, excluding WAN uplinks that the controller also places in that group, and requires the setting to be enabled on each of them.
 
         **Why this matters**
 
@@ -2791,7 +2794,7 @@ queries:
   - uid: mondoo-unifi-security-igmp-snooping-enabled-unifi
     filters: asset.platform == "unifi"
     mql: |
-      unifi.networks.where(networkGroup == "LAN").all(igmpSnooping == true)
+      unifi.networks.where(purpose != "wan" && networkGroup == "LAN").all(igmpSnooping == true)
   - uid: mondoo-unifi-security-igmp-snooping-enabled-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "unifi_network")
     mql: |
@@ -2806,201 +2809,6 @@ queries:
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "unifi_network")
     mql: |
       terraform.state.resources.where(type == "unifi_network").all(values.igmp_snooping == true)
-
-  # ─── VPN Security ─────────────────────────────────────────────────────────────
-  # No Terraform variants: the unifi_vpn_server resource has no `protocol`/`purpose`/`type`
-  # selector — the protocol is determined by which of the three nested attributes
-  # (`wireguard`, `l2tp`, `openvpn`) is present, with exactly one required. The runtime
-  # check uses a string equality (`protocol == "wireguard" || protocol == "ipsec"`) that
-  # does not map cleanly to "exactly one of these blocks is non-empty"; a faithful variant
-  # would also need to allow `l2tp` (IPsec-over-L2TP) but flag plain `openvpn`, and the
-  # semantic mismatch produces both false positives and false negatives.
-  - uid: mondoo-unifi-security-vpn-servers-modern-protocol
-    filters: asset.platform == "unifi"
-    title: Ensure VPN servers use modern protocols
-    impact: 60
-    tags:
-      compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-04
-      compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
-      compliance/iso-27001-2022: iso-27001-2022-a-8-24
-      compliance/nis-2: nis-2-21-2-h
-      compliance/nist-csf-1: nist-csf-1-pr-ds-2
-      compliance/nist-csf-2: nist-csf-2-pr-ds-02
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
-      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
-      compliance/owasp-top-10-2025: owasp-top-10-2025-a04
-      compliance/pci-dss-4: pcidss-requirement-4-2-1
-      compliance/soc2-2017: soc2-control-cc6-7-2
-      compliance/vda-isa-5: vda-isa-5-5-1-2
-    mql: |
-      unifi.vpnServers.where(enabled == true).all(protocol.in(["wireguard", "ipsec"]))
-    docs:
-      desc: |
-        This check verifies that every VPN server the site publishes runs on a current protocol.
-
-        VPN servers are configured under **Settings > VPN > VPN Server** in the UniFi Network application, and each one is created with a protocol. The check reads every enabled VPN server and requires its protocol to be WireGuard or IPsec. A legacy server, typically OpenVPN, fails.
-
-        **Why this matters**
-
-        A VPN server is published to the internet on purpose. It is one of the few services on the network an attacker can reach with no foothold at all, and success puts them inside the perimeter as a trusted client. That makes the code handling unauthenticated packets on that port the most exposed code the organization runs.
-
-        WireGuard keeps that exposed surface small. Its implementation is a few thousand lines, it fixes its cryptography instead of negotiating it, using ChaCha20 for encryption and Curve25519 for key exchange, and it silently drops any packet that does not authenticate, so it does not answer scans at all. There is no cipher suite to misconfigure and no downgrade to negotiate.
-
-        IPsec with IKEv2 is the mature alternative and the better fit for site-to-site tunnels, offering strong authenticated encryption together with reliable rekeying and reconnection behavior.
-
-        OpenVPN is not broken, but it is a much larger and far more configurable body of code, and the configurability is the problem. Its defaults have shifted over the years, older deployments carry weak cipher suites and outdated TLS settings that nobody revisits, and a control channel that answers unauthenticated probes advertises itself to every scanner on the internet.
-
-        Replacing a VPN server means reissuing client configurations, so plan the migration: stand the new server up alongside the old one, move users across, confirm they connect, and only then remove the legacy service.
-      audit: |
-        To verify VPN server protocols using the UniFi Network web application:
-
-        1. Sign in to the UniFi Network web application.
-        2. Go to **Settings > VPN > VPN Server**.
-        3. Review the protocol of each enabled VPN server configuration.
-
-        If every enabled VPN server uses **WireGuard** or **IPsec**, the check passes. If any enabled VPN server uses a legacy protocol such as OpenVPN, the check fails.
-      remediation:
-        - id: console
-          desc: |
-            To replace a legacy VPN server using the UniFi Network web application:
-
-            1. Go to **Settings > VPN > VPN Server**.
-            2. Create a new VPN server that uses **WireGuard**, or create an IPsec tunnel under **Settings > VPN > Site-to-Site VPN**.
-            3. Migrate remote users to the new server configuration.
-            4. Remove the legacy OpenVPN server.
-        # No cli remediation: VPN configuration is controller-managed; the device SSH CLI cannot change it and the controller overwrites local changes on provision.
-    refs:
-      - url: https://help.ui.com/hc/en-us/articles/115005445768
-        title: UniFi VPN configuration
-
-  # No Terraform variants: VPN tunnel connection status (the `status == "connected"`
-  # assertion) is runtime telemetry from the UniFi controller about whether the tunnel is
-  # actively up. It is not a configuration field — there is no `status` argument on
-  # unifi_vpn_client or any resource that expresses tunnel-up state, because that's
-  # observed-only data.
-  - uid: mondoo-unifi-security-vpn-tunnels-active
-    filters: asset.platform == "unifi"
-    title: Ensure enabled VPN tunnels are connected
-    impact: 50
-    tags:
-      compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-log-08
-      compliance/dora: dora-art-10
-      compliance/hipaa: hipaa-security-ss164-312-b-audit-controls
-      compliance/iso-27001-2022: iso-27001-2022-a-8-16
-      compliance/nis-2: nis-2-21-2-b
-      compliance/nist-csf-1: nist-csf-1-de-cm-1
-      compliance/nist-csf-2: nist-csf-2-de-cm-09
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-4
-      compliance/nist-sp-800-171: nist-sp-800-171--3-14-6
-      compliance/owasp-top-10-2025: false
-      compliance/pci-dss-4: pcidss-requirement-10-2-1
-      compliance/soc2-2017: soc2-control-cc7-2-1
-      compliance/vda-isa-5: vda-isa-5-5-2-4
-    mql: |
-      unifi.vpnClients.where(enabled == true).all(status == "connected")
-    docs:
-      desc: |
-        This check verifies that every VPN tunnel the site is configured to bring up is actually connected.
-
-        VPN client connections are listed under **Settings > VPN > VPN Client** in the UniFi Network application, each showing a status. The check reads every enabled VPN client tunnel, which in most deployments means the site-to-site links to other offices or to a cloud network, and requires the status to be connected. A tunnel sitting in an error, connecting, or disconnected state fails.
-
-        **Why this matters**
-
-        A tunnel that is enabled but down is a promise the network is not keeping. Traffic the design assumed would be encrypted end to end is either dropped, which becomes an outage nobody has attributed yet, or falls back to a route that carries it across the public internet with only whatever protection the application itself provides, which for internal services is often none.
-
-        Down tunnels also blind the monitoring that runs across them. If log shipping, authentication against a remote directory, or backup replication rides the tunnel, none of it is happening while the tunnel is down, and the resulting gap is exactly the period an investigation later needs.
-
-        The reason for the failure deserves treatment as a finding in its own right. Expired credentials or certificates, a changed remote address, and a firewall change on the far side are the ordinary causes; a tunnel that repeatedly drops can also be the visible symptom of interference, since forcing a tunnel down is a way to push traffic onto a path an attacker can observe.
-
-        Enabled tunnels nobody expects to connect are the other half of this. A stale configuration left switched on for a site that closed years ago keeps a set of credentials and a route alive with nobody watching either. Disable configurations that are no longer in use rather than leaving them permanently red.
-      audit: |
-        To verify VPN tunnel status using the UniFi Network web application:
-
-        1. Sign in to the UniFi Network web application.
-        2. Go to **Settings > VPN > VPN Client**.
-        3. Review the status of each enabled VPN client tunnel.
-
-        If every enabled VPN client tunnel shows a **connected** status, the check passes. If any enabled tunnel is in an error, connecting, or disconnected state, the check fails.
-      remediation:
-        - id: console
-          desc: |
-            To restore disconnected VPN tunnels using the UniFi Network web application:
-
-            1. Go to **Settings > VPN > VPN Client**.
-            2. Review VPN client tunnels that are enabled but disconnected.
-            3. Verify the remote endpoint is reachable and credentials are valid.
-            4. Check firewall rules on both ends to ensure VPN traffic is permitted.
-            5. Disable any VPN client configurations that are no longer needed.
-        # No cli remediation: VPN configuration is controller-managed; the device SSH CLI cannot change it and the controller overwrites local changes on provision.
-    refs:
-      - url: https://help.ui.com/hc/en-us/articles/115005445768
-        title: UniFi VPN configuration
-
-  # No Terraform variants: the ubiquiti-community/unifi unifi_vpn_client resource is
-  # WireGuard-only — `wireguard` is a Required nested attribute and there is no protocol
-  # selector. Any declared client is implicitly WireGuard, so a variant that asserts
-  # `protocol == "wireguard" || protocol == "ipsec"` would be vacuously true on every
-  # declared client and would not surface ipsec/openvpn/l2tp clients (which can only be
-  # configured through the UI). Better to keep this runtime-only.
-  - uid: mondoo-unifi-security-vpn-clients-modern-protocol
-    filters: asset.platform == "unifi"
-    title: Ensure VPN clients use modern protocols
-    impact: 60
-    tags:
-      compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-04
-      compliance/dora: dora-art-9
-      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
-      compliance/iso-27001-2022: iso-27001-2022-a-8-24
-      compliance/nis-2: nis-2-21-2-h
-      compliance/nist-csf-1: nist-csf-1-pr-ds-2
-      compliance/nist-csf-2: nist-csf-2-pr-ds-02
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
-      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
-      compliance/owasp-top-10-2025: owasp-top-10-2025-a04
-      compliance/pci-dss-4: pcidss-requirement-4-2-1
-      compliance/soc2-2017: soc2-control-cc6-7-2
-      compliance/vda-isa-5: vda-isa-5-5-1-2
-    mql: |
-      unifi.vpnClients.where(enabled == true).all(protocol.in(["wireguard", "ipsec"]))
-    docs:
-      desc: |
-        This check verifies that every outbound VPN connection this site initiates uses a current protocol.
-
-        VPN client connections are configured under **Settings > VPN > VPN Client** in the UniFi Network application, where each connection to a remote site or provider is created with a protocol. The check reads every enabled VPN client and requires WireGuard or IPsec. A legacy client connection, typically OpenVPN, fails.
-
-        **Why this matters**
-
-        Whatever crosses a client tunnel is traffic the organization decided was too sensitive for the open internet: file server access to a branch office, database replication, administrative sessions into a remote rack. The tunnel is the only thing protecting it across every network in between, and there are many, including whichever transit providers happen to carry the packets on a given day.
-
-        An outdated protocol undermines that in ways that are hard to notice from this end. A weak cipher negotiated for compatibility with an old peer, a stale certificate that nothing validates strictly, or a key exchange without forward secrecy all leave the tunnel working normally while an observer who records the traffic keeps the option of reading it later.
-
-        WireGuard and IPsec both authenticate the peer as part of establishing the tunnel, so a machine that cannot prove it holds the right key never gets a session. That matters more for a client connection than for a server, because the far end is somebody else's infrastructure and its posture is not under this site's control.
-
-        Client and server configurations should meet the same standard for the obvious reason: an attacker works on whichever end is weaker, and a hardened server reached through a tunnel negotiated on legacy terms is protected only by the weaker of the two. A companion check in this policy applies the same requirement to the VPN servers this site publishes.
-      audit: |
-        To verify VPN client protocols using the UniFi Network web application:
-
-        1. Sign in to the UniFi Network web application.
-        2. Go to **Settings > VPN > VPN Client**.
-        3. Review the protocol of each enabled VPN client configuration.
-
-        If every enabled VPN client uses **WireGuard** or **IPsec**, the check passes. If any enabled VPN client uses a legacy protocol such as OpenVPN, the check fails.
-      remediation:
-        - id: console
-          desc: |
-            To replace a legacy VPN client using the UniFi Network web application:
-
-            1. Go to **Settings > VPN > VPN Client**.
-            2. Create a new VPN client connection that uses **WireGuard** or **IPsec**, coordinating with the remote site for protocol compatibility.
-            3. Verify the new tunnel is connected, then remove the legacy OpenVPN client.
-        # No cli remediation: VPN configuration is controller-managed; the device SSH CLI cannot change it and the controller overwrites local changes on provision.
-    refs:
-      - url: https://help.ui.com/hc/en-us/articles/115005445768
-        title: UniFi VPN configuration
 
   # ─── Device Hardening ─────────────────────────────────────────────────────────
   # No Terraform variants: device firmware version is runtime telemetry — the
@@ -3455,3 +3263,140 @@ queries:
       terraform.state.resources
         .where(type == "unifi_wlan" && values.security != "open")
         .all(values.wpa3.support == true && values.wpa3.transition == false)
+  # No Terraform variants: a Terraform configuration declares firewall policies and rules
+  # but not the controller's predefined zone policies, so it cannot show whether a declared
+  # allow is the only path in. The runtime check reads the effective policy set instead.
+  - uid: mondoo-unifi-security-no-inbound-allow-from-internet
+    filters: asset.platform == "unifi"
+    title: Ensure no firewall policy allows new connections from the internet
+    impact: 90
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-1-transmission
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-pt-4
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-1-4-2
+      compliance/soc2-2017: soc2-control-cc6-6-4
+      compliance/vda-isa-5: vda-isa-5-5-2-7
+    mql: |
+      unifi.firewallPolicies
+        .where(enabled == true && predefined == false && action == "ALLOW" && sourceZone.zoneKey == "external")
+        .all(connectionStateType == "RESPOND_ONLY")
+      unifi.firewallRules
+        .where(enabled == true && ruleset.in(["WAN_IN", "WAN_LOCAL", "WANv6_IN", "WANv6_LOCAL"]) && action == "accept")
+        .none(stateNew == true)
+    docs:
+      desc: |
+        This check verifies that the gateway still refuses connections that start on the internet.
+
+        A UniFi gateway drops unsolicited inbound traffic by default and lets in only the replies to connections that a device on the inside opened. Administrators can override that with their own firewall entries. On a controller with the zone-based firewall these are firewall policies whose source is the **External** zone, and on a controller without it they are rules in the **Internet In** and **Internet Local** rule sets. The check fails when any enabled entry of either kind accepts traffic from the internet without being limited to return traffic. The policies that the controller generates for port forwards are evaluated by a separate check about port forwards and are not counted here.
+
+        **Why this matters**
+
+        The default deny on the WAN side is the single control that keeps every internal service off the internet. One allow entry with a broad source or destination turns file shares, printers, cameras, and the management interfaces of the network equipment into services that anyone can reach, and scanners find a newly exposed port within minutes.
+
+        These entries tend to outlive their purpose. They are added to make a remote session or a vendor integration work, often with the source left as any, and nothing removes them when the need ends. Because the network keeps working, nobody notices the opening until it is used.
+
+        An entry that accepts only established and related traffic does not create this exposure, because it cannot admit a connection that did not start inside. That is the shape the check accepts.
+      audit: |
+        To review inbound firewall entries using the UniFi Network web application:
+
+        1. Sign in to the UniFi Network web application.
+        2. On a controller with the zone-based firewall, go to **Settings > Security > Firewall** and list the policies whose source zone is **External**.
+        3. On a controller without the zone-based firewall, go to **Settings > Security > Firewall Rules** and review the **Internet In** and **Internet Local** rule sets.
+        4. For each enabled entry that allows or accepts traffic, review which connection states it matches.
+
+        If no enabled entry admits new connections from the internet, the check passes. If any does, the check fails.
+      remediation:
+        - id: console
+          desc: |
+            To close inbound openings using the UniFi Network web application:
+
+            1. Go to the firewall settings for your controller version as described in the audit steps.
+            2. For each entry that allows new connections from the internet, decide whether the service must be reachable from the internet at all.
+            3. Delete or disable the entry if it is not needed.
+            4. If the service must be reachable, publish it with a port forward restricted to the source addresses that need it, or place it behind a VPN, and remove the broad allow entry.
+        # No cli remediation: firewall configuration is controller-managed; the device SSH CLI cannot change it and the controller overwrites local changes on provision.
+
+  # No Terraform variants: which networks exist and which ones the engine inspects are
+  # declared on different resources, and a configuration that leaves `enabled_networks`
+  # computed lets the controller decide. Only the runtime check sees the effective list.
+  - uid: mondoo-unifi-security-ips-covers-all-networks
+    filters: asset.platform == "unifi"
+    title: Ensure threat management inspects every internal network
+    impact: 60
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-09
+      compliance/dora: dora-art-10
+      compliance/hipaa: hipaa-security-ss164-312-b-audit-controls
+      compliance/iso-27001-2022: iso-27001-2022-a-8-16
+      compliance/nis-2: nis-2-21-2-b
+      compliance/nist-csf-1: nist-csf-1-de-cm-1
+      compliance/nist-csf-2: nist-csf-2-de-cm-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-4
+      compliance/nist-sp-800-171: nist-sp-800-171--3-14-6
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a09
+      compliance/pci-dss-4: pcidss-requirement-11-5-1
+      compliance/soc2-2017: soc2-control-cc7-2-1
+      compliance/vda-isa-5: vda-isa-5-5-2-4
+    mql: |
+      unifi.networks
+        .where(enabled == true && purpose.in(["corporate", "guest"]))
+        .all(id.in(unifi.siteSettings.threatManagement.enabledNetworks))
+    docs:
+      desc: |
+        This check verifies that intrusion detection and prevention looks at traffic from every internal network.
+
+        Threat management in the UniFi Network application inspects only the networks selected for it under **Settings > Security > Threat Management**. A network added after threat management was configured is not selected automatically. The check takes every enabled network with a corporate or guest purpose and requires each one to be in the list of networks the engine inspects.
+
+        **Why this matters**
+
+        An uninspected network is a blind spot that looks covered. The dashboard reports threat management as active, the signature set is current, and alerts arrive for the networks that are selected, so nothing suggests that one segment is passing through the gateway without inspection.
+
+        The networks most often left out are the ones added later, such as an IoT, camera, or lab network. Those carry the devices least able to defend themselves, which makes them the likeliest place for a compromise to start and the place where detection matters most.
+
+        Coverage gaps also break the chain of evidence. When a compromised device on an uninspected network reaches out to its operator, there is no alert and no record, and an investigation that starts somewhere else cannot trace the activity back to it.
+      audit: |
+        To verify which networks threat management inspects using the UniFi Network web application:
+
+        1. Sign in to the UniFi Network web application.
+        2. Go to **Settings > Security > Threat Management**.
+        3. Review the networks selected for inspection and compare them with the networks listed under **Settings > Networks**.
+
+        If every enabled corporate and guest network is selected, the check passes. If any is not selected, the check fails.
+      remediation:
+        - id: console
+          desc: |
+            Threat management requires a UniFi gateway such as a UDM or USG. The exact path varies by controller version.
+
+            To add networks to threat management using the UniFi Network web application:
+
+            1. Go to **Settings > Security > Threat Management**.
+            2. Select every internal network for inspection.
+            3. Save the settings.
+        # No cli remediation: Threat Management is a controller-managed site setting; the device SSH CLI cannot change it and the controller overwrites local changes on provision.
+        - id: terraform
+          desc: |
+            To inspect every internal network in Terraform, list the ID of each `unifi_network` in `enabled_networks` inside the `ips` attribute on the `unifi_setting` resource:
+
+            ```hcl
+            resource "unifi_setting" "ips" {
+              site = "default"
+
+              ips = {
+                ips_mode         = "ips"
+                enabled_networks = [unifi_network.lan.id, unifi_network.iot.id, unifi_network.guest.id]
+              }
+            }
+            ```
+    refs:
+      - url: https://help.ui.com/hc/en-us/articles/360006893234
+        title: UniFi Threat Management
