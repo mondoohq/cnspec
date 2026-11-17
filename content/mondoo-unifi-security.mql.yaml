@@ -2628,7 +2628,7 @@ queries:
       desc: |
         This check verifies that networks defined for guests cannot route to the rest of the site.
 
-        In the UniFi Network application a network is created under **Settings > Networks** with a purpose, and one of the available purposes is guest. The check selects every network whose purpose is guest and requires one of two boundaries. On a controller that uses the zone-based firewall, the network must sit in the built-in **Hotspot** zone, whose default policies block traffic to the other zones. On a controller that does not, **Network Isolation** must be enabled on the network, which is the setting that stops traffic on that VLAN from reaching other VLANs at the site.
+        In the UniFi Network application a network is created under **Settings > Networks** with a purpose, and one of the available purposes is guest. The check selects every network whose purpose is guest and requires one of two boundaries. On a controller that uses the zone-based firewall, the network must sit in the built-in **Hotspot** zone, whose default policies block traffic to the other zones, and no user-defined policy may allow new connections from the **Hotspot** zone to the **Internal**, **DMZ**, or **VPN** zones. On a controller that does not, **Network Isolation** must be enabled on the network, which is the setting that stops traffic on that VLAN from reaching other VLANs at the site.
 
         **Why this matters**
 
@@ -2649,7 +2649,9 @@ queries:
         3. Select each network with a guest purpose and note its firewall zone and the **Network Isolation** setting.
         4. On a controller with the zone-based firewall, go to **Settings > Security > Firewall Zones** (the location varies by controller version) and confirm each guest network is assigned to the **Hotspot** zone.
 
-        If every guest network is in the **Hotspot** zone or has **Network Isolation** enabled, the check passes. If any guest network has neither, the check fails.
+        5. Review the firewall policies whose source zone is **Hotspot** and whose destination is **Internal**, **DMZ**, or **VPN**.
+
+        If every guest network is in the **Hotspot** zone or has **Network Isolation** enabled, and no enabled user-defined policy allows new connections out of the **Hotspot** zone into those zones, the check passes. Otherwise, the check fails.
       remediation:
         - id: console
           desc: |
@@ -2686,6 +2688,9 @@ queries:
           networkIsolationEnabled == true ||
           id.in(unifi.firewallZones.where(zoneKey == "hotspot").map(networks.map(id)).flat)
         )
+      unifi.firewallPolicies
+        .where(enabled == true && predefined == false && action == "ALLOW" && sourceZone.zoneKey == "hotspot" && destinationZone.zoneKey.in(["internal", "dmz", "vpn"]))
+        .all(connectionStateType == "RESPOND_ONLY")
   - uid: mondoo-unifi-security-guest-network-isolation-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "unifi_network")
     mql: |
@@ -3291,7 +3296,7 @@ queries:
         .all(connectionStateType == "RESPOND_ONLY")
       unifi.firewallRules
         .where(enabled == true && ruleset.in(["WAN_IN", "WAN_LOCAL", "WANv6_IN", "WANv6_LOCAL"]) && action == "accept")
-        .none(stateNew == true)
+        .all(stateNew == false && stateEstablished == true || stateNew == false && stateRelated == true)
     docs:
       desc: |
         This check verifies that the gateway still refuses connections that start on the internet.
@@ -3304,7 +3309,7 @@ queries:
 
         These entries tend to outlive their purpose. They are added to make a remote session or a vendor integration work, often with the source left as any, and nothing removes them when the need ends. Because the network keeps working, nobody notices the opening until it is used.
 
-        An entry that accepts only established and related traffic does not create this exposure, because it cannot admit a connection that did not start inside. That is the shape the check accepts.
+        An entry that accepts only established and related traffic does not create this exposure, because it cannot admit a connection that did not start inside. That is the shape the check accepts. A legacy rule with no connection state selected matches every state, including new connections, so the check treats it as an opening.
       audit: |
         To review inbound firewall entries using the UniFi Network web application:
 
