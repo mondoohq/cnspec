@@ -4737,7 +4737,7 @@ queries:
           _['is_public_ip_enabled'] == false
         )
       )
-  # No Terraform variants: `availableKubernetesUpgrades` is runtime telemetry derived from Oracle's supported-version list at scan time; no `oci_containerengine_cluster` argument exposes the count of pending upgrades.
+  # No Terraform variants: whether a version is supported is decided by the versions OKE offers at scan time; a manifest only names a version, and nothing in it says whether OKE still supports it.
   - uid: mondoo-oci-security-oke-supported-kubernetes-version
     title: Ensure OKE clusters run a supported Kubernetes version
     impact: 70
@@ -4758,12 +4758,12 @@ queries:
       compliance/soc2-2017: soc2-control-cc7-1-5
       compliance/vda-isa-5: vda-isa-5-5-2-5
     mql: |
-      oci.oke.cluster.availableKubernetesUpgrades.length < 3
+      oci.oke.cluster.kubernetesVersion.in(oci.oke.cluster.supportedKubernetesVersions)
     docs:
       desc: |
         This check verifies that OKE clusters run a Kubernetes version still inside Oracle's supported release window rather than one that has drifted toward or past its end-of-support date.
 
-        Oracle Kubernetes Engine (OKE) publishes the upgrade targets available to each cluster, and the length of that list measures how far behind the control plane has fallen. The check fails a cluster with three or more upgrades pending, which places it at least three releases behind current and near or past the point where Oracle stops shipping security backports for it. The Console shows the same state as an Upgrade Available banner on the cluster's detail page. Control plane and node pools move separately: `oci ce cluster update --kubernetes-version` advances the control plane, and each node pool then needs its own upgrade or a recreate of its nodes.
+        Oracle Kubernetes Engine (OKE) publishes the Kubernetes versions it supports in each region, and drops a version from that list when its support ends. The check fails a cluster whose control plane version is no longer on the list. Control plane and node pools move separately: `oci ce cluster update --kubernetes-version` advances the control plane, and each node pool then needs its own upgrade or a recreate of its nodes.
 
         **Why this matters**
 
@@ -4779,22 +4779,30 @@ queries:
 
         1. Open **Developer Services** → **Kubernetes Clusters (OKE)**.
         2. Select the cluster and review **Cluster Details**.
-        3. Check the **Kubernetes version** field and look for an **Upgrade Available** banner or notification indicating pending version upgrades.
-        4. If three or more upgrades are available, the cluster is running a version that is significantly behind Oracle's current supported releases.
+        3. Note the **Kubernetes version** field.
+        4. Compare it with the versions offered under **Kubernetes version** when you start **Create cluster** in the same region. That list holds the versions OKE currently supports.
 
-        A passing cluster shows fewer than three available Kubernetes version upgrades. A failing cluster shows three or more pending upgrades listed in the upgrade path.
+        A passing cluster runs a version OKE still offers. A failing cluster runs a version that is no longer offered.
 
         ### Audit via CLI
 
-        1. Retrieve cluster details and inspect `available-kubernetes-upgrades`:
+        1. Retrieve the cluster's Kubernetes version:
 
         ```bash
         oci ce cluster get \
           --cluster-id <cluster-ocid> \
-          --query 'data.{version:"kubernetes-version",availableUpgrades:"available-kubernetes-upgrades"}'
+          --query 'data."kubernetes-version"'
         ```
 
-        A passing cluster returns an `availableUpgrades` list with fewer than three entries. A failing cluster returns a list with three or more version strings.
+        2. List the versions OKE supports in the cluster's region:
+
+        ```bash
+        oci ce cluster-options get \
+          --cluster-option-id all \
+          --query 'data."kubernetes-versions"'
+        ```
+
+        A passing cluster's version appears in the supported list. A failing cluster's version does not.
       remediation:
         - id: console
           desc: |
@@ -4803,7 +4811,7 @@ queries:
             1. Open **Developer Services** → **Kubernetes Clusters (OKE)** → select the cluster.
             2. **Upgrade Available** → review the target version and upgrade path.
             3. Upgrade the control plane first, then each node pool (recreate nodes or use blue/green rollout).
-            4. Confirm the cluster is within two releases of the newest version OKE offers, which is what keeps it on a supported track.
+            4. Confirm the cluster's new version is one OKE offers when creating a cluster in the region.
         - id: cli
           desc: |
             To upgrade an OKE control plane using the OCI CLI, start by listing the versions the cluster can move to:
@@ -4818,8 +4826,8 @@ queries:
             oci ce cluster update --cluster-id <cluster-ocid> --kubernetes-version <new-version>
             ```
 
-            The finding clears once the cluster has fewer than three newer versions available, so repeat the upgrade until the list holds two versions or fewer. Upgrade each node pool afterward with `oci ce node-pool update --node-pool-id <node-pool-ocid> --kubernetes-version <new-version>`, then cordon, drain, and replace the existing worker nodes, which keep their old version until they are recreated.
-        # No Terraform remediation: `availableKubernetesUpgrades` is runtime telemetry derived from Oracle's supported-version list at scan time; no `oci_containerengine_cluster` Terraform argument exposes the count of pending upgrades, so there is no static HCL change that resolves this finding.
+            An upgrade moves the control plane at most one minor version, so repeat it until the cluster's version is in the list that `oci ce cluster-options get --cluster-option-id all` returns. Upgrade each node pool afterward with `oci ce node-pool update --node-pool-id <node-pool-ocid> --kubernetes-version <new-version>`, then cordon, drain, and replace the existing worker nodes, which keep their old version until they are recreated.
+        # No Terraform remediation: the fix is the same control-plane upgrade, applied by raising `kubernetes_version` on `oci_containerengine_cluster` one minor version at a time, and which versions are supported is known only at scan time.
     refs:
       - url: https://docs.oracle.com/en-us/iaas/Content/ContEng/Tasks/contengupgradingk8smasternode.htm
         title: OCI - Upgrading Kubernetes on a Cluster
@@ -5438,7 +5446,7 @@ queries:
       desc: |
         This check verifies that every Autonomous Database gates connections behind either mutual TLS or a network restriction, so that stolen credentials alone cannot open a session.
 
-        Autonomous Database admits clients in one of two handshake modes. With mutual TLS required, the client must present the certificate packaged in the database's connection wallet, and the handshake fails before any credential is evaluated if that certificate is missing or has been rotated out. With mutual TLS optional, no wallet participates and the session is admitted on credentials alone. This check passes a database that requires mutual TLS, and also one that constrains who can reach it at all: a private endpoint address, a non-empty access control list of permitted sources, or attached network security groups. All of these live under Oracle Database > Autonomous Database > Network in the Console, or in `oci db autonomous-database update`.
+        Autonomous Database admits clients in one of two handshake modes. With mutual TLS required, the client must present the certificate packaged in the database's connection wallet, and the handshake fails before any credential is evaluated if that certificate is missing or has been rotated out. With mutual TLS optional, no wallet participates and the session is admitted on credentials alone. This check passes a database that requires mutual TLS, and also one that constrains who can reach it at all: a private endpoint without public access, or an access control list whose entries do not admit the whole internet. A list holding `0.0.0.0/0`, `::/0`, or another range wide enough to cover much of the internet restricts nothing, and OCI accepts such entries. All of these live under Oracle Database > Autonomous Database > Network in the Console, or in `oci db autonomous-database update`.
 
         **Why this matters**
 
@@ -5454,9 +5462,9 @@ queries:
 
         1. Open **Oracle Database** → **Autonomous Database** and select the database.
         2. Navigate to **Database Details** and review the **Network** section.
-        3. Confirm that at least one of the following is in effect: **Require mutual TLS (mTLS) authentication** is enabled, the database uses **Private endpoint access**, an IP allowlist is configured under **Access Control List**, or at least one NSG is attached.
+        3. Confirm that at least one of the following is in effect: **Require mutual TLS (mTLS) authentication** is enabled, the database uses **Private endpoint access only**, or the **Access Control List** names specific addresses and networks rather than `0.0.0.0/0`.
 
-        A passing database shows mTLS required, a private endpoint assigned, a non-empty access control list, or at least one NSG. A failing database shows mTLS disabled with no private endpoint, no ACL entries, and no NSGs.
+        A passing database shows mTLS required, a private endpoint without public access, or an access control list of specific sources. A failing database shows mTLS disabled together with no access control list, or with a list that admits any address.
 
         ### Audit via CLI
 
@@ -5465,10 +5473,10 @@ queries:
         ```bash
         oci db autonomous-database get \
           --autonomous-database-id <adb-ocid> \
-          --query 'data.{mtlsRequired:"is-mtls-connection-required",privateEndpointIp:"private-endpoint-ip",whitelistedIps:"whitelisted-ips",nsgIds:"nsg-ids"}'
+          --query 'data.{mtlsRequired:"is-mtls-connection-required",privateEndpointIp:"private-endpoint-ip",publicEndpoint:"public-endpoint",whitelistedIps:"whitelisted-ips"}'
         ```
 
-        A passing database returns `"mtlsRequired": true`, a non-null `privateEndpointIp`, a non-empty `whitelistedIps` list, or a non-empty `nsgIds` list. A failing database returns `"mtlsRequired": false`, `"privateEndpointIp": null`, an empty `whitelistedIps`, and an empty `nsgIds`.
+        A passing database returns `"mtlsRequired": true`, a non-null `privateEndpointIp` with a null `publicEndpoint`, or a `whitelistedIps` list of specific sources. A failing database returns `"mtlsRequired": false` with a `whitelistedIps` list that is null or contains `0.0.0.0/0`, `0.0.0.0`, `::/0`, or another internet-wide range.
       remediation:
         - id: console
           desc: |
@@ -5519,11 +5527,12 @@ queries:
     filters: asset.platform == 'oci'
     mql: |
       # A terminated database stays in the list for a while, with the settings it had.
+      # internetReachable is false for a private endpoint without public access and for
+      # an access control list that admits no internet-wide range. A non-empty list is
+      # not enough on its own: OCI accepts 0.0.0.0/0 as an entry.
       oci.database.autonomousDatabases.where(state != "TERMINATED" && state != "TERMINATING").all(
         isMtlsConnectionRequired == true ||
-        privateEndpointIp != null ||
-        whitelistedIps.length > 0 ||
-        securityGroups.length > 0
+        internetReachable == false
       )
   - uid: mondoo-oci-security-adb-mtls-or-restricted-terraform-hcl
     filters: |
@@ -5531,9 +5540,8 @@ queries:
     mql: |
       terraform.resources('oci_database_autonomous_database').all(
         arguments['is_mtls_connection_required'] == true ||
-        arguments['private_endpoint_ip'] != null ||
-        arguments['whitelisted_ips'] != null && arguments['whitelisted_ips'].length > 0 ||
-        arguments['nsg_ids'] != null && arguments['nsg_ids'].length > 0
+        arguments['subnet_id'] != empty && arguments['whitelisted_ips'] == empty ||
+        arguments['whitelisted_ips'] != empty && arguments['whitelisted_ips'].none(_ == "0.0.0.0" || _ == /^[0-9.]+\/[0-7]$/ || _ == /^[0-9a-fA-F:]+\/[0-6]$/)
       )
   - uid: mondoo-oci-security-adb-mtls-or-restricted-terraform-plan
     filters: |
@@ -5541,9 +5549,8 @@ queries:
     mql: |
       terraform.plan.resourceChanges.where(type == 'oci_database_autonomous_database').all(
         change.after['is_mtls_connection_required'] == true ||
-        change.after['private_endpoint_ip'] != null ||
-        change.after['whitelisted_ips'] != null && change.after['whitelisted_ips'].length > 0 ||
-        change.after['nsg_ids'] != null && change.after['nsg_ids'].length > 0
+        change.after['subnet_id'] != empty && change.after['whitelisted_ips'] == empty ||
+        change.after['whitelisted_ips'] != empty && change.after['whitelisted_ips'].none(_ == "0.0.0.0" || _ == /^[0-9.]+\/[0-7]$/ || _ == /^[0-9a-fA-F:]+\/[0-6]$/)
       )
   - uid: mondoo-oci-security-adb-mtls-or-restricted-terraform-state
     filters: |
@@ -5551,9 +5558,8 @@ queries:
     mql: |
       terraform.state.resources.where(type == 'oci_database_autonomous_database').all(
         values['is_mtls_connection_required'] == true ||
-        values['private_endpoint_ip'] != null ||
-        values['whitelisted_ips'] != null && values['whitelisted_ips'].length > 0 ||
-        values['nsg_ids'] != null && values['nsg_ids'].length > 0
+        values['subnet_id'] != empty && values['whitelisted_ips'] == empty ||
+        values['whitelisted_ips'] != empty && values['whitelisted_ips'].none(_ == "0.0.0.0" || _ == /^[0-9.]+\/[0-7]$/ || _ == /^[0-9a-fA-F:]+\/[0-6]$/)
       )
   - uid: mondoo-oci-security-adb-no-public-management-urls
     title: Ensure Autonomous Databases do not expose public management URLs
@@ -5594,7 +5600,7 @@ queries:
       desc: |
         This check verifies that an Autonomous Database's browser-based management interfaces are served only inside the virtual cloud network and never on a public endpoint.
 
-        Every Autonomous Database publishes a set of management URLs alongside the SQL listener: the service console, Database Actions with its SQL Developer Web worksheet, Oracle REST Data Services or ORDS, Oracle APEX, GraphStudio, and Machine Learning Notebooks. A database provisioned into a subnet resolves those URLs only through its private endpoint. A database provisioned without one gets a public copy of each interface, and the existence of that copy does not depend on whether an IP access control list or a network security group is attached. Choose private endpoint access in the Network section when creating the database under Oracle Database > Autonomous Database, or supply a subnet to `oci db autonomous-database create`.
+        Every Autonomous Database publishes a set of management URLs alongside the SQL listener: the service console, Database Actions with its SQL Developer Web worksheet, Oracle REST Data Services or ORDS, Oracle APEX, GraphStudio, and Machine Learning Notebooks. A database provisioned into a subnet resolves those URLs only through its private endpoint. A database provisioned without one serves each interface publicly, and that does not depend on whether an IP access control list is attached. A private endpoint database that also allows public access, through an access control list on the private endpoint configuration, publishes a second, public copy of each interface. The check requires a private endpoint with no public access. Choose private endpoint access in the Network section when creating the database under Oracle Database > Autonomous Database, or supply a subnet to `oci db autonomous-database create`.
 
         **Why this matters**
 
@@ -5622,10 +5628,10 @@ queries:
         ```bash
         oci db autonomous-database get \
           --autonomous-database-id <adb-ocid> \
-          --query 'data.{subnetId:"subnet-id",connectionUrls:"connection-urls",privateEndpointIp:"private-endpoint-ip"}'
+          --query 'data.{privateEndpointIp:"private-endpoint-ip",publicEndpoint:"public-endpoint",publicConnectionUrls:"public-connection-urls"}'
         ```
 
-        A passing database returns a non-null `subnetId` (indicating private endpoint mode) and a `null` or empty `connectionUrls` object. A failing database returns `"subnetId": null` and a populated `connectionUrls` object containing public management URLs.
+        A passing database returns a non-null `privateEndpointIp` with `publicEndpoint` and `publicConnectionUrls` both `null`. A failing database returns `"privateEndpointIp": null`, in which case its `connection-urls` are served publicly, or a populated `publicConnectionUrls` object, which a private endpoint database has when public access is also allowed.
       remediation:
         - id: console
           desc: |
@@ -5670,35 +5676,37 @@ queries:
   - uid: mondoo-oci-security-adb-no-public-management-urls-oci
     filters: asset.platform == 'oci'
     mql: |
-      # publicManagementUrls carries the copies of the management interfaces served on the
-      # database's public endpoint, so it is set only when one exists; managementUrls is
-      # also set for an NSG-allowed private endpoint, which is not what this asks. The
-      # deprecated publicConnectionUrls reads as an empty map rather than null when there
-      # are none, so comparing it with null failed every database.
+      # A database without a private endpoint serves its management URLs on its public
+      # endpoint and reports them as managementUrls, with publicManagementUrls null.
+      # publicManagementUrls is set only on a private endpoint database that also allows
+      # public access. The check therefore requires a private endpoint and no public copy.
       # A terminated database stays in the list for a while, with the settings it had.
       oci.database.autonomousDatabases
         .where(state != "TERMINATED" && state != "TERMINATING")
-        .all(publicManagementUrls == empty)
+        .all(privateEndpointIp != empty && publicManagementUrls == empty)
   - uid: mondoo-oci-security-adb-no-public-management-urls-terraform-hcl
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'oci_database_autonomous_database')
     mql: |
       terraform.resources('oci_database_autonomous_database').all(
-        arguments['subnet_id'] != null
+        arguments['subnet_id'] != empty &&
+        arguments['whitelisted_ips'] == empty
       )
   - uid: mondoo-oci-security-adb-no-public-management-urls-terraform-plan
     filters: |
       asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'oci_database_autonomous_database')
     mql: |
       terraform.plan.resourceChanges.where(type == 'oci_database_autonomous_database').all(
-        change.after['subnet_id'] != null
+        change.after['subnet_id'] != empty &&
+        change.after['whitelisted_ips'] == empty
       )
   - uid: mondoo-oci-security-adb-no-public-management-urls-terraform-state
     filters: |
       asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'oci_database_autonomous_database')
     mql: |
       terraform.state.resources.where(type == 'oci_database_autonomous_database').all(
-        values['subnet_id'] != null
+        values['subnet_id'] != empty &&
+        values['whitelisted_ips'] == empty
       )
   # No Terraform variants: requires cross-resource lookup from `oci_database_db_system` to its referenced `oci_core_subnet` to read `prohibit_public_ip_on_vnic`. Cross-resource graph traversal is fragile in HCL/plan/state and unsupported by the patterns used elsewhere in this file.
   - uid: mondoo-oci-security-dbsystem-private-subnet
@@ -5795,7 +5803,8 @@ queries:
               --availability-domain <AD> \
               --shape <shape> \
               --hostname <hostname> \
-              --cpu-core-count <count> \
+              --compute-model ECPU \
+              --compute-count <count> \
               --ssh-authorized-keys-file <public-key-file> \
               --database-edition <database-edition> \
               --db-version <db-version> \
@@ -5803,7 +5812,7 @@ queries:
               --admin-password <admin-password>
             ```
 
-            Set `--cidr-block` to an unused range inside the VCN. Match `<shape>`, `<database-edition>`, and `<db-version>` to the original DB system so the migration target is compatible, and list the versions available in the region with `oci db version list --compartment-id <compartment-ocid>`. `<db-name>` must start with a letter and hold at most eight alphanumeric characters. Supply the SYS password from a secrets manager rather than typing it into shell history.
+            Set `--cidr-block` to an unused range inside the VCN. `VM.BaseDB.x86` takes an ECPU count of at least 4; on an OCPU shape, replace `--compute-model` and `--compute-count` with `--cpu-core-count <count>`. Match `<shape>`, `<database-edition>`, and `<db-version>` to the original DB system so the migration target is compatible, and list the versions available in the region with `oci db version list --compartment-id <compartment-ocid>`. `<db-name>` must start with a letter and hold at most eight alphanumeric characters. Supply the SYS password from a secrets manager rather than typing it into shell history.
 
             Migrate data to the replacement via Data Pump, Data Guard, or RMAN, then terminate the DB system in the public subnet. Termination permanently deletes the original system and its local storage, so confirm the migration and backups first:
 
@@ -6203,7 +6212,7 @@ queries:
       desc: |
         This check verifies that OCI Functions applications hold no credentials in their configuration map, neither under a credential-shaped key name nor as a credential-shaped value.
 
-        An application's config map is a set of key-value pairs that OCI Functions injects as environment variables into every function in the application. The check rejects key names such as `password`, `db_password`, `aws_access_key_id`, `aws_secret_access_key`, `aws_session_token`, `oci_api_key`, `api_token`, `bearer_token`, `private_key`, `client_secret`, and `connection_string`, and it separately inspects the values for AWS access key IDs, PEM private key blocks that open with `-----BEGIN` and close with `PRIVATE KEY-----`, and JSON Web Tokens. Review the map under Developer Services > Functions on the application's configuration page, or with `oci fn application update --config`.
+        An application's config map is a set of key-value pairs that OCI Functions injects as environment variables into every function in the application. The check rejects key names that end in `password`, `passwd`, `secret`, `token`, `api_key`, `access_key`, `private_key`, `credential`, `credentials`, or `connection_string`, in any case and with or without the underscore, which covers `DB_PASSWORD`, `POSTGRES_PASSWORD`, `CLIENT_SECRET`, `GITHUB_TOKEN`, and `AWS_SECRET_ACCESS_KEY`, plus `aws_access_key_id`. A key that holds a Vault secret OCID, such as `DB_PASSWORD_SECRET_OCID`, does not end in one of those words and is not flagged. The check separately inspects the values for AWS access key IDs, PEM private key blocks that open with `-----BEGIN` and close with `PRIVATE KEY-----`, and JSON Web Tokens. Review the map under Developer Services > Functions on the application's configuration page, or with `oci fn application update --config`.
 
         **Why this matters**
 
@@ -6219,7 +6228,7 @@ queries:
 
         1. Open the OCI Console and navigate to **Developer Services** > **Functions** > **Applications**.
         2. For each application, select it and open **Configuration**.
-        3. Review all key-value pairs in the configuration map. Look for keys named `password`, `secret`, `api_token`, `bearer_token`, `private_key`, `db_password`, `connection_string`, `access_key`, or similar credential-sounding names. Look for values that resemble AWS access key IDs (`AKIA...`), PEM private key blocks (`-----BEGIN ... PRIVATE KEY-----`), or JWT tokens (three base64url segments separated by dots starting with `eyJ`).
+        3. Review all key-value pairs in the configuration map. Look for keys whose names end in `password`, `passwd`, `secret`, `token`, `api_key`, `access_key`, `private_key`, `credential`, or `connection_string`, such as `DB_PASSWORD` or `GITHUB_TOKEN`. Look for values that resemble AWS access key IDs (`AKIA...`), PEM private key blocks (`-----BEGIN ... PRIVATE KEY-----`), or JWT tokens (three base64url segments separated by dots starting with `eyJ`).
 
         A passing application shows a configuration map with no credential-named keys and no credential-shaped values. A failing application shows one or more keys or values matching the patterns above.
 
@@ -6291,7 +6300,7 @@ queries:
     mql: |
       oci.functions.applications.all(
         config.keys.none(
-          _.downcase == /^aws_access_key_id$|^aws_secret_access_key$|^aws_session_token$|^oci_api_key$|^oci_secret$|^api_token$|^bearer_token$|^db_password$|^private_key$|^password$|^passwd$|^secret$|^access_key$|^client_secret$|^connection_string$/
+          _.downcase == /^aws_access_key_id$|(password|passwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|credentials?|connection[_-]?string)$/
         ) &&
         config.values.none(
           _.find(/(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}/) != empty ||
@@ -6306,7 +6315,7 @@ queries:
       # Two datapoints: applications with a config map must not have credential-named keys, and must not have credential-shaped values. Applications without a config map are filtered out by .where().
       terraform.resources('oci_functions_application').where(arguments['config'] != null).all(
         arguments['config'].keys.none(
-          _.downcase == /^aws_access_key_id$|^aws_secret_access_key$|^aws_session_token$|^oci_api_key$|^oci_secret$|^api_token$|^bearer_token$|^db_password$|^private_key$|^password$|^passwd$|^secret$|^access_key$|^client_secret$|^connection_string$/
+          _.downcase == /^aws_access_key_id$|(password|passwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|credentials?|connection[_-]?string)$/
         )
       )
       terraform.resources('oci_functions_application').where(arguments['config'] != null).all(
@@ -6324,7 +6333,7 @@ queries:
         .where(type == 'oci_functions_application' && change.after['config'] != null)
         .all(
           change.after['config'].keys.none(
-            _.downcase == /^aws_access_key_id$|^aws_secret_access_key$|^aws_session_token$|^oci_api_key$|^oci_secret$|^api_token$|^bearer_token$|^db_password$|^private_key$|^password$|^passwd$|^secret$|^access_key$|^client_secret$|^connection_string$/
+            _.downcase == /^aws_access_key_id$|(password|passwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|credentials?|connection[_-]?string)$/
           )
         )
       terraform.plan.resourceChanges
@@ -6344,7 +6353,7 @@ queries:
         .where(type == 'oci_functions_application' && values['config'] != null)
         .all(
           values['config'].keys.none(
-            _.downcase == /^aws_access_key_id$|^aws_secret_access_key$|^aws_session_token$|^oci_api_key$|^oci_secret$|^api_token$|^bearer_token$|^db_password$|^private_key$|^password$|^passwd$|^secret$|^access_key$|^client_secret$|^connection_string$/
+            _.downcase == /^aws_access_key_id$|(password|passwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|credentials?|connection[_-]?string)$/
           )
         )
       terraform.state.resources
@@ -6395,7 +6404,7 @@ queries:
       desc: |
         This check verifies that every container running on an OCI Container Instance is pulled from the tenancy's own registry rather than from an arbitrary external one.
 
-        Each container in an instance carries an image URL, and the check requires it to begin with a regional OCI Container Registry (OCIR) hostname matching the `*.ocir.io` pattern, meaning a region key followed by `.ocir.io`, such as `iad.ocir.io` or `phx.ocir.io`. By default Container Instances accept any image URL at all, including references to public registries such as Docker Hub or GitHub Container Registry that the tenancy neither controls nor can audit. Image URLs are set per container when the instance is created under Developer Services > Container Instances, and the Terraform versions additionally require at least one container to be declared, so an instance with no containers block cannot pass by default.
+        Each container in an instance carries an image URL, and the check requires it to name a regional OCI Container Registry (OCIR) hostname, a region key or region identifier followed by `.ocir.io` such as `iad.ocir.io` or `us-ashburn-1.ocir.io`, followed by the tenancy's own Object Storage namespace, so `<region-key>.ocir.io/<namespace>/<repository>`. Matching the hostname alone would accept a public repository in any other tenancy. The Terraform versions check the hostname only, because the tenancy's namespace is not known from a manifest. By default Container Instances accept any image URL at all, including references to public registries such as Docker Hub or GitHub Container Registry that the tenancy neither controls nor can audit. Image URLs are set per container when the instance is created under Developer Services > Container Instances, and the Terraform versions additionally require at least one container to be declared, so an instance with no containers block cannot pass by default.
 
         **Why this matters**
 
@@ -6411,9 +6420,9 @@ queries:
 
         1. Open the OCI Console and navigate to **Developer Services** > **Container Instances**.
         2. For each container instance, select it and view the **Containers** tab.
-        3. For each container listed, note the **Image** field. Verify that the image URL begins with a regional OCIR hostname in the format `<region-key>.ocir.io/<namespace>/...`.
+        3. For each container listed, note the **Image** field. Verify that the image URL begins with a regional OCIR hostname followed by the tenancy's namespace, in the format `<region-key>.ocir.io/<namespace>/...`. The namespace is shown under **Tenancy details** as **Object storage namespace**, or returned by `oci os ns get`.
 
-        A passing container instance shows all container images sourced from `*.ocir.io`. A failing container instance shows at least one container image referencing an external registry such as `docker.io`, `ghcr.io`, or `quay.io`.
+        A passing container instance shows all container images sourced from the tenancy's own namespace on `*.ocir.io`. A failing container instance shows at least one container image referencing an external registry such as `docker.io`, `ghcr.io`, or `quay.io`.
 
         ### Audit via CLI
 
@@ -6425,16 +6434,17 @@ queries:
           --query 'data.items[].{Name:"display-name", OCID:id}' --output table
         ```
 
-        2. For each instance, retrieve the container image URLs:
+        2. For each instance, list its containers and their image URLs. The instance record names its containers but does not carry their images, so read them from the containers themselves:
 
         ```bash
-        oci container-instances container-instance get \
+        oci container-instances container list \
+          --compartment-id <compartment-ocid> \
           --container-instance-id <instance-ocid> \
-          --query 'data.containers[].{Container:"display-name", Image:"image-url"}' \
+          --query 'data.items[].{Container:"display-name", Image:"image-url"}' \
           --output table
         ```
 
-        A passing container instance returns image URLs that all begin with `<region>.ocir.io/`. A failing container instance returns at least one image URL that does not match that pattern.
+        A passing container instance returns image URLs that all begin with `<region>.ocir.io/<namespace>/`, where `<namespace>` is the value `oci os ns get` returns. A failing container instance returns at least one image URL from another registry or another tenancy's namespace.
       remediation:
         - id: console
           desc: |
@@ -6517,8 +6527,14 @@ queries:
     filters: asset.platform == 'oci'
     mql: |
       # A deleted container instance stays in the list for a while, with the settings it had.
+      # OCIR addresses an image as <region-key or region>.ocir.io/<namespace>/<repository>,
+      # and the namespace is the tenancy's Object Storage namespace. A host match alone
+      # passes a public repository in any other tenancy.
       oci.containerInstances.instances.where(state != "DELETED" && state != "DELETING").all(
-        containers.all(imageUrl == /^[a-z0-9-]+\.ocir\.io\//)
+        containers.all(
+          imageUrl == /^[a-z0-9-]+\.ocir\.io\/[^\/]+\/./ &&
+          imageUrl.split("/")[1] == oci.objectStorage.namespace
+        )
       )
   - uid: mondoo-oci-security-container-instances-approved-registry-terraform-hcl
     filters: |
@@ -8086,8 +8102,11 @@ queries:
             oci db database migrate-vault-key \
               --database-id <database-ocid> \
               --kms-key-id <key-ocid> \
-              --vault-id <vault-ocid>
+              --vault-id <vault-ocid> \
+              --tde-wallet-password <tde-wallet-password>
             ```
+
+            The command requires the database's current TDE wallet password. Read it from a secrets manager rather than typing it into shell history.
 
             2. Take a new backup of anything you still need, then delete the old full or long-term backups that report no KMS key. Deletion is permanent, so confirm each one is no longer needed for a restore:
 
@@ -8227,7 +8246,7 @@ queries:
       desc: |
         This check verifies that anonymous access is disabled on every API Gateway deployment, so no request reaches an upstream backend without a credential.
 
-        A deployment carries a specification whose `request_policies` section holds the `authentication` policy applied to every route it serves. Inside that policy, `isAnonymousAccessAllowed` decides whether callers presenting no credential are admitted anyway. A deployment can be created with `is_anonymous_access_allowed = true`, and when it is, unauthenticated requests pass through even though an authentication policy is attached, turning that policy into an optional rather than an enforced control. This check requires the setting to be false or absent. Administer it in the Console under Developer Services > API Management > Gateways on the deployment's request policies, or with `oci api-gateway deployment update`.
+        A deployment carries a specification whose `request_policies` section holds the `authentication` policy applied to every route it serves. Inside that policy, `isAnonymousAccessAllowed` decides whether callers presenting no credential are admitted anyway. A deployment can be created with `is_anonymous_access_allowed = true`, and when it is, unauthenticated requests pass through even though an authentication policy is attached, turning that policy into an optional rather than an enforced control. Under dynamic authentication each selectable authentication server carries the same setting. This check requires the setting to be false or absent on every policy the deployment can apply. Administer it in the Console under Developer Services > API Management > Gateways on the deployment's request policies, or with `oci api-gateway deployment update`.
 
         **Why this matters**
 
@@ -8351,6 +8370,13 @@ queries:
           blocks.where(type == 'request_policies').all(
             blocks.where(type == 'authentication').all(
               arguments['is_anonymous_access_allowed'] != true
+            ) &&
+            blocks.where(type == 'dynamic_authentication').all(
+              blocks.where(type == 'authentication_servers').all(
+                blocks.where(type == 'authentication_server_detail').all(
+                  arguments['is_anonymous_access_allowed'] != true
+                )
+              )
             )
           )
         )
@@ -8364,6 +8390,13 @@ queries:
           _['request_policies'].all(
             _['authentication'].all(
               _['is_anonymous_access_allowed'] != true
+            ) &&
+            _['dynamic_authentication'].all(
+              _['authentication_servers'].all(
+                _['authentication_server_detail'].all(
+                  _['is_anonymous_access_allowed'] != true
+                )
+              )
             )
           )
         )
@@ -8377,6 +8410,13 @@ queries:
           _['request_policies'].all(
             _['authentication'].all(
               _['is_anonymous_access_allowed'] != true
+            ) &&
+            _['dynamic_authentication'].all(
+              _['authentication_servers'].all(
+                _['authentication_server_detail'].all(
+                  _['is_anonymous_access_allowed'] != true
+                )
+              )
             )
           )
         )
@@ -8420,7 +8460,7 @@ queries:
       desc: |
         This check verifies that every API Gateway deployment declares an explicit authentication type and never leaves it missing or set to `NONE`.
 
-        The authentication policy inside a deployment's `request_policies` block names the identity model the gateway enforces before a request is routed. `JWT_AUTHENTICATION` validates a signed token against the issuers, audiences, and public keys configured on the policy. `TOKEN_AUTHENTICATION` and `CUSTOM_AUTHENTICATION` hand the credential to an authorizer function running on OCI Functions, which returns an allow or deny decision plus context the gateway can pass to the backend. This check requires one of those types to be present and non-empty. Set it in the Console under Developer Services > API Management > Gateways on the deployment's request policies, or with `oci api-gateway deployment update`.
+        The authentication policy inside a deployment's `request_policies` block names the identity model the gateway enforces before a request is routed. `JWT_AUTHENTICATION` validates a signed token against the issuers, audiences, and public keys configured on the policy. `TOKEN_AUTHENTICATION` and `CUSTOM_AUTHENTICATION` hand the credential to an authorizer function running on OCI Functions, which returns an allow or deny decision plus context the gateway can pass to the backend. Dynamic authentication replaces the single policy with a list of such policies, one of which the gateway selects per request from a header or other request value. This check requires one of those types to be present and non-empty, or dynamic authentication to be configured. Set it in the Console under Developer Services > API Management > Gateways on the deployment's request policies, or with `oci api-gateway deployment update`.
 
         **Why this matters**
 
@@ -8447,11 +8487,11 @@ queries:
         ```bash
         oci api-gateway deployment get \
           --deployment-id <deployment-ocid> \
-          --query 'data.specification."request-policies".authentication.type' \
+          --query '{type:data.specification."request-policies".authentication.type,dynamic:data.specification."request-policies"."dynamic-authentication"."authentication-servers"[]."authentication-server-detail".type}' \
           --output json
         ```
 
-        A passing deployment returns `"JWT_AUTHENTICATION"`, `"TOKEN_AUTHENTICATION"`, or `"CUSTOM_AUTHENTICATION"`. A failing deployment returns `null`, an empty string, or `"NONE"`.
+        A passing deployment returns `"JWT_AUTHENTICATION"`, `"TOKEN_AUTHENTICATION"`, or `"CUSTOM_AUTHENTICATION"` in `type`, or a non-empty `dynamic` list when it uses dynamic authentication. A failing deployment returns `null` for both.
       remediation:
         - id: console
           desc: |
@@ -8536,6 +8576,7 @@ queries:
         blocks.where(type == 'specification').all(
           blocks.where(type == 'request_policies') != empty &&
           blocks.where(type == 'request_policies').all(
+            blocks.where(type == 'dynamic_authentication') != empty ||
             blocks.where(type == 'authentication') != empty &&
             blocks.where(type == 'authentication').all(
               arguments['type'] != null && arguments['type'] != ""
@@ -8552,6 +8593,7 @@ queries:
         change.after['specification'].all(
           _['request_policies'] != null && _['request_policies'].length > 0 &&
           _['request_policies'].all(
+            _['dynamic_authentication'] != empty ||
             _['authentication'] != null && _['authentication'].length > 0 &&
             _['authentication'].all(
               _['type'] != null && _['type'] != ""
@@ -8568,6 +8610,7 @@ queries:
         values['specification'].all(
           _['request_policies'] != null && _['request_policies'].length > 0 &&
           _['request_policies'].all(
+            _['dynamic_authentication'] != empty ||
             _['authentication'] != null && _['authentication'].length > 0 &&
             _['authentication'].all(
               _['type'] != null && _['type'] != ""
@@ -11042,8 +11085,10 @@ queries:
             To migrate a DB system database to a customer-managed encryption key using the OCI CLI:
 
             ```bash
-            oci db database migrate-vault-key --database-id <database-ocid> --kms-key-id <key-ocid> --vault-id <vault-ocid>
+            oci db database migrate-vault-key --database-id <database-ocid> --kms-key-id <key-ocid> --vault-id <vault-ocid> --tde-wallet-password <tde-wallet-password>
             ```
+
+            The command requires the database's current TDE wallet password. Read it from a secrets manager rather than typing it into shell history.
         - id: terraform
           desc: |
             To use a customer-managed encryption key for a DB system database in Terraform, set `kms_key_id` in the `database` block:
@@ -11052,11 +11097,12 @@ queries:
             resource "oci_database_db_system" "example" {
               compartment_id      = var.compartment_ocid
               availability_domain = var.availability_domain
-              shape               = "VM.Standard2.2"
+              shape               = "VM.BaseDB.x86"
+              compute_model       = "ECPU"
+              compute_count       = 4
               subnet_id           = var.subnet_ocid
               ssh_public_keys     = [var.ssh_public_key]
               hostname            = "exampledb"
-              cpu_core_count      = 2
 
               db_home {
                 db_version = "19.0.0.0"
@@ -11075,7 +11121,9 @@ queries:
   - uid: mondoo-oci-security-dbsystem-customer-managed-encryption-oci
     filters: asset.platform == 'oci'
     mql: |
-      oci.database.dbSystems.where(state != "TERMINATED" && state != "TERMINATING").all(kmsKey != null)
+      # The key is chosen per database, inside the DB home, and changed per database with
+      # migrate-vault-key, so the database is what carries it rather than the DB system.
+      oci.database.databases.where(state != "TERMINATED" && state != "TERMINATING").all(kmsKey != null)
   - uid: mondoo-oci-security-dbsystem-customer-managed-encryption-terraform-hcl
     filters: |
       asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'oci_database_db_system')
@@ -11810,9 +11858,9 @@ queries:
           mondoo.com/filter-icon: terraform
     docs:
       desc: |
-        This check verifies that the access control list guarding an Autonomous Database's Data Guard standby contains no any-address entry, specifically `0.0.0.0/0`, a bare `0.0.0.0`, or the IPv6 equivalent `::/0`.
+        This check verifies that the access control list guarding an Autonomous Database's Data Guard standby contains no entry that admits the internet at large: `0.0.0.0/0`, a bare `0.0.0.0`, the IPv6 equivalent `::/0`, or an IPv4 prefix of `/7` or shorter or an IPv6 prefix of `/6` or shorter, such as the pair `0.0.0.0/1` and `128.0.0.0/1` that together cover every address.
 
-        An Autonomous Data Guard standby keeps an access control list of its own, separate from the primary's and editable independently. The two are configured in different places in the Console, under the primary database's Network section and its Autonomous Data Guard section, so they diverge quietly. An any-address entry on the standby means its endpoint accepts connection attempts from every network on the internet, including the ones the primary's list was written to exclude.
+        An Autonomous Data Guard standby enforces either the primary's access control list or one of its own, separate from the primary's and editable independently, and `arePrimaryWhitelistedIpsUsed` records which. The check evaluates whichever list the standby enforces, and fails a database with Data Guard enabled that reports neither. The two are configured in different places in the Console, under the primary database's Network section and its Autonomous Data Guard section, so they diverge quietly. An any-address entry on the standby means its endpoint accepts connection attempts from every network on the internet, including the ones the primary's list was written to exclude.
 
         **Why this matters**
 
@@ -11834,14 +11882,14 @@ queries:
 
         ### Audit via CLI
 
-        1. Retrieve the database and inspect the standby allowlist:
+        1. Retrieve the database's Data Guard state and both allowlists:
 
         ```bash
         oci db autonomous-database get --autonomous-database-id <adb-ocid> \
-          --query 'data."standby-whitelisted-ips"'
+          --query 'data.{dataGuard:"is-data-guard-enabled",localDataGuard:"is-local-data-guard-enabled",remoteDataGuard:"is-remote-data-guard-enabled",usesPrimaryList:"are-primary-whitelisted-ips-used",primary:"whitelisted-ips",standby:"standby-whitelisted-ips"}'
         ```
 
-        A passing database returns a list of specific networks or an empty list. A failing database returns a list containing `0.0.0.0/0`, `0.0.0.0`, or `::/0`.
+        With no Data Guard enabled there is no standby and the database passes. Otherwise, when `usesPrimaryList` is `true` the standby enforces `primary`, and when it is `false` it enforces `standby`. A passing database's enforced list holds only specific networks or is empty. A failing database's enforced list contains `0.0.0.0/0`, `0.0.0.0`, `::/0`, or another internet-wide prefix, or `usesPrimaryList` is `null` while Data Guard is enabled.
       remediation:
         - id: console
           desc: |
@@ -11852,7 +11900,7 @@ queries:
             3. Save the change.
         - id: cli
           desc: |
-            Configure the standby to reuse the primary's allowlist so it inherits the same restrictions. This closes the finding only when the primary's own list, returned by `oci db autonomous-database get --autonomous-database-id <adb-ocid> --query 'data."whitelisted-ips"'`, has no `0.0.0.0/0`, `0.0.0.0`, or `::/0` entry, so remove those from the primary first:
+            Configure the standby to reuse the primary's allowlist so it inherits the same restrictions. This closes the finding only when the primary's own list, returned by `oci db autonomous-database get --autonomous-database-id <adb-ocid> --query 'data."whitelisted-ips"'`, has no `0.0.0.0/0`, `0.0.0.0`, `::/0`, or other internet-wide entry, so remove those from the primary first:
 
             ```bash
             oci db autonomous-database update --autonomous-database-id <adb-ocid> \
@@ -11881,8 +11929,14 @@ queries:
     filters: asset.platform == "oci"
     mql: |
       # A terminated database stays in the list for a while, with the settings it had.
+      # arePrimaryWhitelistedIpsUsed decides which list the standby enforces: the
+      # primary's whitelistedIps when true, standbyWhitelistedIps when false. A database
+      # with Data Guard on but neither value reported fails, since neither list can be
+      # shown to govern the standby.
       oci.database.autonomousDatabases.where(state != "TERMINATED" && state != "TERMINATING").all(
-        standbyWhitelistedIps.none(_ == "0.0.0.0/0" || _ == "0.0.0.0" || _ == "::/0")
+        isDataGuardEnabled != true && isLocalDataGuardEnabled != true && isRemoteDataGuardEnabled != true ||
+        arePrimaryWhitelistedIpsUsed == true && whitelistedIps.none(_ == "0.0.0.0" || _ == /^[0-9.]+\/[0-7]$/ || _ == /^[0-9a-fA-F:]+\/[0-6]$/) ||
+        arePrimaryWhitelistedIpsUsed == false && standbyWhitelistedIps.none(_ == "0.0.0.0" || _ == /^[0-9.]+\/[0-7]$/ || _ == /^[0-9a-fA-F:]+\/[0-6]$/)
       )
   - uid: mondoo-oci-security-adb-standby-acl-not-open-terraform-hcl
     filters: |
@@ -11896,11 +11950,11 @@ queries:
       terraform.resources('oci_database_autonomous_database').all(
         arguments['are_primary_whitelisted_ips_used'] == true && arguments['whitelisted_ips'] == null ||
         arguments['are_primary_whitelisted_ips_used'] == true &&
-        arguments['whitelisted_ips'].none(_ == "0.0.0.0/0" || _ == "0.0.0.0" || _ == "::/0") ||
+        arguments['whitelisted_ips'].none(_ == "0.0.0.0" || _ == /^[0-9.]+\/[0-7]$/ || _ == /^[0-9a-fA-F:]+\/[0-6]$/) ||
         arguments['are_primary_whitelisted_ips_used'] != true &&
         arguments['standby_whitelisted_ips'] == null ||
         arguments['are_primary_whitelisted_ips_used'] != true &&
-        arguments['standby_whitelisted_ips'].none(_ == "0.0.0.0/0" || _ == "0.0.0.0" || _ == "::/0")
+        arguments['standby_whitelisted_ips'].none(_ == "0.0.0.0" || _ == /^[0-9.]+\/[0-7]$/ || _ == /^[0-9a-fA-F:]+\/[0-6]$/)
       )
   - uid: mondoo-oci-security-adb-standby-acl-not-open-terraform-plan
     filters: |
@@ -11910,11 +11964,11 @@ queries:
         change.after['are_primary_whitelisted_ips_used'] == true &&
         change.after['whitelisted_ips'] == null ||
         change.after['are_primary_whitelisted_ips_used'] == true &&
-        change.after['whitelisted_ips'].none(_ == "0.0.0.0/0" || _ == "0.0.0.0" || _ == "::/0") ||
+        change.after['whitelisted_ips'].none(_ == "0.0.0.0" || _ == /^[0-9.]+\/[0-7]$/ || _ == /^[0-9a-fA-F:]+\/[0-6]$/) ||
         change.after['are_primary_whitelisted_ips_used'] != true &&
         change.after['standby_whitelisted_ips'] == null ||
         change.after['are_primary_whitelisted_ips_used'] != true &&
-        change.after['standby_whitelisted_ips'].none(_ == "0.0.0.0/0" || _ == "0.0.0.0" || _ == "::/0")
+        change.after['standby_whitelisted_ips'].none(_ == "0.0.0.0" || _ == /^[0-9.]+\/[0-7]$/ || _ == /^[0-9a-fA-F:]+\/[0-6]$/)
       )
   - uid: mondoo-oci-security-adb-standby-acl-not-open-terraform-state
     filters: |
@@ -11923,10 +11977,10 @@ queries:
       terraform.state.resources.where(type == 'oci_database_autonomous_database').all(
         values['are_primary_whitelisted_ips_used'] == true && values['whitelisted_ips'] == null ||
         values['are_primary_whitelisted_ips_used'] == true &&
-        values['whitelisted_ips'].none(_ == "0.0.0.0/0" || _ == "0.0.0.0" || _ == "::/0") ||
+        values['whitelisted_ips'].none(_ == "0.0.0.0" || _ == /^[0-9.]+\/[0-7]$/ || _ == /^[0-9a-fA-F:]+\/[0-6]$/) ||
         values['are_primary_whitelisted_ips_used'] != true && values['standby_whitelisted_ips'] == null ||
         values['are_primary_whitelisted_ips_used'] != true &&
-        values['standby_whitelisted_ips'].none(_ == "0.0.0.0/0" || _ == "0.0.0.0" || _ == "::/0")
+        values['standby_whitelisted_ips'].none(_ == "0.0.0.0" || _ == /^[0-9.]+\/[0-7]$/ || _ == /^[0-9a-fA-F:]+\/[0-6]$/)
       )
   # No Terraform variants: endpoint_type and network_security_group_ids on oci_apigateway_gateway are covered by the Terraform variants below.
   - uid: mondoo-oci-security-apigateway-gateway-public-restricted-by-nsg
@@ -13649,7 +13703,7 @@ queries:
             ```bash
             oci data-science notebook-session create --project-id <project-ocid> \
               --compartment-id <compartment-ocid> \
-              --config-details '{"privateEndpointId": "<private-endpoint-ocid>", "shape": "VM.Standard2.1", "blockStorageSizeInGBs": 50, "subnetId": "<subnet-ocid>"}'
+              --config-details '{"privateEndpointId": "<private-endpoint-ocid>", "shape": "VM.Standard.E4.Flex", "notebookSessionShapeConfigDetails": {"ocpus": 1, "memoryInGBs": 16}, "blockStorageSizeInGBs": 50, "subnetId": "<subnet-ocid>"}'
             ```
 
             2. Copy any notebooks and data you need out of the old session, then delete it. The old session keeps failing for as long as it exists, and deleting it permanently removes its storage:
@@ -13667,9 +13721,14 @@ queries:
               project_id     = oci_datascience_project.analysis.id
 
               notebook_session_config_details {
-                shape               = "VM.Standard2.1"
+                shape               = "VM.Standard.E4.Flex"
                 subnet_id           = oci_core_subnet.private.id
                 private_endpoint_id = oci_datascience_private_endpoint.analysis.id
+
+                notebook_session_shape_config_details {
+                  ocpus         = 1
+                  memory_in_gbs = 16
+                }
               }
             }
             ```
