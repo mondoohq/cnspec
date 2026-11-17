@@ -1780,12 +1780,21 @@ func (s *localAssetScanner) runPolicy() (*policy.ResolvedPolicy, error) {
 
 	var resolvedPolicy *policy.ResolvedPolicy
 	err = s.retryUpstream("ResolveAndUpdateJobs", func() error {
-		var err error
-		resolvedPolicy, err = resolver.ResolveAndUpdateJobs(s.job.Ctx, &policy.UpdateAssetJobsReq{
-			AssetMrn:     s.job.Asset.Mrn,
-			AssetFilters: filters,
+		// A busy platform refuses with ResourceExhausted and a RetryInfo delay;
+		// wait that out here. Other errors go to retryUpstream as before.
+		return upstream.WithRetry(s.job.Ctx, "ResolveAndUpdateJobs", func() (bool, time.Duration, error) {
+			var err error
+			resolvedPolicy, err = resolver.ResolveAndUpdateJobs(s.job.Ctx, &policy.UpdateAssetJobsReq{
+				AssetMrn:     s.job.Asset.Mrn,
+				AssetFilters: filters,
+			})
+			if status.Code(err) != codes.ResourceExhausted {
+				return false, 0, err
+			}
+			wait, _ := upstream.RetryInfoDelay(err)
+			log.Info().Dur("retry_in", wait).Msg("Mondoo Platform is busy, retrying later")
+			return true, wait, err
 		})
-		return err
 	})
 	if err != nil {
 		return resolvedPolicy, err

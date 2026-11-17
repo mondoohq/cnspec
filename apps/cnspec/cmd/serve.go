@@ -223,7 +223,7 @@ func getServeConfig(runtimeEnv *execruntime.RuntimeEnv, explicitInventory bool) 
 	runtime := providers.DefaultRuntime()
 
 	conf := scanConfig{
-		Features:     opts.GetFeatures(),
+		Features:     withRateLimitRetry(opts.GetFeatures()),
 		Strict:       opts.GetStrict(),
 		DoRecord:     viper.GetBool("record"),
 		ReportType:   scan.ReportType_ERROR,
