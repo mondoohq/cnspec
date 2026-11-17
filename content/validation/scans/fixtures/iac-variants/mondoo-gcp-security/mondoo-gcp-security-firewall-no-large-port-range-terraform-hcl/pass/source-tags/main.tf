@@ -1,4 +1,5 @@
-# Compliant: the rule admits only instances carrying the bastion tag, not the internet.
+# Compliant: the check limits port ranges only on rules open to the internet, and this
+# rule admits only instances carrying the bastion tag.
 resource "google_compute_firewall" "rule" {
   name    = "source-tags"
   network = "default"
