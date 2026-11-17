@@ -17,6 +17,7 @@ import (
 
 	"github.com/mergestat/timediff"
 	"github.com/muesli/termenv"
+	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	cnspecComponents "go.mondoo.com/cnspec/cli/components"
 	"go.mondoo.com/cnspec/policy"
@@ -191,12 +192,9 @@ func (r *defaultReporter) printSummary(orderedAssets []assetMrnName) {
 			r.out(url + NewLineCharacter)
 
 			// The MRN is the handle for follow-up queries against the
-			// platform (resources, findings, exports) — worth printing for
-			// any single-asset upstream scan, not just resource-recording
-			// ones. This used to be gated on the StoreResourcesData
-			// feature, which threaded a flag through the reporter for one
-			// line of output.
-			if len(orderedAssets) == 1 && orderedAssets[0].Mrn != "" {
+			// platform (resources, findings, exports). It is an internal
+			// identifier, so it only prints at debug log level.
+			if len(orderedAssets) == 1 && orderedAssets[0].Mrn != "" && zerolog.GlobalLevel() <= zerolog.DebugLevel {
 				r.out("Asset MRN: " + orderedAssets[0].Mrn + NewLineCharacter)
 			}
 		}
