@@ -27,12 +27,15 @@ func (p *Bundle) HasRequirements() bool {
 // EnsureRequirements makes sure that all required providers for the policies
 // in the bundle are installed. Policies that do not specify any requirements
 // are skipped (use the policy-missing-require lint rule to warn about those).
+// A requirement that cannot be ensured does not stop the others from being
+// installed; all failures are returned together.
 func (p *Bundle) EnsureRequirements(autoUpdate bool) error {
 	existing, err := providers.ListActive()
 	if err != nil {
 		return err
 	}
 
+	var errs multierr.Errors
 	for _, policy := range p.Policies {
 		for _, require := range policy.Require {
 			// we only pull requirements that are providers for now, expand when we add more types
@@ -44,7 +47,7 @@ func (p *Bundle) EnsureRequirements(autoUpdate bool) error {
 					// only warn if auto update is disabled, as the user might want to manually install providers
 					log.Warn().Str("provider", require.Provider).Msgf("failed to ensure policy requirements for policy %q", policy.Name)
 				} else {
-					return multierr.Wrap(err, "failed to validate policy '"+policy.Name+"'")
+					errs.Add(multierr.Wrap(err, "failed to validate policy '"+policy.Name+"'"))
 				}
 			}
 		}
@@ -59,11 +62,11 @@ func (p *Bundle) EnsureRequirements(autoUpdate bool) error {
 				if !autoUpdate {
 					log.Warn().Str("provider", require.Provider).Msgf("failed to ensure querypack requirements for querypack %q", pack.Name)
 				} else {
-					return multierr.Wrap(err, "failed to validate querypack '"+pack.Name+"'")
+					errs.Add(multierr.Wrap(err, "failed to validate querypack '"+pack.Name+"'"))
 				}
 			}
 		}
 	}
 
-	return nil
+	return errs.Deduplicate()
 }
