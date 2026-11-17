@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.mondoo.com/cnspec/internal/reportfixture"
@@ -374,4 +375,65 @@ func TestCompactReporterRiskThresholdSections(t *testing.T) {
 	worst := policy.WorstCheckScore(data.ResolvedPolicies[assetMrn], data.Reports[assetMrn])
 	require.NotNil(t, worst)
 	assert.Equal(t, "//local.cnspec.io/queries/critical", worst.QrId)
+}
+
+// TestCompactReporterAssetMrnDebugOnly checks that the "Asset MRN:" line of
+// an upstream single-asset scan prints only at debug log level.
+func TestCompactReporterAssetMrnDebugOnly(t *testing.T) {
+	assetMrn := "//assets.api.mondoo.app/spaces/example-space/assets/example-asset"
+
+	data := &policy.ReportCollection{
+		Assets: map[string]*inventory.Asset{
+			assetMrn: {
+				Mrn:      assetMrn,
+				Name:     "example-host",
+				Url:      "https://console.example.com/space/inventory/example-asset?spaceId=example-space",
+				Platform: &inventory.Platform{Name: "ubuntu", Title: "Ubuntu"},
+			},
+		},
+		Reports: map[string]*policy.Report{
+			assetMrn: {
+				ScoringMrn: assetMrn,
+				Score:      &policy.Score{},
+				Scores:     map[string]*policy.Score{},
+				Data:       map[string]*llx.Result{},
+			},
+		},
+		ResolvedPolicies: map[string]*policy.ResolvedPolicy{
+			assetMrn: {
+				ExecutionJob: &policy.ExecutionJob{Queries: map[string]*policy.ExecutionQuery{}},
+				CollectorJob: &policy.CollectorJob{
+					ReportingJobs:    map[string]*policy.ReportingJob{},
+					ReportingQueries: map[string]*policy.StringArray{},
+				},
+			},
+		},
+	}
+
+	render := func() string {
+		buf := bytes.Buffer{}
+		writer := iox.IOWriter{Writer: &buf}
+		rr := &defaultReporter{
+			Reporter: &Reporter{
+				Conf:    defaultPrintConfig(),
+				Printer: &printer.DefaultPrinter,
+				Colors:  &colors.DefaultColorTheme,
+			},
+			output: &writer,
+			data:   data,
+		}
+		require.NoError(t, rr.print())
+		return buf.String()
+	}
+
+	prevLevel := zerolog.GlobalLevel()
+	t.Cleanup(func() { zerolog.SetGlobalLevel(prevLevel) })
+
+	zerolog.SetGlobalLevel(zerolog.InfoLevel)
+	out := render()
+	assert.Contains(t, out, "See more scan results")
+	assert.NotContains(t, out, "Asset MRN:")
+
+	zerolog.SetGlobalLevel(zerolog.DebugLevel)
+	assert.Contains(t, render(), "Asset MRN: "+assetMrn)
 }
