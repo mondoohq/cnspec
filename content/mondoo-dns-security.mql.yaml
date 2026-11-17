@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-dns-security
     name: Mondoo DNS Security
-    version: 1.6.3
+    version: 1.6.4
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -357,10 +357,11 @@ queries:
       compliance/soc2-2017: soc2-control-cc7-2-1
       compliance/vda-isa-5: vda-isa-5-5-2-4
     mql: |-
-      dns.mx.where(domainName == /l\.google\.com\./).
+      dns.mx.where(domainName.downcase == /(^|\.)google(mail)?\.com\.$/).
         map(domainName.downcase).
         containsOnly(
           [
+            "smtp.google.com.",
             "aspmx.l.google.com.",
             "alt1.aspmx.l.google.com.",
             "alt2.aspmx.l.google.com.",
@@ -370,40 +371,31 @@ queries:
         )
     docs:
       desc: |
-        This check verifies that a domain routing mail through Google Workspace publishes only the canonical Google mail endpoints, with no stale host left behind under the same suffix.
+        This check verifies that a domain routing mail through Google Workspace publishes only Google's current mail endpoints, with no older Google host left behind.
 
-        The records live at the zone apex in your DNS provider's control panel. Google Workspace expects five `MX` records: `aspmx.l.google.com` at preference 1, then `alt1.aspmx.l.google.com` and `alt2.aspmx.l.google.com` at 5, then `alt3.aspmx.l.google.com` and `alt4.aspmx.l.google.com` at 10. The check looks at every record whose target sits under `l.google.com` and requires that set to contain nothing but those five.
+        The records live at the zone apex in your DNS provider's control panel. Google Workspace currently asks for a single `MX` record, `smtp.google.com` at preference 1. Domains set up before 2023 may instead publish five records: `aspmx.l.google.com` at preference 1, then `alt1.aspmx.l.google.com` and `alt2.aspmx.l.google.com` at 5, then `alt3.aspmx.l.google.com` and `alt4.aspmx.l.google.com` at 10. Google still supports that set. The check looks at every record whose target sits under `google.com` or `googlemail.com` and requires each one to be among those six hosts. Older values such as `aspmx2.googlemail.com` and `aspmx3.googlemail.com` fail. A domain whose mail does not go to Google publishes no such record and passes.
 
         **Why this matters**
 
         An `MX` record decides where the internet delivers your mail, and anyone can read it. A record pointing at a host that is no longer yours hands mail to whoever controls that host: password resets, invoices, contract attachments, and anything else that arrives by email. The recipient never sees a failure, because delivery succeeded, and the sender has no way to know their message went somewhere else.
 
-        Stale endpoints under `l.google.com` are usually left behind by a migration, a decommissioned regional relay, or a zone file copied between domains. They keep receiving mail for as long as they resolve, and because the domain still works for everyone, nobody investigates.
+        Google hosts that Google no longer lists are usually left behind by a setup that predates the current values, or by a zone file copied between domains. They keep receiving mail for as long as they resolve, and because the domain still works for everyone, nobody investigates.
 
         Delivering through the canonical endpoints is also what makes Google Workspace's own protections apply. Spam and phishing filtering, transport encryption negotiation between sending servers, and the account-level controls over what happens to a message all sit behind those hosts. Mail that reaches a mailbox by some other path skipped every one of them.
 
-        Publish the five records, delete anything else pointing into Google's mail infrastructure, and confirm the result with a `dig MX` query rather than trusting the control panel view.
+        Publish `smtp.google.com`, delete every other `MX` record, and confirm the result with a `dig MX` query rather than trusting the control panel view.
       audit: |
         Run the `dig MX <domain>` command and inspect the answer section.
 
-        A passing result shows MX records pointing only to `aspmx.l.google.com` and its `alt1` through `alt4` variants. A failing result shows a record under `l.google.com` that points to any other host.
+        A passing result shows every Google MX record pointing to `smtp.google.com`, or to `aspmx.l.google.com` and its `alt1` through `alt4` variants. A failing result shows a record under `google.com` or `googlemail.com` that points to any other host, such as `aspmx2.googlemail.com`.
       remediation:
         - id: console
           desc: |
             To publish the Google Workspace MX records using your DNS provider's control panel:
 
             1. Sign in to the control panel for the provider that hosts the zone and open the DNS records for the domain.
-            2. Add `MX` records at the apex for the five Google endpoints, with these preference values:
-
-                | Preference | Mail server |
-                |---|---|
-                | 1 | `ASPMX.L.GOOGLE.COM` |
-                | 5 | `ALT1.ASPMX.L.GOOGLE.COM` |
-                | 5 | `ALT2.ASPMX.L.GOOGLE.COM` |
-                | 10 | `ALT3.ASPMX.L.GOOGLE.COM` |
-                | 10 | `ALT4.ASPMX.L.GOOGLE.COM` |
-
-            3. Delete any remaining MX records that point at a previous mail provider, so mail cannot be routed to a system nobody monitors.
+            2. Add one `MX` record at the apex with preference `1` and mail server `SMTP.GOOGLE.COM`.
+            3. Delete every other MX record, including older Google hosts such as `ASPMX2.GOOGLEMAIL.COM` and any record pointing at a previous mail provider, so mail cannot be routed to a system nobody monitors.
             4. Save the zone.
         - id: cli
           desc: |
@@ -415,8 +407,8 @@ queries:
                 dig +noall +answer example.com MX
                 ```
 
-            2. Publish the five `ASPMX`/`ALT*.ASPMX` records with the preferences above through your provider's API or CLI, and remove any others.
-            3. Re-run the command. A passing zone returns exactly the five Google endpoints and no third-party mail hosts.
+            2. Publish `1 SMTP.GOOGLE.COM` through your provider's API or CLI, and remove every other MX record.
+            3. Re-run the command. A passing zone returns `smtp.google.com` and no older Google or third-party mail hosts.
         - id: terraform
           desc: |
             To publish the Google Workspace MX records with Terraform:
@@ -427,13 +419,7 @@ queries:
               name    = "example.com"
               type    = "MX"
               ttl     = 3600
-              records = [
-                "1 ASPMX.L.GOOGLE.COM",
-                "5 ALT1.ASPMX.L.GOOGLE.COM",
-                "5 ALT2.ASPMX.L.GOOGLE.COM",
-                "10 ALT3.ASPMX.L.GOOGLE.COM",
-                "10 ALT4.ASPMX.L.GOOGLE.COM",
-              ]
+              records = ["1 SMTP.GOOGLE.COM"]
             }
             ```
     refs:
@@ -459,12 +445,14 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-4-2-1
       compliance/soc2-2017: soc2-control-cc6-7-2
       compliance/vda-isa-5: vda-isa-5-5-1-2
-    mql: dns.dnssec.enabled
+    mql: |
+      dns.dnssec.enabled
+      dns.dnssec.dsRecords.any(matchesPublishedKey == true)
     docs:
       desc: |
-        This check verifies that the domain is signed with DNSSEC, by confirming that the zone publishes `DNSKEY` records.
+        This check verifies that the domain is signed with DNSSEC and that the parent zone vouches for the signature: the zone publishes `DNSKEY` records, and the parent publishes a `DS` record that matches one of them.
 
-        Signing is enabled at the DNS host, which generates the keys and starts serving `DNSKEY` and `RRSIG` records alongside the existing data. That is only half of it. The registrar must then publish a `DS` record in the parent zone, and until it does, resolvers have no trust anchor to validate against and the signatures are ignored. Where the host and the registrar are the same company, confirm it published the `DS` rather than assuming so, and verify from outside with a `dig DS` query.
+        Signing is enabled at the DNS host, which generates the keys and starts serving `DNSKEY` and `RRSIG` records alongside the existing data. That is only half of it. The registrar must then publish a `DS` record in the parent zone, and until it does, resolvers have no trust anchor to validate against and the signatures are ignored. A zone signed without that `DS` record fails this check, as does one whose `DS` records all name keys the zone no longer publishes, since resolvers can validate neither. Where the host and the registrar are the same company, confirm it published the `DS` rather than assuming so, and verify from outside with a `dig DS` query.
 
         **Why this matters**
 
@@ -476,9 +464,9 @@ queries:
 
         Watch signature expiry and key rollover after enabling it, since a zone whose signatures lapse fails closed for validating resolvers.
       audit: |
-        Run the `dig DNSKEY <domain>` command and inspect the answer section.
+        Run the `dig DNSKEY <domain>` and `dig DS <domain>` commands and inspect each answer section.
 
-        A passing result shows one or more DNSKEY records published for the domain. A failing result shows an empty answer section, indicating DNSSEC is not enabled.
+        A passing result shows one or more DNSKEY records published for the domain and a DS record whose key tag matches one of those keys. A failing result shows no DNSKEY records, meaning the zone is not signed, or no matching DS record, meaning the parent zone does not delegate to the signed zone and resolvers ignore its signatures.
       remediation:
         - id: console
           desc: |
@@ -566,7 +554,7 @@ queries:
     # Uses dns.fqdn rather than domainName.fqdn: domainName errors with
     # "cannot derive eTLD+1" on a name that is itself a public suffix.
     mql: |
-      dns(fqdn: "mondoo-wildcard-probe-x7f3q9." + dns.fqdn).records.where(type == "A") == empty
+      dns(fqdn: "mondoo-wildcard-probe-x7f3q9." + dns.fqdn).records.where(type.in(["A", "AAAA"])) == empty
     docs:
       desc: |
         This check verifies that the zone publishes no wildcard record, meaning a record whose owner name is `*` and which therefore answers for every label nobody defined explicitly.
