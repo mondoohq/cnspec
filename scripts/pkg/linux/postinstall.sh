@@ -24,6 +24,17 @@ then
 
 elif [ "$(cat /proc/1/comm)" = "systemd" ]
 then
+  # if this host opted in to the hardened service settings, replace its copy
+  # with the packaged version. Never create the copy: that is the opt-in.
+  if [ -f /etc/systemd/system/cnspec.service.d/50-cnspec-hardening.conf ]
+  then
+    echo " -> Update cnspec service hardening settings (systemd)"
+    cp /usr/share/cnspec/systemd/hardening.conf \
+      /etc/systemd/system/cnspec.service.d/50-cnspec-hardening.conf && \
+      systemctl daemon-reload || \
+      echo " -> Could not update cnspec service hardening settings"
+  fi
+
   # if Mondoo service is currently running, make sure
   # cnspec service is running to replace it
   systemctl is-active --quiet mondoo && \

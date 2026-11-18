@@ -15,6 +15,9 @@ if [ "$1" = "remove" ]; then
         echo " -> Stop cnspec service"
         systemctl stop cnspec
         systemctl disable cnspec
+        # remove the opt-in hardening settings, but no other file in the directory
+        rm -f /etc/systemd/system/cnspec.service.d/50-cnspec-hardening.conf
+        rmdir /etc/systemd/system/cnspec.service.d 2>/dev/null || true
         systemctl daemon-reload
     fi
 fi
