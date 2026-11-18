@@ -102,6 +102,7 @@ Our comprehensive collection of security policies covers major platforms and ser
 - **Okta** - `mondoo-okta-security.mql.yaml` - Identity provider security assessment
 - **Slack** - `mondoo-slack-security.mql.yaml` - Slack workspace security configuration
 - **Snowflake** - `mondoo-snowflake-security.mql.yaml` - Snowflake data platform security assessment
+- **Codesphere** - `mondoo-codesphere-security.mql.yaml` - Secure Codesphere workspaces, resource groups, and organizations by enforcing access restrictions, credential hygiene, membership, and domain controls
 - **Cloudflare** - `mondoo-cloudflare-security.mql.yaml` - Cloudflare security configuration assessment
 - **Tailscale** - `mondoo-tailscale-security.mql.yaml` - Tailscale network security configuration
 - **Vercel** - `mondoo-vercel-security.mql.yaml` - Secure Vercel projects and teams by enforcing deployment protection, firewall, secret hygiene, and credential controls

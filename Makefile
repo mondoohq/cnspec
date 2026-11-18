@@ -152,7 +152,7 @@ VALIDATION := content/validation
 .PHONY: test/content/remediation test/content/remediation/terraform test/content/remediation/cloudformation
 .PHONY: test/content/remediation/bicep test/content/remediation/ansible test/content/remediation/powershell
 .PHONY: test/content/remediation/bash test/content/remediation/chef
-.PHONY: test/content/commands test/content/commands/unit test/content/commands/exoscale
+.PHONY: test/content/commands test/content/commands/unit test/content/commands/exoscale test/content/commands/codesphere
 .PHONY: test/content/upstream test/content/upstream/unit
 
 # The checks that run with nothing installed but Go and cnspec. Two groups are
@@ -295,6 +295,13 @@ test/content/commands:
 # Install it from https://github.com/exoscale/cli/releases or Homebrew first.
 test/content/commands/exoscale:
 	python3 $(VALIDATION)/remediation/commands/validate.py exoscale
+
+# Codesphere's `cs` commands are checked against the installed `cs` binary, and
+# only locally: CI does not install it (see the codesphere entry in cobra.py).
+# The same target also checks the policy's REST calls, which CI runs too.
+# Install it from https://github.com/codesphere-cloud/cs-go/releases first.
+test/content/commands/codesphere:
+	python3 $(VALIDATION)/remediation/commands/validate.py codesphere
 
 # The extraction those validators read policies with. Offline, no CLI needed,
 # and the one part of this that a wrong answer hides rather than reports: a

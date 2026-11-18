@@ -91,6 +91,14 @@ SPECS = [
         "output": "vercel_openapi.json",
     },
     {
+        # Codesphere serves its public API spec from a live, unversioned
+        # endpoint of the cloud installation; Private Cloud installations
+        # serve the same document from their own host.
+        "source": "https://cloud.codesphere.com/api/docs",
+        "format": "json",
+        "output": "codesphere_openapi.json",
+    },
+    {
         # Okta publishes the Management API spec as YAML only. `-minimal` is
         # the variant without the response examples, which the validator never
         # reads; it is ~1 MiB smaller than the full document and identical in
