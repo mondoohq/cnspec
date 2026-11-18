@@ -62,6 +62,15 @@ type Opts struct {
 	// below the scan's full result: it carries no import start time, so the
 	// platform closes nothing by absence.
 	Delta bool
+	// ScannedComponents names what a full pull scanned, the way its findings
+	// name their component (for a code scanner, the repository). When the pull
+	// found nothing, there is no finding to name the asset, so the platform
+	// would never learn that the asset's earlier findings are gone. With
+	// ScannedComponents set, UploadFindings uploads such an empty pull anyway,
+	// carrying the components, and the platform closes the findings of the
+	// source those assets no longer report. It is sent only with no findings
+	// and never for a Delta, which closes nothing.
+	ScannedComponents []*fex.Component
 }
 
 // UploadFindings uploads FEX/VEX documents to Mondoo Platform as third-party
@@ -72,7 +81,7 @@ type Opts struct {
 // tool (e.g. "xgrep"). Returns ErrNoCredentials when no config is found (check
 // with IsNoCredentials).
 func UploadFindings(ctx context.Context, opts Opts, docs []*fex.FindingDocument, source string) error {
-	if len(docs) == 0 {
+	if !hasUploadContent(opts, docs) {
 		log.Debug().Msg("no findings to upload")
 		return nil
 	}
@@ -106,8 +115,25 @@ func UploadFindings(ctx context.Context, opts Opts, docs []*fex.FindingDocument,
 		return err
 	}
 
-	log.Info().Int("findings", len(docs)).Str("source", source).Msg("uploaded findings to Mondoo Platform")
+	log.Info().Int("findings", len(docs)).Int("scannedComponents", len(scannedComponents(opts, docs))).Str("source", source).Msg("uploaded findings to Mondoo Platform")
 	return nil
+}
+
+// hasUploadContent reports whether an upload has anything for the platform:
+// findings, or a full pull that found nothing but names what it scanned, so
+// the platform can close the findings those assets no longer report.
+func hasUploadContent(opts Opts, docs []*fex.FindingDocument) bool {
+	return len(docs) > 0 || len(scannedComponents(opts, docs)) > 0
+}
+
+// scannedComponents is what the request carries as scanned_components: the
+// caller's components for a full pull without findings, else nothing.
+// Findings already name their assets, and a delta closes nothing by absence.
+func scannedComponents(opts Opts, docs []*fex.FindingDocument) []*fex.Component {
+	if len(docs) > 0 || opts.Delta {
+		return nil
+	}
+	return opts.ScannedComponents
 }
 
 // UploadArtifact uploads an opaque artifact of the given upload kind to Mondoo
@@ -153,15 +179,17 @@ func UploadArtifact(ctx context.Context, opts Opts, kind policy.UploadURLKind, d
 
 // findingsUploadRequest builds the uploaded file. A full pull (not opts.Delta)
 // carries the import start time the platform closes stale findings against,
-// for opts.CompleteKinds.
+// for opts.CompleteKinds, and, when it found nothing, the components it
+// scanned.
 func findingsUploadRequest(opts Opts, docs []*fex.FindingDocument, source, spaceMrn string) *fex.FindingsUploadRequest {
 	req := &fex.FindingsUploadRequest{
-		Findings:         docs,
-		Source:           source,
-		MondooEnrichment: true,
-		SpaceMrn:         spaceMrn,
-		CreateAssets:     true,
-		CompleteKinds:    opts.CompleteKinds,
+		Findings:          docs,
+		Source:            source,
+		MondooEnrichment:  true,
+		SpaceMrn:          spaceMrn,
+		CreateAssets:      true,
+		CompleteKinds:     opts.CompleteKinds,
+		ScannedComponents: scannedComponents(opts, docs),
 	}
 	if !opts.Delta {
 		req.ImportStartedAt = timestamppb.Now()

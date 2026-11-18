@@ -122,6 +122,33 @@ func TestFindingsUploadRequest(t *testing.T) {
 	assert.Contains(t, string(data), `"completeKinds":["FINDING_KIND_FINDING"]`)
 }
 
+// A full pull that found nothing is still uploaded when it names what it
+// scanned, and carries those components; with findings, or as a delta, the
+// components are left out.
+func TestFindingsUploadRequestScannedComponents(t *testing.T) {
+	repo := []*fex.Component{{Id: "github.com/acme/app"}}
+	kinds := []fex.FindingKind{fex.FindingKind_FINDING_KIND_FINDING}
+
+	empty := Opts{CompleteKinds: kinds, ScannedComponents: repo}
+	assert.True(t, hasUploadContent(empty, nil), "an empty full pull with scanned components is uploaded")
+	req := findingsUploadRequest(empty, nil, "src", "//space")
+	assert.NotNil(t, req.ImportStartedAt)
+	require.Len(t, req.ScannedComponents, 1)
+	assert.Equal(t, "github.com/acme/app", req.ScannedComponents[0].GetId())
+	data, err := protojson.Marshal(req)
+	require.NoError(t, err)
+	assert.Contains(t, string(data), `"scannedComponents":[{"id":"github.com/acme/app"}]`)
+
+	assert.False(t, hasUploadContent(Opts{}, nil), "nothing found and nothing named: no upload")
+
+	withFindings := findingsUploadRequest(empty, []*fex.FindingDocument{{}}, "src", "//space")
+	assert.Empty(t, withFindings.ScannedComponents, "findings already name their assets")
+
+	delta := Opts{Delta: true, ScannedComponents: repo}
+	assert.False(t, hasUploadContent(delta, nil), "a delta closes nothing, so an empty one is not uploaded")
+	assert.Empty(t, findingsUploadRequest(delta, nil, "src", "//space").ScannedComponents)
+}
+
 // kindResolver records the kind requested and accepts any kind, so the generic
 // upload path (doUpload with an arbitrary kind) can be exercised.
 type kindResolver struct {
