@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-mikrotik-security
     name: Mondoo MikroTik RouterOS Security
-    version: 1.2.0
+    version: 1.2.1
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -1068,23 +1068,17 @@ queries:
       inputRules != empty
       inputRules.last {
         action.in(["drop", "reject"])
-        protocol == empty
-        srcAddress == empty
-        dstAddress == empty
-        srcAddressList == empty
-        dstAddressList == empty
-        srcPort == empty
-        dstPort == empty
-        inInterface == empty
-        connectionState == empty
+        matchers.keys.all(_ == "in-interface" || _ == "in-interface-list")
+        matchers.values.all(_ == /^!/)
       }
+      inputRules.where(matchers == empty && action.in(["accept", "return"])) == empty
     docs:
       desc: |
         This check verifies that traffic addressed to the router itself is denied unless a rule explicitly permits it.
 
         The `input` chain in `/ip firewall filter` governs packets destined for the router rather than passing through it, and RouterOS accepts anything no rule matches. A default-deny posture therefore has to be written out: accept rules for established connections and for trusted management sources, then a closing `/ip firewall filter add chain=input action=drop` at the end of the chain.
 
-        The check requires the last enabled rule of the input chain to drop or reject without matching on protocol, source or destination address, address list, port, input interface, or connection state. A final rule such as `action=drop protocol=tcp dst-port=23` blocks one service and lets everything else through, so it fails. RouterOS also supports matchers the check cannot see, such as `in-interface-list`. A final rule limited only by one of those, like the default configuration's `in-interface-list=!LAN` drop, passes.
+        The check requires the last enabled rule of the input chain to drop or reject every packet that reaches it. A final rule that matches on anything, such as `protocol=tcp dst-port=23`, `in-interface-list=WAN`, `dst-address-type`, or a source MAC address, drops one slice of traffic and accepts the rest, so it fails. The one scope allowed is a negated input interface or interface list, such as the default configuration's `in-interface-list=!LAN` drop, which denies everything that does not arrive from the trusted side. The check also fails when an enabled rule earlier in the chain accepts or returns every packet without matching on anything, because the closing drop is then never reached.
 
         **Why this matters**
 
@@ -1107,7 +1101,7 @@ queries:
 
         3. Find the last rule in the list that is not disabled.
 
-        If that last enabled input rule has `action=drop` or `action=reject` and no protocol, address, address list, port, `in-interface`, or `connection-state` matcher, the check passes. If the chain is empty, ends in any other action, or ends in a drop limited by one of those matchers, the check fails, because traffic that reaches the end of the chain is accepted.
+        If that last enabled input rule has `action=drop` or `action=reject` and no matcher other than a negated `in-interface` or `in-interface-list`, and no enabled rule above it accepts or returns traffic without any matcher, the check passes. If the chain is empty, ends in any other action, ends in a drop limited by any other matcher, or contains an unconditional accept, the check fails, because traffic that reaches the end of the chain is accepted.
       remediation:
         - id: cli
           desc: |
@@ -1147,7 +1141,7 @@ queries:
     mql: |
       mikrotik.firewallRules
         .where(disabled != true && invalid != true && action == "drop")
-        .any(connectionState == /invalid/)
+        .any(connectionState == /(^|,)invalid(,|$)/)
     docs:
       desc: |
         This check verifies that packets connection tracking cannot associate with any known session are discarded.
@@ -1175,7 +1169,7 @@ queries:
 
         3. Look for a rule with `connection-state=invalid` and `action=drop` that is not disabled.
 
-        If such an enabled rule exists, the check passes. If none does, or the only such rule is disabled, the check fails.
+        If such an enabled rule exists, the check passes. If none does, the only such rule is disabled, or the rule matches the negated `connection-state=!invalid`, which selects every packet except invalid ones, the check fails.
       remediation:
         - id: cli
           desc: |
@@ -2498,20 +2492,14 @@ queries:
       inputRules = mikrotik.ipv6FirewallRules.where(chain == "input" && disabled != true && invalid != true)
       ipv6InUse == false || inputRules != empty &&
         inputRules.last.action.in(["drop", "reject"]) &&
-        inputRules.last.protocol == empty &&
-        inputRules.last.srcAddress == empty &&
-        inputRules.last.dstAddress == empty &&
-        inputRules.last.srcAddressList == empty &&
-        inputRules.last.dstAddressList == empty &&
-        inputRules.last.srcPort == empty &&
-        inputRules.last.dstPort == empty &&
-        inputRules.last.inInterface == empty &&
-        inputRules.last.connectionState == empty
+        inputRules.last.matchers.keys.all(_ == "in-interface" || _ == "in-interface-list") &&
+        inputRules.last.matchers.values.all(_ == /^!/) &&
+        inputRules.where(matchers == empty && action.in(["accept", "return"])) == empty
     docs:
       desc: |
         This check verifies that IPv6 traffic addressed to the router itself is denied unless a rule explicitly permits it.
 
-        IPv6 has its own firewall under `/ipv6 firewall filter`, independent of the IPv4 rules, and its `input` chain accepts anything no rule matches. RouterOS assigns link-local IPv6 addresses to interfaces automatically, so the router is reachable over IPv6 even when nobody configured IPv6 on purpose. The check applies whenever the router has an IPv6 address other than loopback. It requires the last enabled rule of the IPv6 input chain to drop or reject without matching on protocol, source or destination address, address list, port, input interface, or connection state, so a narrow final rule such as `action=drop protocol=tcp dst-port=23` fails. Matchers the check cannot see, such as `in-interface-list`, are not evaluated, so a final drop limited only by one of them passes.
+        IPv6 has its own firewall under `/ipv6 firewall filter`, independent of the IPv4 rules, and its `input` chain accepts anything no rule matches. RouterOS assigns link-local IPv6 addresses to interfaces automatically, so the router is reachable over IPv6 even when nobody configured IPv6 on purpose. The check applies whenever the router has an IPv6 address other than loopback. It requires the last enabled rule of the IPv6 input chain to drop or reject every packet that reaches it, so a narrow final rule such as `action=drop protocol=tcp dst-port=23`, or one limited to `in-interface-list=WAN` or a `dst-address-type`, fails. The one scope allowed is a negated input interface or interface list, such as `in-interface-list=!LAN`. The check also fails when an enabled rule earlier in the chain accepts or returns every packet without matching on anything, because the closing drop is then never reached.
 
         **Why this matters**
 
@@ -2536,7 +2524,7 @@ queries:
            /ipv6 firewall filter print where chain=input
            ```
 
-        If the router has no IPv6 address other than loopback, or the last enabled input rule drops or rejects with no protocol, address, address list, port, `in-interface`, or `connection-state` matcher, the check passes. If the chain is empty, ends in a rule that accepts, or ends in a drop limited by one of those matchers, the check fails.
+        If the router has no IPv6 address other than loopback, or the last enabled input rule drops or rejects with no matcher other than a negated `in-interface` or `in-interface-list` and no enabled rule above it accepts or returns traffic without any matcher, the check passes. If the chain is empty, ends in a rule that accepts, ends in a drop limited by any other matcher, or contains an unconditional accept, the check fails.
       remediation:
         - id: cli
           desc: |
