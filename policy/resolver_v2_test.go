@@ -2701,3 +2701,124 @@ policies:
 		rpTester.doTest(t, rp)
 	})
 }
+
+// uncompilableCheckMql fails to compile: `\(` is not a valid escape sequence in
+// a double-quoted MQL string. Older parsers accepted it, so content written for
+// them can still be stored with a code id even though it no longer compiles.
+const uncompilableCheckMql = `files.find(from: "/etc/ssl", regex: "\(.*\.crt\)\|\(.*\.pem\)").list.length >= 0`
+
+// setupUncompilableCheck stores a policy with one valid check and one check
+// whose stored MQL no longer compiles, and assigns it to the given asset. The
+// bundle is compiled while both checks are valid and the MQL is swapped
+// afterwards, which is what a stored bundle looks like once the compiler has
+// become stricter than the one it was compiled with.
+func setupUncompilableCheck(t *testing.T, assetMrns ...string) (*policy.LocalServices, llx.Runtime, *policy.PolicyBundleMap) {
+	ctx := context.Background()
+	runtime := testutils.LinuxMock()
+	_, srv, err := inmemory.NewServices(runtime)
+	require.NoError(t, err)
+
+	b := parseBundle(t, `
+owner_mrn: //test.sth
+policies:
+- uid: policy1
+  groups:
+  - filters: "true"
+    checks:
+    - uid: check-good
+      mql: 1 == 1
+    - uid: check-bad
+      mql: 2 == 2
+`)
+	bundleMap, err := b.Compile(ctx, runtime.Schema(), nil)
+	require.NoError(t, err)
+	bundleMap.Queries[queryMrn("check-bad")].Mql = uncompilableCheckMql
+	_, err = bundleMap.Queries[queryMrn("check-bad")].Compile(nil, srv.NewCompilerConfig())
+	require.ErrorContains(t, err, "invalid escape sequence")
+
+	require.NoError(t, srv.SetBundleMap(ctx, bundleMap))
+	for _, assetMrn := range assetMrns {
+		_, err = srv.Assign(ctx, &policy.PolicyAssignment{
+			AssetMrn:   assetMrn,
+			PolicyMrns: []string{policyMrn("policy1")},
+		})
+		require.NoError(t, err)
+	}
+	return srv, runtime, bundleMap
+}
+
+func TestResolveV2_UncompilableCheck(t *testing.T) {
+	ctx := context.Background()
+	srv, runtime, bundleMap := setupUncompilableCheck(t, "asset1")
+
+	rp, err := srv.ResolveAndUpdateJobs(ctx, &policy.UpdateAssetJobsReq{
+		AssetMrn:     "asset1",
+		AssetFilters: []*policy.Mquery{{Mql: "true"}},
+	})
+	require.NoError(t, err, "one uncompilable check must not fail the whole resolve")
+	require.NotNil(t, rp)
+
+	goodQuery := rp.ExecutionJob.Queries[bundleMap.Queries[queryMrn("check-good")].CodeId]
+	require.NotNil(t, goodQuery)
+	assert.Empty(t, goodQuery.CompileError)
+
+	badCodeId := bundleMap.Queries[queryMrn("check-bad")].CodeId
+	badQuery := rp.ExecutionJob.Queries[badCodeId]
+	require.NotNil(t, badQuery, "the uncompilable check must stay in the execution job")
+	assert.Contains(t, badQuery.CompileError, "invalid escape sequence")
+	assert.Equal(t, badCodeId, badQuery.Code.CodeV2.Id)
+
+	err = executor.ExecuteResolvedPolicy(ctx, runtime, srv, "asset1", rp, mql.DefaultFeatures, nil)
+	require.NoError(t, err)
+	_, err = policy.WaitUntilDone(srv, "asset1", "asset1", 1*time.Second)
+	require.NoError(t, err)
+
+	report, err := srv.GetReport(ctx, &policy.EntityScoreReq{EntityMrn: "asset1", ScoreMrn: "asset1"})
+	require.NoError(t, err)
+
+	good := report.Scores[queryMrn("check-good")]
+	require.NotNil(t, good)
+	assert.Equal(t, policy.ScoreType_Result, good.Type)
+	assert.Equal(t, uint32(100), good.Value)
+
+	bad := report.Scores[queryMrn("check-bad")]
+	require.NotNil(t, bad, "the uncompilable check must still be scored")
+	assert.Equal(t, policy.ScoreType_Error, bad.Type)
+	assert.Contains(t, bad.Message, "invalid escape sequence")
+}
+
+// TestResolveV2_UncompilableCheck_OldClient runs the resolved policy the way a
+// client that predates ExecutionQuery.CompileError would: it ignores the field
+// and runs the stand-in code. The scan must finish, and the check is skipped.
+func TestResolveV2_UncompilableCheck_OldClient(t *testing.T) {
+	ctx := context.Background()
+	srv, runtime, _ := setupUncompilableCheck(t, "asset1")
+
+	rp, err := srv.ResolveAndUpdateJobs(ctx, &policy.UpdateAssetJobsReq{
+		AssetMrn:     "asset1",
+		AssetFilters: []*policy.Mquery{{Mql: "true"}},
+	})
+	require.NoError(t, err)
+
+	rp = rp.CloneVT()
+	for _, eq := range rp.ExecutionJob.Queries {
+		eq.CompileError = ""
+	}
+
+	err = executor.ExecuteResolvedPolicy(ctx, runtime, srv, "asset1", rp, mql.DefaultFeatures, nil)
+	require.NoError(t, err)
+	_, err = policy.WaitUntilDone(srv, "asset1", "asset1", 1*time.Second)
+	require.NoError(t, err)
+
+	report, err := srv.GetReport(ctx, &policy.EntityScoreReq{EntityMrn: "asset1", ScoreMrn: "asset1"})
+	require.NoError(t, err)
+
+	good := report.Scores[queryMrn("check-good")]
+	require.NotNil(t, good)
+	assert.Equal(t, policy.ScoreType_Result, good.Type)
+	assert.Equal(t, uint32(100), good.Value)
+
+	bad := report.Scores[queryMrn("check-bad")]
+	require.NotNil(t, bad)
+	assert.Equal(t, policy.ScoreType_Skip, bad.Type)
+}

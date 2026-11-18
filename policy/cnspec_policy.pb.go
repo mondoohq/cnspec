@@ -5793,8 +5793,14 @@ type ExecutionQuery struct {
 	// mapping from name => datapoint checksum, which is in the execution job
 	Properties map[string]string `protobuf:"bytes,3,rep,name=properties,proto3" json:"properties,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	// list of checksums that we collect as data points
-	Datapoints    []string        `protobuf:"bytes,4,rep,name=datapoints,proto3" json:"datapoints,omitempty"`
-	Code          *llx.CodeBundle `protobuf:"bytes,5,opt,name=code,proto3" json:"code,omitempty"`
+	Datapoints []string        `protobuf:"bytes,4,rep,name=datapoints,proto3" json:"datapoints,omitempty"`
+	Code       *llx.CodeBundle `protobuf:"bytes,5,opt,name=code,proto3" json:"code,omitempty"`
+	// compile_error is set when the query failed to compile while the policy
+	// was resolved. code then holds a stand-in that collects nothing. Clients
+	// must not run it and instead report this error for all of its datapoints,
+	// so the query is scored as an error. Clients that predate this field run
+	// the stand-in, which leaves the query skipped.
+	CompileError  string `protobuf:"bytes,6,opt,name=compile_error,json=compileError,proto3" json:"compile_error,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -5862,6 +5868,13 @@ func (x *ExecutionQuery) GetCode() *llx.CodeBundle {
 		return x.Code
 	}
 	return nil
+}
+
+func (x *ExecutionQuery) GetCompileError() string {
+	if x != nil {
+		return x.CompileError
+	}
+	return ""
 }
 
 // The scoring job used by the collector, to know what happens with all
@@ -11318,7 +11331,7 @@ const file_cnspec_policy_proto_rawDesc = "" +
 	"\aqueries\x18\x02 \x03(\v2+.cnspec.policy.v1.ExecutionJob.QueriesEntryR\aqueries\x1a\\\n" +
 	"\fQueriesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x126\n" +
-	"\x05value\x18\x02 \x01(\v2 .cnspec.policy.v1.ExecutionQueryR\x05value:\x028\x01\"\x9c\x02\n" +
+	"\x05value\x18\x02 \x01(\v2 .cnspec.policy.v1.ExecutionQueryR\x05value:\x028\x01\"\xc1\x02\n" +
 	"\x0eExecutionQuery\x12\x14\n" +
 	"\x05query\x18\x01 \x01(\tR\x05query\x12\x1a\n" +
 	"\bchecksum\x18\x02 \x01(\tR\bchecksum\x12P\n" +
@@ -11328,7 +11341,8 @@ const file_cnspec_policy_proto_rawDesc = "" +
 	"\n" +
 	"datapoints\x18\x04 \x03(\tR\n" +
 	"datapoints\x12'\n" +
-	"\x04code\x18\x05 \x01(\v2\x13.mql.llx.CodeBundleR\x04code\x1a=\n" +
+	"\x04code\x18\x05 \x01(\v2\x13.mql.llx.CodeBundleR\x04code\x12#\n" +
+	"\rcompile_error\x18\x06 \x01(\tR\fcompileError\x1a=\n" +
 	"\x0fPropertiesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xfb\b\n" +

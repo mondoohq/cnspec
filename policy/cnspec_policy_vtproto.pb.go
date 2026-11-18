@@ -1623,6 +1623,7 @@ func (m *ExecutionQuery) CloneVT() *ExecutionQuery {
 	r := new(ExecutionQuery)
 	r.Query = m.Query
 	r.Checksum = m.Checksum
+	r.CompileError = m.CompileError
 	if rhs := m.Properties; rhs != nil {
 		tmpContainer := make(map[string]string, len(rhs))
 		for k, v := range rhs {
@@ -8109,6 +8110,13 @@ func (m *ExecutionQuery) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 	if m.unknownFields != nil {
 		i -= len(m.unknownFields)
 		copy(dAtA[i:], m.unknownFields)
+	}
+	if len(m.CompileError) > 0 {
+		i -= len(m.CompileError)
+		copy(dAtA[i:], m.CompileError)
+		i = protohelpers.EncodeVarint(dAtA, i, uint64(len(m.CompileError)))
+		i--
+		dAtA[i] = 0x32
 	}
 	if m.Code != nil {
 		if vtmsg, ok := interface{}(m.Code).(interface {
@@ -15076,6 +15084,10 @@ func (m *ExecutionQuery) SizeVT() (n int) {
 		} else {
 			l = proto.Size(m.Code)
 		}
+		n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
+	}
+	l = len(m.CompileError)
+	if l > 0 {
 		n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
 	}
 	n += len(m.unknownFields)
@@ -30237,6 +30249,38 @@ func (m *ExecutionQuery) UnmarshalVT(dAtA []byte) error {
 					return err
 				}
 			}
+			iNdEx = postIndex
+		case 6:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field CompileError", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protohelpers.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return protohelpers.ErrInvalidLength
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return protohelpers.ErrInvalidLength
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.CompileError = string(dAtA[iNdEx:postIndex])
 			iNdEx = postIndex
 		default:
 			iNdEx = preIndex

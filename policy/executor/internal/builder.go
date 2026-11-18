@@ -4,6 +4,7 @@
 package internal
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"sort"
@@ -22,6 +23,9 @@ type query struct {
 	requiredProps      map[string]string
 	resolvedProperties map[string]*llx.Primitive
 	notifies           []string
+	// compileError is set if the query failed to compile when the policy was
+	// resolved. Such a query is not run, its datapoints report this error
+	compileError string
 }
 
 type GraphBuilder struct {
@@ -92,6 +96,17 @@ func (b *GraphBuilder) AddQuery(c *llx.CodeBundle, propertyChecksums map[string]
 		requiredProps:      propertyChecksums,
 		resolvedProperties: resolvedProperties,
 		notifies:           notifies,
+	})
+}
+
+// AddUncompilableQuery adds a query that failed to compile when the policy was
+// resolved. It is not run. Instead, all of its datapoints report the compile
+// error, so the query is scored as an error
+func (b *GraphBuilder) AddUncompilableQuery(c *llx.CodeBundle, compileError string, notifies []string) {
+	b.queries = append(b.queries, query{
+		codeBundle:   c,
+		notifies:     notifies,
+		compileError: compileError,
 	})
 }
 
@@ -226,7 +241,7 @@ func (b *GraphBuilder) Build(runtime llx.Runtime, assetMrn string) (*GraphExecut
 	reportingQueryNodeByCodeId := map[string]string{}
 	if !rescore {
 		for queryID, q := range queries {
-			canRun := checkVersion(q.codeBundle, mondooVersion)
+			canRun := q.compileError == "" && checkVersion(q.codeBundle, mondooVersion)
 			if canRun {
 				ge.addExecutionQueryNode(queryID, q, q.resolvedProperties, b.datapointType)
 			} else {
@@ -311,11 +326,16 @@ func (b *GraphBuilder) Build(runtime llx.Runtime, assetMrn string) (*GraphExecut
 	return ge, nil
 }
 
-// handleUnrunnableQueries takes the queries for which the running version does
-// to meet the minimum version requirement and marks the datapoints as error.
-// This is only done for datapoints which will not be reported by a runnable query
+// handleUnrunnableQueries takes the queries which failed to compile or for which
+// the running version does not meet the minimum version requirement and marks
+// the datapoints as error. This is only done for datapoints which will not be
+// reported by a runnable query
 func (ge *GraphExecutor) handleUnrunnableQueries(unrunnableQueries []query) {
 	for _, q := range unrunnableQueries {
+		err := fmt.Errorf("unable to run query, cnspec version %s required", q.codeBundle.MinMondooVersion)
+		if q.compileError != "" {
+			err = errors.New("unable to run query, it failed to compile: " + q.compileError)
+		}
 		for _, checksum := range CodepointChecksums(q.codeBundle) {
 			if _, ok := ge.nodes[NodeID(checksum)]; ok {
 				// If the datapoint will be reported by another query, skip
@@ -329,7 +349,7 @@ func (ge *GraphExecutor) handleUnrunnableQueries(unrunnableQueries []query) {
 				&llx.RawResult{
 					CodeID: checksum,
 					Data: &llx.RawData{
-						Error: fmt.Errorf("unable to run query, cnspec version %s required", q.codeBundle.MinMondooVersion),
+						Error: err,
 					},
 				})
 		}

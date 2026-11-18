@@ -285,6 +285,10 @@ func builderFromResolvedPolicy(resolvedPolicy *policy.ResolvedPolicy) *internal.
 				notifies = sa.Items
 			}
 		}
+		if eq.GetCompileError() != "" {
+			b.AddUncompilableQuery(eq.GetCode(), eq.GetCompileError(), notifies)
+			continue
+		}
 		b.AddQuery(eq.GetCode(), eq.GetProperties(), nil, notifies)
 	}
 
