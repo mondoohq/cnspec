@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -423,16 +424,20 @@ func (n *rpBuilderExecutionQueryNode) isPrunable() bool {
 }
 
 func (n *rpBuilderExecutionQueryNode) build(rp *ResolvedPolicy, data *rpBuilderData) error {
-	// Compile the properties
-	propTypes, propToChecksums, err := compileProps(n.query, rp, data)
+	executionQuery, err := n.compile(rp, data)
 	if err != nil {
-		return err
+		// One query that does not compile must not fail the whole policy. It is
+		// reported as an error instead, and everything else still runs.
+		log.Warn().Err(err).
+			Str("mrn", n.query.Mrn).
+			Str("code_id", n.query.CodeId).
+			Msg("query failed to compile, it will be reported as an error")
+		executionQuery, err = uncompilableExecutionQuery(n.query, err, rp.CollectorJob, data.compilerConf)
+		if err != nil {
+			return err
+		}
 	}
-	// Add the compiled query to the execution job. This also collects the datapoints into the collector job
-	executionQuery, _, err := mquery2executionQuery(n.query, propTypes, propToChecksums, rp.CollectorJob, false, data.compilerConf)
-	if err != nil {
-		return err
-	}
+	// Add the query to the execution job
 	rp.ExecutionJob.Queries[n.query.CodeId] = executionQuery
 
 	codeIdReportingJobUUID := data.relativeChecksum(n.query.CodeId)
@@ -446,6 +451,44 @@ func (n *rpBuilderExecutionQueryNode) build(rp *ResolvedPolicy, data *rpBuilderD
 	}
 
 	return nil
+}
+
+// compile compiles the properties and the query. The compiled properties are
+// added to the execution job and the datapoints of the query are collected into
+// the collector job
+func (n *rpBuilderExecutionQueryNode) compile(rp *ResolvedPolicy, data *rpBuilderData) (*ExecutionQuery, error) {
+	propTypes, propToChecksums, err := compileProps(n.query, rp, data)
+	if err != nil {
+		return nil, err
+	}
+	executionQuery, _, err := mquery2executionQuery(n.query, propTypes, propToChecksums, rp.CollectorJob, false, data.compilerConf)
+	if err != nil {
+		return nil, err
+	}
+	return executionQuery, nil
+}
+
+// uncompilableExecutionQuery builds the execution query for a query that failed
+// to compile. Clients that know CompileError don't run it and report the error
+// for each of its datapoints. Older clients run the stand-in code, which returns
+// nothing, so the query ends up skipped instead of being waited on forever.
+//
+// The stand-in keeps the code id of the original query, because the reporting
+// jobs and reporting queries refer to the query by it. Its code embeds that code
+// id, so that its datapoints are not shared with any other query.
+func uncompilableExecutionQuery(query *Mquery, compileErr error, collectorJob *CollectorJob, conf mqlc.CompilerConfig) (*ExecutionQuery, error) {
+	standIn := &Mquery{
+		Mql: "if(false) { return " + strconv.Quote(query.CodeId) + " }",
+	}
+	executionQuery, _, err := mquery2executionQuery(standIn, nil, nil, collectorJob, false, conf)
+	if err != nil {
+		return nil, err
+	}
+	executionQuery.Code.CodeV2.Id = query.CodeId
+	executionQuery.Query = query.Mql
+	executionQuery.Checksum = checksumStrings(query.Checksum, "uncompilable")
+	executionQuery.CompileError = compileErr.Error()
+	return executionQuery, nil
 }
 
 // rpBuilderFrameworkNode is a node that represents a framework in the graph. It will add a reporting job to the resolved policy
