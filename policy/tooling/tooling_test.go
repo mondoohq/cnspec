@@ -57,3 +57,13 @@ policies:
 `
 	require.Equal(t, expectedStr, string(formatted))
 }
+
+func TestParseCodeBlocks(t *testing.T) {
+	md := "Disable the module.\n\n```bash\nmodprobe -r cramfs\n```\n\nThen confirm:\n\n~~~\nlsmod | grep cramfs\n~~~\n"
+	require.Equal(t, []CodeBlock{
+		{Lang: "bash", Code: "modprobe -r cramfs\n"},
+		{Code: "lsmod | grep cramfs\n"},
+	}, ParseCodeBlocks(md))
+
+	require.Empty(t, ParseCodeBlocks("modprobe -r cramfs\n"), "a text without a fence has no code blocks")
+}
