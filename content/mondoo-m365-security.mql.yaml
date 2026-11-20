@@ -41,6 +41,9 @@ policies:
         checks:
           - uid: mondoo-m365-security-enable-azure-ad-identity-protection-sign-in-risk-policies
           - uid: mondoo-m365-security-enable-azure-ad-identity-protection-user-risk-policies
+          - uid: mondoo-m365-security-access-reviews-fully-decided
+          - uid: mondoo-m365-security-guest-access-restricted
+          - uid: mondoo-m365-security-default-users-cannot-create-tenants-or-security-groups
       - title: Authentication & Access Control
         checks:
           - uid: mondoo-m365-security-enable-conditional-access-policies-to-block-legacy-authentication
@@ -4635,3 +4638,257 @@ queries:
     refs:
       - url: https://learn.microsoft.com/en-us/entra/identity/enterprise-apps/overview-assign-app-owners
         title: Overview of enterprise application ownership
+  # No Terraform variants: access review decisions are recorded at run time by reviewers, not declared in configuration.
+  - uid: mondoo-m365-security-access-reviews-fully-decided
+    title: Ensure completed access reviews leave no access undecided
+    filters: |
+      asset.platform == "microsoft365"
+    impact: 60
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-08
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-308-a-4-ii-c-information-access-management-access-establishment-and-modification
+      compliance/iso-27001-2022: iso-27001-2022-a-5-18
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-2
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-7-2-4
+      compliance/soc2-2017: soc2-control-cc6-2-3
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    mql: |
+      microsoft.identityAndAccess.accessReviews.all(
+        instances.where(status == "Completed").all(
+          decisions.none(decision == "NotReviewed")
+        )
+      )
+    docs:
+      desc: |
+        This check verifies that every completed access review actually reached a decision on each person or application it covered.
+
+        Microsoft Entra access reviews ask reviewers to approve or deny each principal's continued access to a group, application, access package, or role. Each run of a review is an instance, and each principal in it gets a decision, shown under **ID Governance > Access reviews** on the review's results. A principal nobody reviewed is left as **Not reviewed**. This check requires that no completed instance of any review still has a principal marked **Not reviewed**. A tenant with no access reviews passes. Access reviews require a Microsoft Entra ID P2 or Microsoft Entra ID Governance license.
+
+        **Why this matters**
+
+        An access review exists to produce evidence that someone looked. A completed review full of undecided entries is a record that nobody did, and access that nobody examined continues exactly as before, while the existence of the review suggests otherwise to auditors and to the security team.
+
+        Undecided entries are usually the ones that matter most: guests nobody recognizes, accounts of people who left, and members added for a project long finished. Reviewers skip what they cannot identify, which is precisely the access an attacker would rely on.
+
+        Turn on **Auto apply results to resource** with a default decision of **Remove access** for reviewers who do not respond, or follow up on undecided entries before closing each review.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the Microsoft Entra admin center at `https://entra.microsoft.com`.
+        2. Go to **ID Governance** > **Access reviews**.
+        3. For each review, open its completed instances and review the **Results** for entries with the outcome **Not reviewed**.
+
+        A passing tenant has no completed instance with a **Not reviewed** entry. A failing tenant has at least one.
+
+        ### Audit via PowerShell
+
+        ```powershell
+        Connect-MgGraph -Scopes "AccessReview.Read.All"
+        foreach ($def in Get-MgIdentityGovernanceAccessReviewDefinition -All) {
+            foreach ($inst in Get-MgIdentityGovernanceAccessReviewDefinitionInstance -AccessReviewScheduleDefinitionId $def.Id -All |
+                    Where-Object Status -eq 'Completed') {
+                $open = Get-MgIdentityGovernanceAccessReviewDefinitionInstanceDecision -AccessReviewScheduleDefinitionId $def.Id `
+                    -AccessReviewInstanceId $inst.Id -All | Where-Object Decision -eq 'NotReviewed'
+                if ($open) { [pscustomobject]@{ Review = $def.DisplayName; Instance = $inst.Id; Undecided = @($open).Count } }
+            }
+        }
+        ```
+
+        A passing tenant returns nothing. A failing tenant lists each completed instance with undecided entries.
+      remediation:
+        - id: console
+          desc: |
+            **To make access reviews decide every entry using the Microsoft Entra admin center:**
+
+            1. Sign in to the [Microsoft Entra admin center](https://entra.microsoft.com).
+            2. Go to **ID Governance** > **Access reviews** and open the review.
+            3. Select **Settings**, turn on **Auto apply results to resource**, and set **If reviewers don't respond** to **Remove access**.
+            4. Turn on reminders so reviewers are prompted before the instance ends.
+            5. For instances already completed, review the **Not reviewed** entries and remove the access manually where it is no longer needed.
+        - id: powershell
+          desc: |
+            **To set a default decision for reviewers who do not respond using Microsoft Graph PowerShell:**
+
+            ```powershell
+            Connect-MgGraph -Scopes "AccessReview.ReadWrite.All"
+            $def = Get-MgIdentityGovernanceAccessReviewDefinition -AccessReviewScheduleDefinitionId "<review-id>"
+            $settings = $def.Settings
+            $settings.DefaultDecisionEnabled = $true
+            $settings.DefaultDecision = "Deny"
+            $settings.AutoApplyDecisionsEnabled = $true
+            $settings.ReminderNotificationsEnabled = $true
+            Update-MgIdentityGovernanceAccessReviewDefinition -AccessReviewScheduleDefinitionId $def.Id -Settings $settings
+            ```
+        # No Terraform remediation: the azuread Terraform provider has no resource for access review definitions.
+    refs:
+      - url: https://learn.microsoft.com/en-us/entra/id-governance/access-reviews-overview
+        title: What are access reviews
+      - url: https://learn.microsoft.com/en-us/entra/id-governance/complete-access-review
+        title: Complete an access review of groups and applications
+  # No Terraform variants: the tenant authorization policy has no resource in the azuread Terraform provider.
+  - uid: mondoo-m365-security-guest-access-restricted
+    title: Ensure guest access is restricted and only admins can invite guests
+    filters: |
+      asset.platform == "microsoft365"
+    impact: 75
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-5-15
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-7-2-2
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    mql: |
+      microsoft.policies.tenantAuthorizationPolicy.guestUserRoleId == "2af84b1e-32c8-42b7-82bc-daa82404023b"
+      microsoft.policies.tenantAuthorizationPolicy.allowInvitesFrom.in(["none", "adminsAndGuestInviters"])
+    docs:
+      desc: |
+        This check verifies that guest users can see little of the directory and that only administrators decide who becomes a guest.
+
+        Two settings in the Microsoft Entra admin center under **Entra ID > External Identities > External collaboration settings** control this. **Guest user access** offers three levels: the same access as members, limited access, and restricted access, which limits guests to their own profile and the groups they belong to. **Guest invite settings** decide who can invite guests, from anyone in the organization to no one. This check requires guest access to be the most restrictive level, and invitations to be limited to users in the Guest Inviter role and administrators, or turned off.
+
+        **Why this matters**
+
+        Every guest is an account whose security another organization controls. With member-level or limited access, a compromised guest can list users, groups, and their memberships, which is the reconnaissance that phishing and privilege escalation start from: who the administrators are, which groups grant access to what, and whose mailbox to target.
+
+        Open invitations make the population of such accounts grow without review. Any user, or any attacker holding one user's session, can invite an outside account that then persists after the inviting user is gone.
+
+        Restricting both keeps guests limited to the collaboration they were invited for, and puts each new external account in front of someone accountable for it.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the Microsoft Entra admin center at `https://entra.microsoft.com`.
+        2. Go to **Entra ID** > **External Identities** > **External collaboration settings**.
+        3. Review **Guest user access** and **Guest invite settings**.
+
+        A passing tenant shows **Guest user access is restricted to properties and memberships of their own directory objects** and invitations limited to **Only users assigned to specific admin roles** or turned off. A failing tenant shows a broader setting for either.
+
+        ### Audit via PowerShell
+
+        ```powershell
+        Connect-MgGraph -Scopes "Policy.Read.All"
+        Get-MgPolicyAuthorizationPolicy | Select-Object GuestUserRoleId, AllowInvitesFrom
+        ```
+
+        A passing tenant returns `GuestUserRoleId` `2af84b1e-32c8-42b7-82bc-daa82404023b` and `AllowInvitesFrom` `adminsAndGuestInviters` or `none`. A failing tenant returns a different role or a broader invite setting.
+      remediation:
+        - id: console
+          desc: |
+            **To restrict guest access and invitations using the Microsoft Entra admin center:**
+
+            1. Sign in to the [Microsoft Entra admin center](https://entra.microsoft.com).
+            2. Go to **Entra ID** > **External Identities** > **External collaboration settings**.
+            3. Under **Guest user access**, select **Guest user access is restricted to properties and memberships of their own directory objects**.
+            4. Under **Guest invite settings**, select **Only users assigned to specific admin roles can invite guest users**.
+            5. Select **Save**.
+        - id: powershell
+          desc: |
+            **To restrict guest access and invitations using Microsoft Graph PowerShell:**
+
+            ```powershell
+            Connect-MgGraph -Scopes "Policy.ReadWrite.Authorization"
+            Update-MgPolicyAuthorizationPolicy -GuestUserRoleId "2af84b1e-32c8-42b7-82bc-daa82404023b" `
+                -AllowInvitesFrom "adminsAndGuestInviters"
+            ```
+        # No Terraform remediation: the tenant authorization policy has no resource in the azuread Terraform provider.
+    refs:
+      - url: https://learn.microsoft.com/en-us/entra/external-id/external-collaboration-settings-configure
+        title: Configure external collaboration settings
+      - url: https://learn.microsoft.com/en-us/entra/identity/users/users-restrict-guest-permissions
+        title: Restrict guest access permissions in Microsoft Entra ID
+  # No Terraform variants: the tenant authorization policy has no resource in the azuread Terraform provider.
+  - uid: mondoo-m365-security-default-users-cannot-create-tenants-or-security-groups
+    title: Ensure users cannot create tenants or security groups
+    filters: |
+      asset.platform == "microsoft365"
+    impact: 65
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-5-15
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-7
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-7-2-2
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    mql: |
+      microsoft.policies.tenantAuthorizationPolicy.defaultUserAllowedToCreateTenants == false
+      microsoft.policies.tenantAuthorizationPolicy.defaultUserAllowedToCreateSecurityGroups == false
+    docs:
+      desc: |
+        This check verifies that ordinary users cannot create new Microsoft Entra tenants or security groups on their own.
+
+        Both are default user permissions in the Microsoft Entra admin center. **Restrict non-admin users from creating tenants** is under **Entra ID > Users > User settings**, and **Users can create security groups in Azure portals, API or PowerShell** is under **Entra ID > Groups > General**. This check requires tenant creation to be restricted and security group creation turned off for users without an administrator role.
+
+        **Why this matters**
+
+        A user who creates a tenant becomes its Global Administrator, outside every control your organization applies: no Conditional Access, no logging you collect, no offboarding. Data and applications moved into it, and identities created in it for external access, leave your governance entirely, and the tenant survives the user's departure.
+
+        Security groups are the units that grant access to applications, SharePoint sites, and Azure resources. When any user can create them, groups that grant access appear without an owner or a review, and an attacker with one user's session can create a group, add themselves, and wait for someone to grant the group access.
+
+        Restrict both and route requests through administrators or self-service group management with an approval step.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the Microsoft Entra admin center at `https://entra.microsoft.com`.
+        2. Go to **Entra ID** > **Users** > **User settings** and review **Restrict non-admin users from creating tenants**.
+        3. Go to **Entra ID** > **Groups** > **General** and review **Users can create security groups in Azure portals, API or PowerShell**.
+
+        A passing tenant shows **Yes** for the first and **No** for the second. A failing tenant shows either one open.
+
+        ### Audit via PowerShell
+
+        ```powershell
+        Connect-MgGraph -Scopes "Policy.Read.All"
+        (Get-MgPolicyAuthorizationPolicy).DefaultUserRolePermissions |
+            Select-Object AllowedToCreateTenants, AllowedToCreateSecurityGroups
+        ```
+
+        A passing tenant returns `False` for both. A failing tenant returns `True` for either.
+      remediation:
+        - id: console
+          desc: |
+            **To stop users from creating tenants and security groups using the Microsoft Entra admin center:**
+
+            1. Sign in to the [Microsoft Entra admin center](https://entra.microsoft.com).
+            2. Go to **Entra ID** > **Users** > **User settings** and set **Restrict non-admin users from creating tenants** to **Yes**.
+            3. Go to **Entra ID** > **Groups** > **General** and set **Users can create security groups in Azure portals, API or PowerShell** to **No**.
+            4. Select **Save** on each page.
+        - id: powershell
+          desc: |
+            **To stop users from creating tenants and security groups using Microsoft Graph PowerShell:**
+
+            ```powershell
+            Connect-MgGraph -Scopes "Policy.ReadWrite.Authorization"
+            Update-MgPolicyAuthorizationPolicy -DefaultUserRolePermissions @{
+                AllowedToCreateTenants        = $false
+                AllowedToCreateSecurityGroups = $false
+            }
+            ```
+        # No Terraform remediation: the tenant authorization policy has no resource in the azuread Terraform provider.
+    refs:
+      - url: https://learn.microsoft.com/en-us/entra/fundamentals/users-default-permissions
+        title: Default user permissions in Microsoft Entra ID
+      - url: https://learn.microsoft.com/en-us/entra/identity/users/groups-self-service-management
+        title: Set up self-service group management
