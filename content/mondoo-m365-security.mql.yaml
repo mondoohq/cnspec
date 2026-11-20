@@ -63,6 +63,7 @@ policies:
         checks:
           - uid: mondoo-m365-security-ensure-that-between-two-and-four-global-admins-are-designated
           - uid: mondoo-m365-security-require-pim-for-privileged-roles
+          - uid: mondoo-m365-security-privileged-role-activation-requires-mfa
           - uid: mondoo-m365-security-privileged-roles-limited-standing-holders
           - uid: mondoo-m365-security-guests-hold-no-directory-roles
           - uid: mondoo-m365-security-disabled-users-hold-no-directory-roles
@@ -3220,6 +3221,110 @@ queries:
         title: What is Microsoft Entra Privileged Identity Management
       - url: https://learn.microsoft.com/en-us/entra/id-governance/privileged-identity-management/pim-how-to-add-role-to-user
         title: Assign Microsoft Entra roles in PIM
+  # No Terraform variants: the azuread provider has no resource for the PIM settings of a directory role.
+  - uid: mondoo-m365-security-privileged-role-activation-requires-mfa
+    title: Ensure activating a privileged directory role requires multifactor authentication
+    filters: |
+      asset.platform == "microsoft365" &&
+      microsoft.tenant.subscribedSkus.any(capabilityStatus.in(["Enabled", "Warning"]) && servicePlans.any(servicePlanName == "AAD_PREMIUM_P2"))
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-14
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-d-person-or-entity-authentication
+      compliance/iso-27001-2022: iso-27001-2022-a-8-5
+      compliance/nis-2: nis-2-21-2-j
+      compliance/nist-csf-1: nist-csf-1-pr-ac-7
+      compliance/nist-csf-2: nist-csf-2-pr-aa-03
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-2
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-3
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a07
+      compliance/pci-dss-4: pcidss-requirement-8-4-1
+      compliance/soc2-2017: soc2-control-cc6-1-11
+      compliance/vda-isa-5: vda-isa-5-4-1-2
+    mql: |
+      microsoft.identityAndAccess.roleEligibilityScheduleInstances.where(roleDefinition.isPrivileged == true).all(
+        roleDefinition.pimPolicy.rules.any(id == "Enablement_EndUser_Assignment" && enabledRules.contains("MultiFactorAuthentication")) ||
+        roleDefinition.pimPolicy.rules.any(id == "AuthenticationContext_EndUser_Assignment" && authenticationContextEnabled == true)
+      )
+    docs:
+      desc: |
+        This check verifies that a user who is eligible for a privileged role must pass multifactor authentication to activate it.
+
+        Privileged Identity Management keeps a setting per directory role that decides what activation requires, under **ID Governance > Privileged Identity Management > Microsoft Entra roles > Settings**. The **On activation, require** option offers **Azure MFA** or a Conditional Access authentication context, beside justification, ticket information, and approval. This check looks at every role Microsoft marks as privileged that at least one user, group, or service principal is eligible for, and requires that activating it demands multifactor authentication, either directly or through an enabled authentication context. A privileged role nobody is eligible for is not evaluated, since nothing can activate it. The check applies to tenants with Microsoft Entra ID P2, which Privileged Identity Management needs.
+
+        **Why this matters**
+
+        Eligibility only reduces risk if activation is harder than signing in. A role whose activation asks for nothing but a justification turns a stolen session into an administrator in one click: the attacker who already holds the session types a sentence and receives the role.
+
+        The defaults do not cover this. On a new tenant only some privileged roles require multifactor authentication on activation, so roles such as Privileged Authentication Administrator, Application Administrator, and Hybrid Identity Administrator activate without a second factor, though each can be used to take over the tenant.
+
+        Requiring a fresh multifactor prompt at activation ties the privilege to a device the attacker does not have, at the moment it is granted, regardless of how the session was obtained.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the Microsoft Entra admin center at `https://entra.microsoft.com`.
+        2. Go to **ID Governance** > **Privileged Identity Management** > **Microsoft Entra roles** > **Assignments** > **Eligible assignments** and note each privileged role with an eligible assignment.
+        3. For each of those roles, go to **Settings**, select the role, and review **On activation, require**.
+
+        A passing tenant requires **Azure MFA**, or a Conditional Access authentication context, on activation for every privileged role with an eligible assignment. A failing tenant has such a role whose activation does not require either.
+
+        ### Audit via PowerShell
+
+        1. Connect to Microsoft Graph and list, for every role with an eligible assignment, what activating it requires:
+
+        ```powershell
+        Connect-MgGraph -Scopes "RoleManagement.Read.Directory", "RoleManagementPolicy.Read.Directory"
+        $roles = Get-MgRoleManagementDirectoryRoleEligibilityScheduleInstance -All |
+          Select-Object -ExpandProperty RoleDefinitionId -Unique
+        foreach ($roleId in $roles) {
+          $assignment = Get-MgPolicyRoleManagementPolicyAssignment -Filter "scopeId eq '/' and scopeType eq 'Directory' and roleDefinitionId eq '$roleId'"
+          $rule = Get-MgPolicyRoleManagementPolicyRule -UnifiedRoleManagementPolicyId $assignment.PolicyId -UnifiedRoleManagementPolicyRuleId "Enablement_EndUser_Assignment"
+          [pscustomobject]@{ RoleDefinitionId = $roleId; EnabledRules = $rule.AdditionalProperties.enabledRules -join ", " }
+        }
+        ```
+
+        A passing tenant lists `MultiFactorAuthentication` for every privileged role, or has the role's `AuthenticationContext_EndUser_Assignment` rule enabled. A failing tenant has a privileged role without either.
+      remediation:
+        - id: console
+          desc: |
+            **To require multifactor authentication on activation using the Microsoft Entra admin center:**
+
+            1. Sign in to the [Microsoft Entra admin center](https://entra.microsoft.com) as at least a Privileged Role Administrator.
+            2. Go to **ID Governance** > **Privileged Identity Management** > **Microsoft Entra roles** > **Settings**.
+            3. Select the role and choose **Edit**.
+            4. Under **On activation, require**, select **Azure MFA**, or select **Microsoft Entra Conditional Access authentication context** and choose a context that a Conditional Access policy protects with multifactor authentication.
+            5. Select **Update**, and repeat for each privileged role with an eligible assignment.
+        - id: powershell
+          desc: |
+            **Using Microsoft Graph PowerShell**
+
+            ```powershell
+            Connect-MgGraph -Scopes "RoleManagementPolicy.ReadWrite.Directory"
+
+            $roleId = "<role-definition-id>"
+            $assignment = Get-MgPolicyRoleManagementPolicyAssignment -Filter "scopeId eq '/' and scopeType eq 'Directory' and roleDefinitionId eq '$roleId'"
+            $params = @{
+                "@odata.type" = "#microsoft.graph.unifiedRoleManagementPolicyEnablementRule"
+                id            = "Enablement_EndUser_Assignment"
+                enabledRules  = @("MultiFactorAuthentication", "Justification")
+                target        = @{
+                    caller     = "EndUser"
+                    operations = @("All")
+                    level      = "Assignment"
+                }
+            }
+            Update-MgPolicyRoleManagementPolicyRule -UnifiedRoleManagementPolicyId $assignment.PolicyId -UnifiedRoleManagementPolicyRuleId "Enablement_EndUser_Assignment" -BodyParameter $params
+            ```
+
+            Repeat for each privileged role with an eligible assignment. Keep `Justification` in the list if the role required it before, since the request replaces the whole list.
+        # No Terraform remediation: the azuread provider has no resource for the PIM settings of a directory role.
+    refs:
+      - url: https://learn.microsoft.com/en-us/entra/id-governance/privileged-identity-management/pim-how-to-change-default-settings
+        title: Configure Microsoft Entra role settings in Privileged Identity Management
+      - url: https://learn.microsoft.com/en-us/graph/identity-governance-pim-rules-overview
+        title: Overview of rules in PIM APIs in Microsoft Graph
   # No Terraform variants: DMARC records are published at an external DNS provider, not in Microsoft 365.
   - uid: mondoo-m365-security-ensure-dmarc-records-published
     title: Ensure DMARC records are published for all Exchange domains
@@ -3503,8 +3608,6 @@ queries:
   # No Terraform variants: whether a user is a guest and which roles it holds are read from the live directory, not from configuration.
   - uid: mondoo-m365-security-guests-hold-no-directory-roles
     title: Ensure guest users hold no directory roles
-    filters: |
-      asset.platform == "microsoft365"
     impact: 85
     tags:
       compliance/bsi-sys-1-5: false
@@ -3521,15 +3624,20 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-7-2-2
       compliance/soc2-2017: soc2-control-cc6-1-3
       compliance/vda-isa-5: vda-isa-5-4-2-1
-    mql: |
-      microsoft.users.list.where(userType == "Guest").all(
-        directoryRoleAssignments.length == 0
-      )
+    variants:
+      - uid: mondoo-m365-security-guests-hold-no-directory-roles-microsoft365
+        tags:
+          mondoo.com/filter-title: Microsoft 365
+          mondoo.com/filter-icon: microsoft
+      - uid: mondoo-m365-security-guests-hold-no-directory-roles-microsoft365-p2
+        tags:
+          mondoo.com/filter-title: Microsoft 365 with Entra ID P2
+          mondoo.com/filter-icon: microsoft
     docs:
       desc: |
         This check verifies that no guest account holds a Microsoft Entra directory role.
 
-        A guest is a user from another organization or a personal account, invited through Microsoft Entra B2B collaboration and authenticated by its home identity provider. Its directory roles are listed on the user under **Entra ID > Users**, on the **Assigned roles** page. This check requires every guest to have no active role assignment, whether given to the guest directly or to a role-assignable group the guest belongs to.
+        A guest is a user from another organization or a personal account, invited through Microsoft Entra B2B collaboration and authenticated by its home identity provider. Its directory roles are listed on the user under **Entra ID > Users**, on the **Assigned roles** page. This check requires every guest to have no active role assignment, whether given to the guest directly or to a role-assignable group the guest belongs to. On a tenant with Microsoft Entra ID P2, eligible assignments in Privileged Identity Management count too, since the holder can activate the role at any time.
 
         **Why this matters**
 
@@ -3543,7 +3651,7 @@ queries:
 
         1. Sign in to the Microsoft Entra admin center at `https://entra.microsoft.com`.
         2. Go to **Entra ID** > **Users** and filter by **User type** equal to **Guest**.
-        3. For each guest, open **Assigned roles**.
+        3. For each guest, open **Assigned roles** and review the **Active assignments** and, on a tenant with Microsoft Entra ID P2, **Eligible assignments** tabs.
 
         A passing tenant has no guest with an assigned role. A failing tenant has at least one.
 
@@ -3601,8 +3709,6 @@ queries:
   # No Terraform variants: whether an account is disabled and which roles it holds are read from the live directory.
   - uid: mondoo-m365-security-disabled-users-hold-no-directory-roles
     title: Ensure disabled users hold no directory roles
-    filters: |
-      asset.platform == "microsoft365"
     impact: 70
     tags:
       compliance/bsi-sys-1-5: false
@@ -3619,15 +3725,20 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-8-2-5
       compliance/soc2-2017: soc2-control-cc6-2-2
       compliance/vda-isa-5: vda-isa-5-4-2-1
-    mql: |
-      microsoft.users.list.where(accountEnabled == false).all(
-        directoryRoleAssignments.length == 0
-      )
+    variants:
+      - uid: mondoo-m365-security-disabled-users-hold-no-directory-roles-microsoft365
+        tags:
+          mondoo.com/filter-title: Microsoft 365
+          mondoo.com/filter-icon: microsoft
+      - uid: mondoo-m365-security-disabled-users-hold-no-directory-roles-microsoft365-p2
+        tags:
+          mondoo.com/filter-title: Microsoft 365 with Entra ID P2
+          mondoo.com/filter-icon: microsoft
     docs:
       desc: |
         This check verifies that accounts blocked from signing in no longer hold Microsoft Entra directory roles.
 
-        Blocking sign-in on a user, shown as **Account enabled** set to **No** under **Entra ID > Users**, is a common first step when someone leaves, but it leaves the user's role assignments in place. This check requires every disabled user to have no active role assignment, directly or through a role-assignable group.
+        Blocking sign-in on a user, shown as **Account enabled** set to **No** under **Entra ID > Users**, is a common first step when someone leaves, but it leaves the user's role assignments in place. This check requires every disabled user to have no active role assignment, directly or through a role-assignable group. On a tenant with Microsoft Entra ID P2, it also requires no eligible assignment in Privileged Identity Management.
 
         **Why this matters**
 
@@ -3641,7 +3752,7 @@ queries:
 
         1. Sign in to the Microsoft Entra admin center at `https://entra.microsoft.com`.
         2. Go to **Entra ID** > **Users** and filter by **Account enabled** equal to **No**.
-        3. For each user, open **Assigned roles**.
+        3. For each user, open **Assigned roles** and review the **Active assignments** and, on a tenant with Microsoft Entra ID P2, **Eligible assignments** tabs.
 
         A passing tenant has no disabled user with an assigned role. A failing tenant has at least one.
 
@@ -3685,8 +3796,6 @@ queries:
   # No Terraform variants: sign-in activity is runtime telemetry with no configuration counterpart.
   - uid: mondoo-m365-security-privileged-users-recent-sign-in
     title: Ensure users holding privileged directory roles have signed in recently
-    filters: |
-      asset.platform == "microsoft365"
     impact: 70
     tags:
       compliance/bsi-sys-1-5: false
@@ -3708,18 +3817,20 @@ queries:
         title: Days without an interactive sign-in after which a privileged user is considered dormant
         mql: |
           return 90
-    mql: |
-      microsoft.users.list.where(
-        directoryRoleAssignments.any(roleDefinition.isPrivileged)
-      ).all(
-        signInActivity.lastSignInDateTime != empty &&
-        parse.date(signInActivity.lastSignInDateTime) > time.now - props.mondooM365SecurityPrivilegedUserInactiveDays * time.day
-      )
+    variants:
+      - uid: mondoo-m365-security-privileged-users-recent-sign-in-microsoft365
+        tags:
+          mondoo.com/filter-title: Microsoft 365
+          mondoo.com/filter-icon: microsoft
+      - uid: mondoo-m365-security-privileged-users-recent-sign-in-microsoft365-p2
+        tags:
+          mondoo.com/filter-title: Microsoft 365 with Entra ID P2
+          mondoo.com/filter-icon: microsoft
     docs:
       desc: |
         This check verifies that every account holding a privileged Microsoft Entra role is in active use.
 
-        Microsoft Entra records each user's last interactive sign-in, shown under **Entra ID > Users** in the **Last sign-in** column and on the user's **Sign-in logs**. This check looks at every user holding a role Microsoft marks as privileged, as an active assignment given directly or through a role-assignable group, and requires an interactive sign-in within the last 90 days. A user who has never signed in fails. The period is configurable, and the data requires a Microsoft Entra ID P1 or P2 license.
+        Microsoft Entra records each user's last interactive sign-in, shown under **Entra ID > Users** in the **Last sign-in** column and on the user's **Sign-in logs**. This check looks at every user holding a role Microsoft marks as privileged, as an active assignment given directly or through a role-assignable group, or on a tenant with Microsoft Entra ID P2 as an eligible assignment in Privileged Identity Management, and requires an interactive sign-in within the last 90 days. A user who has never signed in fails. The period is configurable, and the data requires a Microsoft Entra ID P1 or P2 license.
 
         **Why this matters**
 
@@ -3779,8 +3890,6 @@ queries:
   # No Terraform variants: whether an account is synchronized from on-premises Active Directory is decided by Microsoft Entra Connect, not by a Terraform resource.
   - uid: mondoo-m365-security-privileged-users-cloud-only
     title: Ensure users holding privileged directory roles are cloud-only accounts
-    filters: |
-      asset.platform == "microsoft365"
     impact: 75
     tags:
       compliance/bsi-sys-1-5: false
@@ -3797,15 +3906,20 @@ queries:
       compliance/pci-dss-4: false
       compliance/soc2-2017: soc2-control-cc6-1-8
       compliance/vda-isa-5: vda-isa-5-4-1-2
-    mql: |
-      microsoft.users.list.where(
-        directoryRoleAssignments.any(roleDefinition.isPrivileged)
-      ).all(onPremisesSyncEnabled != true)
+    variants:
+      - uid: mondoo-m365-security-privileged-users-cloud-only-microsoft365
+        tags:
+          mondoo.com/filter-title: Microsoft 365
+          mondoo.com/filter-icon: microsoft
+      - uid: mondoo-m365-security-privileged-users-cloud-only-microsoft365-p2
+        tags:
+          mondoo.com/filter-title: Microsoft 365 with Entra ID P2
+          mondoo.com/filter-icon: microsoft
     docs:
       desc: |
         This check verifies that accounts holding privileged Microsoft Entra roles exist only in the cloud and are not synchronized from on-premises Active Directory.
 
-        Microsoft Entra Connect and Cloud Sync copy users from Active Directory into Microsoft Entra. A synchronized user shows **On-premises sync enabled** set to **Yes** under **Entra ID > Users**, and its password and attributes are controlled from Active Directory. This check requires every user holding a role Microsoft marks as privileged, directly or through a role-assignable group, to be a cloud-only account.
+        Microsoft Entra Connect and Cloud Sync copy users from Active Directory into Microsoft Entra. A synchronized user shows **On-premises sync enabled** set to **Yes** under **Entra ID > Users**, and its password and attributes are controlled from Active Directory. This check requires every user holding a role Microsoft marks as privileged, directly or through a role-assignable group, to be a cloud-only account. On a tenant with Microsoft Entra ID P2, eligible assignments in Privileged Identity Management count too, since the holder can activate the role at any time.
 
         **Why this matters**
 
@@ -3883,8 +3997,6 @@ queries:
   # No Terraform variants: the check covers every service principal's role holdings across the tenant, which no single azuread resource describes.
   - uid: mondoo-m365-security-service-principals-no-privileged-directory-roles
     title: Ensure service principals hold no privileged directory roles
-    filters: |
-      asset.platform == "microsoft365"
     impact: 90
     tags:
       compliance/bsi-sys-1-5: false
@@ -3906,17 +4018,20 @@ queries:
         title: Template IDs of privileged directory roles a service principal may hold, such as Global Reader for a read-only scanner
         mql: |
           return ["f2ef992c-3afb-46b9-b7cf-a126ee74c451"]
-    mql: |
-      microsoft.serviceprincipals.all(
-        directoryRoleAssignments.where(roleDefinition.isPrivileged).all(
-          roleDefinition.templateId.in(props.mondooM365SecurityAllowedServicePrincipalRoles)
-        )
-      )
+    variants:
+      - uid: mondoo-m365-security-service-principals-no-privileged-directory-roles-microsoft365
+        tags:
+          mondoo.com/filter-title: Microsoft 365
+          mondoo.com/filter-icon: microsoft
+      - uid: mondoo-m365-security-service-principals-no-privileged-directory-roles-microsoft365-p2
+        tags:
+          mondoo.com/filter-title: Microsoft 365 with Entra ID P2
+          mondoo.com/filter-icon: microsoft
     docs:
       desc: |
         This check verifies that no application or workload identity holds a privileged Microsoft Entra role.
 
-        Service principals, the identities of applications and managed identities in your tenant, can be assigned directory roles like users. Their roles are listed under **Entra ID > Enterprise apps**, on the application's **Roles and administrators** page. This check requires that no service principal holds a role Microsoft marks as privileged, directly or through a role-assignable group, other than roles on an allowlist. The allowlist starts with Global Reader, the read-only role security scanners commonly use, and is configurable.
+        Service principals, the identities of applications and managed identities in your tenant, can be assigned directory roles like users. Their roles are listed under **Entra ID > Enterprise apps**, on the application's **Roles and administrators** page. This check requires that no service principal holds a role Microsoft marks as privileged, directly or through a role-assignable group, other than roles on an allowlist. On a tenant with Microsoft Entra ID P2, eligible assignments in Privileged Identity Management count too. The allowlist starts with Global Reader, the read-only role security scanners commonly use, and is configurable.
 
         **Why this matters**
 
@@ -4926,3 +5041,100 @@ queries:
         title: Default user permissions in Microsoft Entra ID
       - url: https://learn.microsoft.com/en-us/entra/identity/users/groups-self-service-management
         title: Set up self-service group management
+  - uid: mondoo-m365-security-guests-hold-no-directory-roles-microsoft365
+    filters: |
+      asset.platform == "microsoft365" &&
+      microsoft.tenant.subscribedSkus.none(capabilityStatus.in(["Enabled", "Warning"]) && servicePlans.any(servicePlanName == "AAD_PREMIUM_P2"))
+    mql: |
+      microsoft.users.list.where(userType == "Guest").all(
+        directoryRoleAssignments.length == 0
+      )
+  - uid: mondoo-m365-security-guests-hold-no-directory-roles-microsoft365-p2
+    filters: |
+      asset.platform == "microsoft365" &&
+      microsoft.tenant.subscribedSkus.any(capabilityStatus.in(["Enabled", "Warning"]) && servicePlans.any(servicePlanName == "AAD_PREMIUM_P2"))
+    mql: |
+      microsoft.users.list.where(userType == "Guest").all(
+        directoryRoleAssignments.length == 0 &&
+        directoryRoleEligibilities.length == 0
+      )
+  - uid: mondoo-m365-security-disabled-users-hold-no-directory-roles-microsoft365
+    filters: |
+      asset.platform == "microsoft365" &&
+      microsoft.tenant.subscribedSkus.none(capabilityStatus.in(["Enabled", "Warning"]) && servicePlans.any(servicePlanName == "AAD_PREMIUM_P2"))
+    mql: |
+      microsoft.users.list.where(accountEnabled == false).all(
+        directoryRoleAssignments.length == 0
+      )
+  - uid: mondoo-m365-security-disabled-users-hold-no-directory-roles-microsoft365-p2
+    filters: |
+      asset.platform == "microsoft365" &&
+      microsoft.tenant.subscribedSkus.any(capabilityStatus.in(["Enabled", "Warning"]) && servicePlans.any(servicePlanName == "AAD_PREMIUM_P2"))
+    mql: |
+      microsoft.users.list.where(accountEnabled == false).all(
+        directoryRoleAssignments.length == 0 &&
+        directoryRoleEligibilities.length == 0
+      )
+  - uid: mondoo-m365-security-privileged-users-recent-sign-in-microsoft365
+    filters: |
+      asset.platform == "microsoft365" &&
+      microsoft.tenant.subscribedSkus.none(capabilityStatus.in(["Enabled", "Warning"]) && servicePlans.any(servicePlanName == "AAD_PREMIUM_P2"))
+    mql: |
+      microsoft.users.list.where(
+        directoryRoleAssignments.any(roleDefinition.isPrivileged)
+      ).all(
+        signInActivity.lastSignInDateTime != empty &&
+        parse.date(signInActivity.lastSignInDateTime) > time.now - props.mondooM365SecurityPrivilegedUserInactiveDays * time.day
+      )
+  - uid: mondoo-m365-security-privileged-users-recent-sign-in-microsoft365-p2
+    filters: |
+      asset.platform == "microsoft365" &&
+      microsoft.tenant.subscribedSkus.any(capabilityStatus.in(["Enabled", "Warning"]) && servicePlans.any(servicePlanName == "AAD_PREMIUM_P2"))
+    mql: |
+      microsoft.users.list.where(
+        directoryRoleAssignments.any(roleDefinition.isPrivileged) ||
+        directoryRoleEligibilities.any(roleDefinition.isPrivileged)
+      ).all(
+        signInActivity.lastSignInDateTime != empty &&
+        parse.date(signInActivity.lastSignInDateTime) > time.now - props.mondooM365SecurityPrivilegedUserInactiveDays * time.day
+      )
+  - uid: mondoo-m365-security-privileged-users-cloud-only-microsoft365
+    filters: |
+      asset.platform == "microsoft365" &&
+      microsoft.tenant.subscribedSkus.none(capabilityStatus.in(["Enabled", "Warning"]) && servicePlans.any(servicePlanName == "AAD_PREMIUM_P2"))
+    mql: |
+      microsoft.users.list.where(
+        directoryRoleAssignments.any(roleDefinition.isPrivileged)
+      ).all(onPremisesSyncEnabled != true)
+  - uid: mondoo-m365-security-privileged-users-cloud-only-microsoft365-p2
+    filters: |
+      asset.platform == "microsoft365" &&
+      microsoft.tenant.subscribedSkus.any(capabilityStatus.in(["Enabled", "Warning"]) && servicePlans.any(servicePlanName == "AAD_PREMIUM_P2"))
+    mql: |
+      microsoft.users.list.where(
+        directoryRoleAssignments.any(roleDefinition.isPrivileged) ||
+        directoryRoleEligibilities.any(roleDefinition.isPrivileged)
+      ).all(onPremisesSyncEnabled != true)
+  - uid: mondoo-m365-security-service-principals-no-privileged-directory-roles-microsoft365
+    filters: |
+      asset.platform == "microsoft365" &&
+      microsoft.tenant.subscribedSkus.none(capabilityStatus.in(["Enabled", "Warning"]) && servicePlans.any(servicePlanName == "AAD_PREMIUM_P2"))
+    mql: |
+      microsoft.serviceprincipals.all(
+        directoryRoleAssignments.where(roleDefinition.isPrivileged).all(
+          roleDefinition.templateId.in(props.mondooM365SecurityAllowedServicePrincipalRoles)
+        )
+      )
+  - uid: mondoo-m365-security-service-principals-no-privileged-directory-roles-microsoft365-p2
+    filters: |
+      asset.platform == "microsoft365" &&
+      microsoft.tenant.subscribedSkus.any(capabilityStatus.in(["Enabled", "Warning"]) && servicePlans.any(servicePlanName == "AAD_PREMIUM_P2"))
+    mql: |
+      microsoft.serviceprincipals.all(
+        directoryRoleAssignments.where(roleDefinition.isPrivileged).all(
+          roleDefinition.templateId.in(props.mondooM365SecurityAllowedServicePrincipalRoles)
+        ) &&
+        directoryRoleEligibilities.where(roleDefinition.isPrivileged).all(
+          roleDefinition.templateId.in(props.mondooM365SecurityAllowedServicePrincipalRoles)
+        )
+      )
