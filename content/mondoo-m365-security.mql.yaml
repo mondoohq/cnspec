@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-m365-security
     name: Mondoo Microsoft 365 Security
-    version: 2.4.4
+    version: 2.4.5
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -1382,12 +1382,19 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-3-3
       compliance/vda-isa-5: vda-isa-5-4-2-1
     mql: |
-      microsoft.roles.where(displayName == "Global Administrator").all(assignments.length.inRange(2, 4))
+      globalAdminUsers = microsoft.users.list.where(
+        directoryRoleAssignments.any(roleDefinition.templateId == "62e90394-69f5-4237-9190-012177145e10")
+      ).length
+      globalAdminApps = microsoft.serviceprincipals.where(
+        directoryRoleAssignments.any(roleDefinition.templateId == "62e90394-69f5-4237-9190-012177145e10")
+      ).length
+      globalAdminUsers >= 2
+      globalAdminUsers + globalAdminApps <= 4
     docs:
       desc: |
         This check verifies that the Global Administrator role is held by a small named group, between two and four accounts.
 
-        Global Administrator is the unrestricted role in Microsoft 365. Microsoft imposes no upper or lower bound on how many accounts hold it, so the count drifts in both directions. You review the assignments in the Microsoft Entra admin center under **Entra ID > Roles & admins**, and change them there or from the Microsoft 365 admin center under **Users > Active Users** using **Manage roles**. This check requires the number of assignments to fall between two and four.
+        Global Administrator is the unrestricted role in Microsoft 365. Microsoft imposes no upper or lower bound on how many accounts hold it, so the count drifts in both directions. You review the assignments in the Microsoft Entra admin center under **Entra ID > Roles & admins**, and change them there or from the Microsoft 365 admin center under **Users > Active Users** using **Manage roles**. This check counts the users and service principals who hold the role, whether it is assigned to them directly or to a role-assignable group they belong to. At least two must be users, because only a person can respond during an incident, and no more than four may hold it in total. A group assigned the role counts once per member, because every member holds it.
 
         **Why this matters**
 
@@ -1404,20 +1411,28 @@ queries:
         1. Sign in to the Microsoft Entra admin center at `https://entra.microsoft.com`.
         2. Go to **Entra ID** > **Roles & admins**.
         3. Select the **Global Administrator** role and review its **Assignments**.
+        4. For each assignment to a group, open the group and count its members.
 
-        A passing tenant has between two and four accounts assigned the Global Administrator role. A failing tenant has fewer than two or more than four.
+        A passing tenant has at least two users and no more than four users and service principals in total holding the Global Administrator role, counting the members of every group assigned it. A failing tenant has fewer than two users or more than four holders in total.
 
         ### Audit via PowerShell
 
-        1. Connect to Microsoft Graph and list the Global Administrator role members:
+        1. Connect to Microsoft Graph and count the users and service principals who hold the Global Administrator role, directly or through a group assigned it:
 
         ```powershell
-        Connect-MgGraph -Scopes "RoleManagement.Read.Directory"
+        Connect-MgGraph -Scopes "RoleManagement.Read.Directory", "GroupMember.Read.All"
         $role = Get-MgDirectoryRole -Filter "roleTemplateId eq '62e90394-69f5-4237-9190-012177145e10'"
-        Get-MgDirectoryRoleMember -DirectoryRoleId $role.Id
+        $holders = foreach ($member in Get-MgDirectoryRoleMember -DirectoryRoleId $role.Id) {
+            if ($member.AdditionalProperties['@odata.type'] -eq '#microsoft.graph.group') {
+                (Get-MgGroupMember -GroupId $member.Id -All).Id
+            } else {
+                $member.Id
+            }
+        }
+        ($holders | Sort-Object -Unique).Count
         ```
 
-        A passing tenant returns between two and four members. A failing tenant returns fewer than two or more than four.
+        A passing tenant returns a count of no more than four, at least two of them users. A failing tenant returns more than four, or fewer than two users.
       remediation:
         - id: console
           desc: |
@@ -1438,7 +1453,7 @@ queries:
                3. Clear `Global Administrator` and assign a narrower role if the user still needs administrative access.
                4. Select `Save changes`.
 
-            This check counts active assignments only. An account that holds Global Administrator only as a Privileged Identity Management eligible assignment is not counted.
+            This check counts active assignments only, including those held through a role-assignable group. An account that holds Global Administrator only as a Privileged Identity Management eligible assignment is not counted. To reduce the count held through a group, remove members from the group or remove the group's role assignment.
         - id: powershell
           desc: |
             **Using Microsoft Graph PowerShell**
@@ -2066,7 +2081,7 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-7-2-2
       compliance/soc2-2017: soc2-control-cc6-8-1
       compliance/vda-isa-5: vda-isa-5-1-3-3
-    mql: microsoft.policies.authorizationPolicy.defaultUserRolePermissions.allowedToCreateApps == false
+    mql: microsoft.policies.tenantAuthorizationPolicy.defaultUserAllowedToCreateApps == false
     docs:
       desc: |
         This check verifies that ordinary users cannot register applications in the tenant directory.
@@ -2963,9 +2978,9 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-8-1
       compliance/vda-isa-5: vda-isa-5-1-3-3
     mql: |
-      microsoft.policies.authorizationPolicy.defaultUserRolePermissions.permissionGrantPoliciesAssigned == empty ||
-      microsoft.policies.authorizationPolicy.defaultUserRolePermissions.permissionGrantPoliciesAssigned.none(
-        _ == /^ManagePermissionGrantsForSelf\./i
+      microsoft.policies.tenantAuthorizationPolicy.defaultUserPermissionGrantPoliciesAssigned == empty ||
+      microsoft.policies.tenantAuthorizationPolicy.defaultUserPermissionGrantPoliciesAssigned.none(
+        _ == /(?i)^ManagePermissionGrantsForSelf\./
       )
     docs:
       desc: |
@@ -3058,15 +3073,23 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-7-2-2
       compliance/soc2-2017: soc2-control-cc6-3-3
       compliance/vda-isa-5: vda-isa-5-4-2-1
+    props:
+      - uid: mondooM365SecurityMaxStandingGlobalAdmins
+        title: Most users allowed to hold Global Administrator as a standing assignment, such as emergency access accounts
+        mql: |
+          return 2
     mql: |
       microsoft.identityAndAccess.roleEligibilityScheduleInstances.any(
         roleDefinition.templateId == "62e90394-69f5-4237-9190-012177145e10"
       )
+      microsoft.users.list.where(
+        directoryRoleAssignments.any(roleDefinition.templateId == "62e90394-69f5-4237-9190-012177145e10")
+      ).length <= props.mondooM365SecurityMaxStandingGlobalAdmins
     docs:
       desc: |
         This check verifies that privileged roles are held as activatable eligibility rather than as permanent standing access.
 
-        Microsoft Entra Privileged Identity Management changes the shape of an administrative assignment. Instead of holding a role continuously, a user is made eligible for it and must activate it for a bounded window, optionally passing a multifactor prompt, supplying a justification, and waiting for approval. You configure this in the Microsoft Entra admin center under **ID Governance > Privileged Identity Management > Microsoft Entra roles**, adding assignments with the type set to eligible and setting the activation requirements per role. This check requires at least one eligible assignment to the Global Administrator role. It does not confirm that standing assignments were removed. The feature needs Microsoft Entra ID P2 or Microsoft Entra ID Governance licensing.
+        Microsoft Entra Privileged Identity Management changes the shape of an administrative assignment. Instead of holding a role continuously, a user is made eligible for it and must activate it for a bounded window, optionally passing a multifactor prompt, supplying a justification, and waiting for approval. You configure this in the Microsoft Entra admin center under **ID Governance > Privileged Identity Management > Microsoft Entra roles**, adding assignments with the type set to eligible and setting the activation requirements per role. This check requires at least one eligible assignment to the Global Administrator role, and no more than two users holding the role as an active assignment, directly or through a role-assignable group. The two remaining are room for emergency access accounts; the limit is configurable. The feature needs Microsoft Entra ID P2 or Microsoft Entra ID Governance licensing.
 
         **Why this matters**
 
@@ -3083,8 +3106,9 @@ queries:
         1. Sign in to the Microsoft Entra admin center at `https://entra.microsoft.com`.
         2. Go to **ID Governance** > **Privileged Identity Management** > **Microsoft Entra roles** > **Assignments**.
         3. Review the **Eligible assignments** tab for privileged roles such as Global Administrator.
+        4. Review the **Active assignments** tab for the same role, counting the members of any group listed.
 
-        A passing tenant has at least one eligible Global Administrator assignment. A failing tenant has none and holds the role only through active assignments.
+        A passing tenant has at least one eligible Global Administrator assignment and no more than two users with an active one. A failing tenant has no eligible assignment, or more than two users with an active one.
 
         ### Audit via PowerShell
 
@@ -3095,7 +3119,9 @@ queries:
         Get-MgRoleManagementDirectoryRoleEligibilityScheduleInstance -Filter "roleDefinitionId eq '62e90394-69f5-4237-9190-012177145e10'"
         ```
 
-        A passing tenant returns one or more eligible Global Administrator assignments. A failing tenant returns nothing.
+        2. Count the users with an active Global Administrator assignment, as in the audit of the Global Administrator count check, using `Get-MgDirectoryRoleMember`.
+
+        A passing tenant returns one or more eligible Global Administrator assignments and no more than two users with an active one. A failing tenant returns no eligible assignment, or more than two users with an active one.
       remediation:
         - id: console
           desc: |
