@@ -28,7 +28,7 @@ from paths import CONTENT_DIR, DATA_DIR, VALIDATION_DIR  # noqa: E402
 DEFAULT_OUTPUT = DATA_DIR / "azure_commands.json"
 
 sys.path.insert(0, str(VALIDATION_DIR / "remediation" / "commands"))
-from common import extract_command_sources  # noqa: E402
+from common import extract_command_sources, split_commands  # noqa: E402
 
 # Remediation ids whose bash blocks may contain `az` commands. The Azure
 # policy uses `cli`; the M365 policy documents a few DNS fixes there too.
@@ -364,11 +364,9 @@ def detect_policy_commands(commands: dict) -> set[str]:
             content, include_audit=True, remediation_ids=AZURE_REMEDIATION_IDS
         )
         for block, _line, _uid, _inline in blocks:
-            joined = re.sub(r"\\\s*\n\s*", " ", block)
-            for line in joined.split("\n"):
-                line = line.strip()
-                if not line.startswith("az "):
-                    continue
+            # The validator's own splitter, so an `az` call inside `$(...)`, a
+            # pipe or a `for` loop counts here exactly as it does there.
+            for line, _ in split_commands(block, "az", 0):
                 # Command path is every token before the first flag.
                 cmd_parts = []
                 for p in line.split()[1:]:
