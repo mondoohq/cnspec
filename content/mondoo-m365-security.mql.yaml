@@ -1323,7 +1323,7 @@ queries:
       )
   # No Terraform variants: the security defaults toggle has no azuread Terraform resource and can only be changed through the Graph API or portal.
   - uid: mondoo-m365-security-ensure-security-defaults-is-disabled-on-azure-active-directory
-    title: Ensure Security Defaults is disabled on Microsoft Entra ID
+    title: Ensure Security Defaults is replaced by Conditional Access multifactor authentication
     filters: |
       asset.platform == "microsoft365"
     impact: 80
@@ -1344,11 +1344,24 @@ queries:
       compliance/vda-isa-5: vda-isa-5-4-1-2
     mql: |
       microsoft.policies.identitySecurityDefaultsEnforcementPolicy.isEnabled == false
+      microsoft.conditionalAccess.policies.where(
+        state == "enabled" &&
+        conditions != empty &&
+        conditions.users != empty &&
+        conditions.applications != empty &&
+        grantControls != empty
+      ).where(
+        grantControls.builtInControls.contains("mfa") ||
+        grantControls.authenticationStrength != empty
+      ).any(
+        conditions.users.includeUsers.contains("All") &&
+        conditions.applications.includeApplications.contains("All")
+      )
     docs:
       desc: |
         This check verifies that the tenant has moved off the Microsoft-managed baseline and onto its own explicit access policies.
 
-        Security defaults is a single on or off switch in the Microsoft Entra admin center under **Entra ID > Overview > Properties > Manage security defaults**. It applies a fixed set of protections to everybody and cannot be scoped, tuned, or excepted. Critically, it is mutually exclusive with Conditional Access: while security defaults is on, the tenant cannot use Conditional Access policies at all. This check requires it to be disabled, which is what makes the policies the rest of this bundle looks for possible.
+        Security defaults is a single on or off switch in the Microsoft Entra admin center under **Entra ID > Overview > Properties > Manage security defaults**. It applies a fixed set of protections to everybody and cannot be scoped, tuned, or excepted. Critically, it is mutually exclusive with Conditional Access: while security defaults is on, the tenant cannot use Conditional Access policies at all. This check requires it to be disabled and replaced: at least one enabled Conditional Access policy must require multifactor authentication, or an authentication strength, for all users and all cloud apps. A tenant that turned security defaults off without that replacement fails, the same as one still running security defaults.
 
         **Why this matters**
 
@@ -1364,7 +1377,9 @@ queries:
         2. Go to **Entra ID** > **Overview** > **Properties**.
         3. Select **Manage security defaults** and review the **Security defaults** setting.
 
-        A passing tenant has security defaults set to **Disabled**, with Conditional Access policies providing equivalent or stronger controls. A failing tenant has security defaults **Enabled**.
+        4. Go to **Entra ID** > **Conditional Access** > **Policies** and look for a policy that is **On**, targets **All users** and **All resources**, and grants access only with **Require multifactor authentication** or an authentication strength.
+
+        A passing tenant has security defaults set to **Disabled** and at least one such policy. A failing tenant has security defaults **Enabled**, or has it disabled with no such policy.
 
         ### Audit via PowerShell
 
@@ -1375,7 +1390,18 @@ queries:
         Get-MgPolicyIdentitySecurityDefaultEnforcementPolicy | Select-Object IsEnabled
         ```
 
-        A passing tenant returns `IsEnabled : False`. A failing tenant returns `IsEnabled : True`.
+        2. List the enabled Conditional Access policies that require multifactor authentication or an authentication strength for all users and all applications:
+
+        ```powershell
+        Get-MgIdentityConditionalAccessPolicy -All | Where-Object {
+          $_.State -eq "enabled" -and
+          $_.Conditions.Users.IncludeUsers -contains "All" -and
+          $_.Conditions.Applications.IncludeApplications -contains "All" -and
+          ($_.GrantControls.BuiltInControls -contains "mfa" -or $_.GrantControls.AuthenticationStrength.Id)
+        } | Select-Object DisplayName
+        ```
+
+        A passing tenant returns `IsEnabled : False` and at least one policy. A failing tenant returns `IsEnabled : True`, or no policy.
       remediation:
         - id: console
           desc: |
