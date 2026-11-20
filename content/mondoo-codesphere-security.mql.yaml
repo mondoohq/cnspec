@@ -1,0 +1,797 @@
+# Copyright Mondoo, Inc. 2024, 2026
+# SPDX-License-Identifier: BUSL-1.1
+policies:
+  - uid: mondoo-codesphere-security
+    name: Mondoo Codesphere Security
+    version: 1.0.0
+    license: BUSL-1.1
+    tags:
+      mondoo.com/category: security
+      mondoo.com/platform: codesphere,saas
+      mondoo.com/icon: policy
+    require:
+      - provider: codesphere
+    authors:
+      - name: Mondoo, Inc.
+        email: hello@mondoo.com
+    summary: Secure Codesphere workspaces, resource groups, and organizations with access, credential, membership, and domain controls
+    docs:
+      desc: |
+        The Mondoo Codesphere Security policy identifies misconfigurations in Codesphere installations, on the Codesphere cloud or a Private Cloud, that expose workspaces to anonymous visitors, leak source control credentials, keep workspaces on unsupported operating system images, or leave access with people who should no longer have it. This policy helps organizations detect and remediate these weaknesses before they can be exploited.
+
+        This policy provides security checks across key Codesphere areas:
+
+        - Workspace exposure and source control credentials
+        - Workspace base image support
+        - Resource group and organization membership hygiene
+        - Custom domain verification and TLS certificates
+
+        **A note on scanning scope**
+
+        The provider discovers separate assets for each **Codesphere Workspace**, **Codesphere Resource Group**, and, when organizations are discovered, **Codesphere Organization**. Each check applies to the asset kind that owns the setting, so a workspace finding appears against the workspace and a membership finding against its resource group or organization. Listing organization members requires an organization administrator token.
+
+        **A note on API authentication**
+
+        The audit and command-line examples authenticate with a Codesphere API key, created under **User Settings > API Keys**. The `cs` CLI reads it from the `CS_TOKEN` environment variable, and the REST examples send it as `Authorization: Bearer $CS_TOKEN`. The examples use the Codesphere cloud API at `https://cloud.codesphere.com/api`; on a Private Cloud installation, replace the host with your installation's API URL, which `cs` reads from `CS_API`.
+
+        Learn more about scanning Codesphere in the [cnspec documentation](https://mondoo.com/docs/cnspec).
+
+        Have suggestions for new checks in this policy? Visit our [cnspec repository](https://github.com/mondoohq/cnspec).
+    groups:
+      - title: Codesphere Workspaces
+        checks:
+          - uid: mondoo-codesphere-security-workspace-dev-domain-restricted
+          - uid: mondoo-codesphere-security-workspace-no-git-url-credentials
+          - uid: mondoo-codesphere-security-workspace-base-image-supported
+      - title: Codesphere Resource Groups
+        checks:
+          - uid: mondoo-codesphere-security-resource-group-no-deleted-members
+          - uid: mondoo-codesphere-security-resource-group-no-stale-invitations
+          - uid: mondoo-codesphere-security-resource-group-custom-domains-verified
+          - uid: mondoo-codesphere-security-resource-group-custom-domains-certificate-issued
+      - title: Codesphere Organizations
+        checks:
+          - uid: mondoo-codesphere-security-organization-no-deleted-members
+          - uid: mondoo-codesphere-security-organization-no-stale-invitations
+    scoring_system: highest impact
+# Codesphere publishes no Terraform provider, so no check in this policy has
+# Terraform variants or a Terraform remediation. Revisit if one is released.
+queries:
+  # ---------------------------------------------------------------------------
+  # Workspaces
+  # ---------------------------------------------------------------------------
+  # No Terraform variants: Codesphere publishes no Terraform provider.
+  - uid: mondoo-codesphere-security-workspace-dev-domain-restricted
+    filters: asset.platform == "codesphere-workspace"
+    title: Ensure the workspace development domain is restricted
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-16
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-3
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-2
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-7-2-1
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/vda-isa-5: vda-isa-5-4-1-2
+    mql: |
+      codesphere.workspace.restricted == true
+    docs:
+      desc: |
+        This check verifies that the workspace's development domain requires a signed-in resource group member before it serves anything.
+
+        Every Codesphere workspace gets a development domain that serves the application running in it. Codesphere calls the setting **workspace visibility**, in the **Edit Workspace** dialog of the workspace settings. With visibility set to **Private**, Codesphere intercepts each request and sends unauthenticated visitors to its login page. With it public, anyone who has the URL reaches the application directly. The check requires the domain to be private.
+
+        **Why this matters**
+
+        Development domains follow a predictable pattern built from the workspace ID and the data center, and they are shared in pull requests, chat threads, and CI logs. A public development domain is reachable by anyone who finds or guesses the URL, and nothing tells a search engine crawler to stay away.
+
+        Code under development is the code least ready to be public. It often runs with debug output, verbose error pages, test accounts, and connections to production-like data, and it has not been through the review a release gets. An attacker who reaches it learns about unreleased features and can probe endpoints that the released application does not expose.
+
+        Production traffic belongs on a custom domain, which has its own access setting. Make a development domain public only for a workspace whose purpose is to serve anonymous traffic there, and decide that deliberately. Automated clients can still reach a private domain by sending an API key in the `X-CS-Authorization` header.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to Codesphere and open the workspace.
+        2. Open the workspace settings and the **Edit Workspace** dialog.
+        3. Review the workspace visibility.
+
+        A passing result shows the visibility set to **Private**; a failing result shows it public.
+
+        ### Audit via API
+
+        1. Read the workspace and print its `restricted` field:
+
+        ```bash
+        curl -s -H "Authorization: Bearer $CS_TOKEN" \
+          "https://cloud.codesphere.com/api/workspaces/<workspace-id>"
+        ```
+
+        A passing result shows `"restricted": true`; a failing result shows `"restricted": false`.
+      remediation:
+        - id: console
+          desc: |
+            To restrict the development domain using the Codesphere console:
+
+            1. Open the workspace and its settings.
+            2. Open the **Edit Workspace** dialog.
+            3. Set the workspace visibility to **Private** and save.
+        - id: api
+          desc: |
+            To restrict the development domain through the REST API:
+
+            ```bash
+            curl -s -X PATCH -H "Authorization: Bearer $CS_TOKEN" \
+              -H "Content-Type: application/json" \
+              "https://cloud.codesphere.com/api/workspaces/<workspace-id>" \
+              --data '{ "restricted": true }'
+            ```
+
+            New workspaces can be created restricted with the `cs` CLI by passing `--public-dev-domain=false` to `cs create workspace`.
+        # No CLI remediation: the cs CLI sets visibility only when it creates a workspace and has no command to update an existing one.
+        # No Terraform remediation: Codesphere publishes no Terraform provider.
+    refs:
+      - url: https://docs.codesphere.com/domains-and-networking/restricting-domain-access
+        title: Codesphere restricting domain access
+  # No Terraform variants: Codesphere publishes no Terraform provider.
+  - uid: mondoo-codesphere-security-workspace-no-git-url-credentials
+    filters: asset.platform == "codesphere-workspace"
+    title: Ensure the workspace git repository URL contains no embedded credentials
+    impact: 90
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-15
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-308-a-5-ii-d-security-awareness-training-and-tools-password-management
+      compliance/iso-27001-2022: iso-27001-2022-a-5-17
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-12
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a04
+      compliance/pci-dss-4: pcidss-requirement-8-3-2
+      compliance/soc2-2017: soc2-control-cc6-1-8
+      compliance/vda-isa-5: vda-isa-5-4-1-3
+    mql: |
+      codesphere.workspace.gitUrl == empty ||
+        codesphere.workspace.gitUrl != /^([a-z0-9+.-]+:\/\/)?[^\/@]+@/i ||
+        codesphere.workspace.gitUrl == /^([a-z0-9+.-]+:\/\/)?git@[^\/@]+(\/|$)/i
+    docs:
+      desc: |
+        This check verifies that the workspace was not created from a git repository URL that carries a password or access token.
+
+        A workspace records the URL of the repository it was cloned from. A URL such as `https://<token>@github.com/acme/app.git` puts a credential in the user name or password part of the URL, where it is stored in plain text with the workspace. Codesphere connects private repositories through **User Settings > Git Permissions** instead, and attaches the token to each git request without storing it in the workspace. The check fails when the URL carries any user information other than the conventional SSH user `git`.
+
+        **Why this matters**
+
+        The repository URL is visible to everyone who can read the workspace, through the console and the API, and it ends up in the workspace's git configuration. Every member of the resource group, and anyone who later gains access to the workspace, can copy the token and use it from anywhere.
+
+        Tokens pasted into URLs are usually personal access tokens with broad scope, created once and never rotated. With one, an attacker reads every repository its owner can read, and often pushes code too, which turns a leaked workspace setting into a supply chain compromise of the source repository.
+
+        Treat a token found this way as exposed. Revoke it at the git host before anything else, because recreating the workspace does not invalidate a copy someone has already taken.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to Codesphere and open the workspace.
+        2. Review the repository the workspace was created from in its git settings.
+
+        A passing result shows a URL without a user name or password before the host; a failing result shows a URL such as `https://<token>@github.com/acme/app.git`.
+
+        ### Audit via CLI
+
+        1. List the workspaces of the resource group with their repository URLs:
+
+        ```bash
+        cs list workspaces -G <resource-group-id> -o json
+        ```
+
+        A passing result shows each `gitUrl` without user information, or with only `git@`; a failing result shows a token or password before the `@`.
+      remediation:
+        - id: console
+          desc: |
+            To remove the embedded credential using the Codesphere console:
+
+            1. Revoke the token at the git host, for example under **Settings > Developer settings > Personal access tokens** on GitHub.
+            2. Connect the git provider under **User Settings > Git Permissions** in Codesphere.
+            3. Create a new workspace from the repository URL without credentials, and move the workload to it.
+            4. Delete the workspace that was created from the URL with credentials.
+        - id: cli
+          desc: |
+            To recreate the workspace from a clean URL using the `cs` CLI:
+
+            1. Revoke the token at the git host.
+            2. Connect the git provider under **User Settings > Git Permissions** in Codesphere, so private repositories are reachable without a token in the URL.
+            3. Create the replacement workspace and delete the old one:
+
+            ```bash
+            cs create workspace <workspace-name> -G <resource-group-id> \
+              -r https://github.com/<org>/<repository>.git -P
+            cs delete workspace -w <old-workspace-id>
+            ```
+        # No API remediation: the workspace update endpoint cannot change the repository URL, so the fix is a new workspace.
+        # No Terraform remediation: Codesphere publishes no Terraform provider.
+    refs:
+      - url: https://docs.codesphere.com/user-settings/git-permissions
+        title: Codesphere git permissions
+      - url: https://docs.codesphere.com/workspace-toolkit/development/git-and-source-control
+        title: Codesphere git and source control
+  # No Terraform variants: Codesphere publishes no Terraform provider.
+  - uid: mondoo-codesphere-security-workspace-base-image-supported
+    filters: asset.platform == "codesphere-workspace"
+    title: Ensure the workspace runs on a supported base image
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: false
+      compliance/dora: false
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-8
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ip-12
+      compliance/nist-csf-2: nist-csf-2-pr-ps-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sa-22
+      compliance/nist-sp-800-171: nist-sp-800-171--3-16-2
+      compliance/owasp-top-10-2025: false
+      compliance/pci-dss-4: pcidss-requirement-12-3-4
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: vda-isa-5-5-2-5
+    mql: |
+      codesphere.workspace.baseImage == empty ||
+        codesphere.workspace.baseImage.supportedUntil == empty ||
+        codesphere.workspace.baseImage.supportedUntil > time.now
+    docs:
+      desc: |
+        This check verifies that the workspace's operating system image still receives security updates.
+
+        A base image, such as `ubuntu-24.04`, is the operating system a workspace runs on. Codesphere publishes a support end date for each base image it offers, and the check compares the workspace's image against that date. A workspace on the installation's default image, or on an image with no announced end date, passes.
+
+        **Why this matters**
+
+        Once a base image passes its support date, the operating system packages in it stop receiving fixes. New vulnerabilities in the C library, OpenSSL, the shell, and the other packages a workspace's application and build steps depend on stay open for good, and public exploits for them accumulate.
+
+        Workspaces run code that fetches dependencies from the internet, serves traffic on development and custom domains, and holds environment variables with secrets. An unpatched userland makes a local foothold through any of those paths easier to turn into control of the workspace.
+
+        Codesphere offers an upgrade path when an image approaches its end of support. Move workspaces before the date passes, and test the application on the new image first.
+      audit: |
+        ### Audit via CLI
+
+        1. List the base images and their support end dates:
+
+        ```bash
+        cs list baseimages
+        ```
+
+        2. List the workspaces of the resource group with their base images:
+
+        ```bash
+        cs list workspaces -G <resource-group-id> -o json
+        ```
+
+        A passing result shows the workspace's `baseImage` with a support date in the future; a failing result shows a date that has passed.
+
+        ### Audit via API
+
+        1. Read the workspace's `baseImage`:
+
+        ```bash
+        curl -s -H "Authorization: Bearer $CS_TOKEN" \
+          "https://cloud.codesphere.com/api/workspaces/<workspace-id>"
+        ```
+
+        2. Compare it to the `supportedUntil` date of the same image:
+
+        ```bash
+        curl -s -H "Authorization: Bearer $CS_TOKEN" \
+          "https://cloud.codesphere.com/api/metadata/workspace-base-images"
+        ```
+
+        A passing result shows a `supportedUntil` date in the future.
+      remediation:
+        - id: console
+          desc: |
+            To move the workspace to a supported base image using the Codesphere console:
+
+            1. Open the workspace settings and the **Edit Workspace** dialog.
+            2. Choose a supported base image, or accept the upgrade Codesphere offers for an image near its end of support.
+            3. Save, and restart or redeploy the workspace so it runs on the new image.
+        - id: api
+          desc: |
+            To move the workspace to a supported base image through the REST API:
+
+            1. List the available images with `cs list baseimages` and pick one whose support date is in the future.
+            2. Update the workspace:
+
+            ```bash
+            curl -s -X PATCH -H "Authorization: Bearer $CS_TOKEN" \
+              -H "Content-Type: application/json" \
+              "https://cloud.codesphere.com/api/workspaces/<workspace-id>" \
+              --data '{ "baseImage": "ubuntu-24.04" }'
+            ```
+
+            3. Restart or redeploy the workspace so it runs on the new image.
+        # No CLI remediation: the cs CLI sets the base image only when it creates a workspace.
+        # No Terraform remediation: Codesphere publishes no Terraform provider.
+    refs:
+      - url: https://docs.codesphere.com/apis-and-automations/cs-cli/cs/list/baseimages
+        title: Codesphere CLI list base images
+  # ---------------------------------------------------------------------------
+  # Resource groups
+  # ---------------------------------------------------------------------------
+  # No Terraform variants: Codesphere publishes no Terraform provider.
+  - uid: mondoo-codesphere-security-resource-group-no-deleted-members
+    filters: asset.platform == "codesphere-resource-group"
+    title: Ensure the resource group has no members with deleted user accounts
+    impact: 75
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-07
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-308-a-3-ii-c-workforce-security-establish-termination-procedures
+      compliance/iso-27001-2022: iso-27001-2022-a-5-18
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-2
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-8-2-5
+      compliance/soc2-2017: soc2-control-cc6-2-2
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    mql: |
+      codesphere.resourceGroup.members.all(deletedAt == empty)
+    docs:
+      desc: |
+        This check verifies that access to the resource group is removed for users whose Codesphere account has been deleted.
+
+        A resource group, formerly called a team, grants its members access to its workspaces, environment variables, and custom domains. Its **Members** page lists each member with the **Admin** or **Member** role. The check fails when a member's user account carries a deletion date.
+
+        **Why this matters**
+
+        A membership that outlives its account is a grant nobody is reviewing. If the account is restored, or the email address behind it is registered again, the grant becomes live access to every workspace in the group, including its source code and secrets.
+
+        Deleted accounts in the member list also hide the real state of access. Reviews that count members, or that look for leavers, read a list that no longer matches who can sign in.
+
+        Remove the membership as part of the same offboarding step that deletes the account, so the two never drift apart.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to Codesphere and open the resource group.
+        2. Open its **Members** page and review each member.
+
+        A passing result shows only members with active accounts; a failing result shows a member whose account was deleted.
+
+        ### Audit via CLI
+
+        1. List the members of the resource group:
+
+        ```bash
+        cs list resource-group-members -G <resource-group-id> -o json
+        ```
+
+        A passing result shows no member with a `deletedAt` value.
+      remediation:
+        - id: console
+          desc: |
+            To remove the member using the Codesphere console:
+
+            1. Open the resource group and its **Members** page.
+            2. Open the actions menu on the member's row and remove the member.
+        - id: cli
+          desc: |
+            To remove the member using the `cs` CLI:
+
+            ```bash
+            cs delete resource-group-member -G <resource-group-id> -u <user-id>
+            ```
+        - id: api
+          desc: |
+            To remove the member through the REST API:
+
+            ```bash
+            curl -s -X DELETE -H "Authorization: Bearer $CS_TOKEN" \
+              "https://cloud.codesphere.com/api/teams/<resource-group-id>/members/<user-id>"
+            ```
+        # No Terraform remediation: Codesphere publishes no Terraform provider.
+    refs:
+      - url: https://docs.codesphere.com/core-concepts/access-management
+        title: Codesphere access management
+  # No Terraform variants: Codesphere publishes no Terraform provider.
+  - uid: mondoo-codesphere-security-resource-group-no-stale-invitations
+    filters: asset.platform == "codesphere-resource-group"
+    title: Ensure resource group invitations are not pending for over 30 days
+    impact: 60
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-06
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-308-a-4-ii-c-information-access-management-access-establishment-and-modification
+      compliance/iso-27001-2022: iso-27001-2022-a-5-16
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-2
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a07
+      compliance/pci-dss-4: pcidss-requirement-8-2-6
+      compliance/soc2-2017: soc2-control-cc6-2-3
+      compliance/vda-isa-5: vda-isa-5-4-1-3
+    mql: |
+      codesphere.resourceGroup.members.where(pending == true).all(createdAt > time.now - 30 * time.day)
+    docs:
+      desc: |
+        This check verifies that no invitation to the resource group has stayed unaccepted for more than 30 days.
+
+        Inviting someone to a resource group creates a pending membership that becomes active access as soon as the invitation is accepted. The check fails when a pending membership was created more than 30 days ago.
+
+        **Why this matters**
+
+        An invitation is a standing grant to whoever controls the invited mailbox. An invitation nobody accepted usually belongs to a person who joined another way, changed address, or left, and it stays redeemable long after the reason for it is gone. An attacker who takes over that mailbox, or registers a lapsed domain it belongs to, accepts it and lands inside the resource group with the role it was sent with.
+
+        Stale invitations also go unreviewed, because they do not appear as active members. Revoke them, and send a new invitation when the access is still needed.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to Codesphere and open the resource group.
+        2. Open its **Members** page and review the pending invitations.
+
+        A passing result shows no invitation older than 30 days.
+
+        ### Audit via CLI
+
+        1. List the members of the resource group:
+
+        ```bash
+        cs list resource-group-members -G <resource-group-id> -o json
+        ```
+
+        A passing result shows no member with `pending` set to `true` and a `createdAt` date more than 30 days ago.
+      remediation:
+        - id: console
+          desc: |
+            To revoke the invitation using the Codesphere console:
+
+            1. Open the resource group and its **Members** page.
+            2. Open the actions menu on the pending member's row and remove it.
+            3. Send a new invitation if the person still needs access.
+        - id: cli
+          desc: |
+            To revoke the invitation using the `cs` CLI:
+
+            ```bash
+            cs delete resource-group-member -G <resource-group-id> -u <user-id>
+            ```
+        - id: api
+          desc: |
+            To revoke the invitation through the REST API:
+
+            ```bash
+            curl -s -X DELETE -H "Authorization: Bearer $CS_TOKEN" \
+              "https://cloud.codesphere.com/api/teams/<resource-group-id>/members/<user-id>"
+            ```
+        # No Terraform remediation: Codesphere publishes no Terraform provider.
+    refs:
+      - url: https://docs.codesphere.com/core-concepts/access-management
+        title: Codesphere access management
+  # No Terraform variants: Codesphere publishes no Terraform provider.
+  - uid: mondoo-codesphere-security-resource-group-custom-domains-verified
+    filters: asset.platform == "codesphere-resource-group"
+    title: Ensure every custom domain of the resource group is verified
+    impact: 65
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: false
+      compliance/dora: false
+      compliance/hipaa: false
+      compliance/iso-27001-2022: false
+      compliance/nis-2: false
+      compliance/nist-csf-1: false
+      compliance/nist-csf-2: false
+      compliance/nist-sp-800-53-rev5: false
+      compliance/nist-sp-800-171: false
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a02
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: false
+    mql: |
+      codesphere.resourceGroup.customDomains.all(verified == true)
+    docs:
+      desc: |
+        This check verifies that every custom domain added to the resource group has passed DNS ownership verification.
+
+        A custom domain routes traffic from a domain you own to the resource group's workspaces. Codesphere verifies ownership through the records shown on the domain's **Verification records** tab: a CNAME for a subdomain, or an A record and a TXT record for an apex domain. A resource group admin checks them with **Check Status**. The check fails for any domain that is not verified.
+
+        **Why this matters**
+
+        An unverified domain is one whose DNS does not point where Codesphere expects. Either it was never finished, or its records were changed after the fact, often because the domain was moved elsewhere or allowed to lapse. Both leave a routing entry that the team believes is serving traffic and that nobody is watching.
+
+        Codesphere issues an automated TLS certificate only after verification succeeds, so an unverified domain also serves without a valid certificate. Visitors who reach it see certificate errors, and those who click through are trained to ignore them.
+
+        Finish verification for domains in use, and remove the ones that are not.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to Codesphere and open the resource group's **Domains** tab.
+        2. Open **Settings** for each domain and review its verification state.
+
+        A passing result shows every domain verified; a failing result shows a domain that is not.
+
+        ### Audit via API
+
+        1. List the resource group's domains:
+
+        ```bash
+        curl -s -H "Authorization: Bearer $CS_TOKEN" \
+          "https://cloud.codesphere.com/api/domains/resource-group/<resource-group-id>"
+        ```
+
+        A passing result shows `"verified": true` in every domain's `domainVerificationStatus`.
+      remediation:
+        - id: console
+          desc: |
+            To verify the domain using the Codesphere console:
+
+            1. Open the resource group's **Domains** tab and **Settings** for the domain.
+            2. On the **Verification records** tab, copy the CNAME, or the A and TXT records, and create them at your DNS provider.
+            3. Click **Check Status** once the records have propagated.
+            4. Remove the domain with the trash bin icon instead if it is no longer in use.
+        - id: api
+          desc: |
+            To verify the domain through the REST API:
+
+            1. Create the DNS records listed in the domain's `dnsEntries` at your DNS provider.
+            2. Request verification:
+
+            ```bash
+            curl -s -X POST -H "Authorization: Bearer $CS_TOKEN" \
+              "https://cloud.codesphere.com/api/domains/resource-group/<resource-group-id>/domain/<domain-name>/verify"
+            ```
+
+            Remove a domain that is no longer in use:
+
+            ```bash
+            curl -s -X DELETE -H "Authorization: Bearer $CS_TOKEN" \
+              "https://cloud.codesphere.com/api/domains/resource-group/<resource-group-id>/domain/<domain-name>"
+            ```
+        # No CLI remediation: the cs CLI has no commands for custom domains.
+        # No Terraform remediation: Codesphere publishes no Terraform provider.
+    refs:
+      - url: https://docs.codesphere.com/domains-and-networking/connecting-custom-domain
+        title: Codesphere connecting a custom domain
+  # No Terraform variants: Codesphere publishes no Terraform provider.
+  - uid: mondoo-codesphere-security-resource-group-custom-domains-certificate-issued
+    filters: asset.platform == "codesphere-resource-group"
+    title: Ensure every custom domain of the resource group has a TLS certificate
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-2-ii-transmission-security-encryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a04
+      compliance/pci-dss-4: pcidss-requirement-4-2-1
+      compliance/soc2-2017: soc2-control-cc6-7-2
+      compliance/vda-isa-5: vda-isa-5-5-1-2
+    mql: |
+      codesphere.resourceGroup.customDomains.all(certificateIssued == true)
+    docs:
+      desc: |
+        This check verifies that every custom domain of the resource group serves HTTPS with a TLS certificate issued for it.
+
+        A custom domain gets its certificate from the **TLS Certificate** tab of the domain's settings. With **Automated**, Codesphere generates and renews the certificate once the domain is verified. With **Self-Managed**, an admin supplies and renews it. The check fails for any domain without an issued certificate, and Codesphere reports the reason the request failed next to it.
+
+        **Why this matters**
+
+        Without a certificate the domain cannot serve a trusted HTTPS connection. Browsers show a certificate error, and clients that are configured to continue anyway, or users who click through, send session cookies, credentials, and application data over a connection anyone on the network path can read or alter.
+
+        A failed certificate request is also an early sign that the domain's DNS has drifted, because automated issuance depends on verification. Fix the verification first, then confirm the certificate is issued.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to Codesphere and open the resource group's **Domains** tab.
+        2. Open **Settings** for each domain and review the **TLS Certificate** tab.
+
+        A passing result shows an issued certificate for every domain; a failing result shows a domain without one, or the message **Domain unverified**.
+
+        ### Audit via API
+
+        1. List the resource group's domains:
+
+        ```bash
+        curl -s -H "Authorization: Bearer $CS_TOKEN" \
+          "https://cloud.codesphere.com/api/domains/resource-group/<resource-group-id>"
+        ```
+
+        A passing result shows `"issued": true` in every domain's `certificateRequestStatus`.
+      remediation:
+        - id: console
+          desc: |
+            To get a certificate issued using the Codesphere console:
+
+            1. Open the resource group's **Domains** tab and **Settings** for the domain.
+            2. Make sure the domain is verified on the **Verification records** tab.
+            3. On the **TLS Certificate** tab, select **Automated**, or upload a current certificate for **Self-Managed**.
+            4. Review the failure reason shown for the certificate request if it still is not issued.
+        - id: api
+          desc: |
+            To get a certificate issued through the REST API, verify the domain, which starts automated issuance:
+
+            ```bash
+            curl -s -X POST -H "Authorization: Bearer $CS_TOKEN" \
+              "https://cloud.codesphere.com/api/domains/resource-group/<resource-group-id>/domain/<domain-name>/verify"
+            ```
+
+            Read the domain again and check `certificateRequestStatus` for the result and its `reason`.
+        # No CLI remediation: the cs CLI has no commands for custom domains.
+        # No Terraform remediation: Codesphere publishes no Terraform provider.
+    refs:
+      - url: https://docs.codesphere.com/domains-and-networking/connecting-custom-domain
+        title: Codesphere connecting a custom domain
+  # ---------------------------------------------------------------------------
+  # Organizations
+  # ---------------------------------------------------------------------------
+  # No Terraform variants: Codesphere publishes no Terraform provider.
+  - uid: mondoo-codesphere-security-organization-no-deleted-members
+    filters: asset.platform == "codesphere-organization"
+    title: Ensure the organization has no members with deleted user accounts
+    impact: 75
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-07
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-308-a-3-ii-c-workforce-security-establish-termination-procedures
+      compliance/iso-27001-2022: iso-27001-2022-a-5-18
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-2
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-8-2-5
+      compliance/soc2-2017: soc2-control-cc6-2-2
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    mql: |
+      codesphere.organization.members.all(deletedAt == empty)
+    docs:
+      desc: |
+        This check verifies that organization membership is removed for users whose Codesphere account has been deleted.
+
+        An organization groups resource groups, and its members can be added to any of them; organization owners can manage all of them. The organization's **Members** page lists each member with their organizational role. The check fails when a member's user account carries a deletion date.
+
+        **Why this matters**
+
+        Organization membership is the gate to every resource group in the organization. A membership that outlives its account is a grant nobody reviews, and it becomes live access across the organization if the account is restored or its email address is registered again.
+
+        Removing a user from the organization revokes their access in every resource group, which makes it the one step that closes all of it. Do it as part of offboarding, not after.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to Codesphere as an organization owner.
+        2. Open the organization's settings from the organization and resource group selector, then its **Members** page.
+
+        A passing result shows only members with active accounts.
+
+        ### Audit via CLI
+
+        1. List the organization's members:
+
+        ```bash
+        cs list organization-members -g <organization-id> -o json
+        ```
+
+        A passing result shows no member with a `deletedAt` value.
+      remediation:
+        - id: console
+          desc: |
+            To remove the member using the Codesphere console:
+
+            1. Open the organization's **Members** page.
+            2. Open the actions menu on the member's row and remove the member.
+        - id: cli
+          desc: |
+            To remove the member using the `cs` CLI:
+
+            ```bash
+            cs delete organization-member -g <organization-id> -u <user-id>
+            ```
+        - id: api
+          desc: |
+            To remove the member through the REST API:
+
+            ```bash
+            curl -s -X DELETE -H "Authorization: Bearer $CS_TOKEN" \
+              "https://cloud.codesphere.com/api/organizations/<organization-id>/members/<user-id>"
+            ```
+        # No Terraform remediation: Codesphere publishes no Terraform provider.
+    refs:
+      - url: https://docs.codesphere.com/core-concepts/organizations-and-teams
+        title: Codesphere organizations and resource groups
+  # No Terraform variants: Codesphere publishes no Terraform provider.
+  - uid: mondoo-codesphere-security-organization-no-stale-invitations
+    filters: asset.platform == "codesphere-organization"
+    title: Ensure organization invitations are not pending for over 30 days
+    impact: 60
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-06
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-308-a-4-ii-c-information-access-management-access-establishment-and-modification
+      compliance/iso-27001-2022: iso-27001-2022-a-5-16
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-2
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a07
+      compliance/pci-dss-4: pcidss-requirement-8-2-6
+      compliance/soc2-2017: soc2-control-cc6-2-3
+      compliance/vda-isa-5: vda-isa-5-4-1-3
+    mql: |
+      codesphere.organization.members.where(pending == true).all(createdAt > time.now - 30 * time.day)
+    docs:
+      desc: |
+        This check verifies that no invitation to the organization has stayed unaccepted for more than 30 days.
+
+        Inviting someone to an organization creates a pending membership that becomes active as soon as the invitation is accepted, and an organization member can be added to any of its resource groups. The check fails when a pending membership was created more than 30 days ago.
+
+        **Why this matters**
+
+        An unaccepted invitation is a standing grant to whoever controls the invited mailbox. It usually belongs to someone who joined another way, changed address, or left, and it stays redeemable after the reason for it is gone. An attacker who takes over that mailbox accepts it and enters the organization, with an owner role if the invitation carried one.
+
+        Pending invitations do not appear among active members, so access reviews miss them. Revoke them, and send a new invitation when the access is still needed.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to Codesphere as an organization owner.
+        2. Open the organization's **Members** page and review the pending invitations.
+
+        A passing result shows no invitation older than 30 days.
+
+        ### Audit via CLI
+
+        1. List the organization's members:
+
+        ```bash
+        cs list organization-members -g <organization-id> -o json
+        ```
+
+        A passing result shows no member with `pending` set to `true` and a `createdAt` date more than 30 days ago.
+      remediation:
+        - id: console
+          desc: |
+            To revoke the invitation using the Codesphere console:
+
+            1. Open the organization's **Members** page.
+            2. Open the actions menu on the pending member's row and remove it.
+            3. Send a new invitation if the person still needs access.
+        - id: cli
+          desc: |
+            To revoke the invitation using the `cs` CLI:
+
+            ```bash
+            cs delete organization-member -g <organization-id> -u <user-id>
+            ```
+        - id: api
+          desc: |
+            To revoke the invitation through the REST API:
+
+            ```bash
+            curl -s -X DELETE -H "Authorization: Bearer $CS_TOKEN" \
+              "https://cloud.codesphere.com/api/organizations/<organization-id>/members/<user-id>"
+            ```
+        # No Terraform remediation: Codesphere publishes no Terraform provider.
+    refs:
+      - url: https://docs.codesphere.com/core-concepts/organizations-and-teams
+        title: Codesphere organizations and resource groups

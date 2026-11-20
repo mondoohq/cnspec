@@ -745,6 +745,19 @@ API_PROVIDERS = {
             "pin": GRAFANA_OPENAPI_SHA,
         }],
     },
+    "codesphere": {
+        # The Codesphere policy documents its non-console fixes as `curl`
+        # calls under `- id: api` and its audit steps use the same API, so
+        # both are validated (remediation_ids + the default include_audit).
+        # Codesphere serves its spec from a live, unversioned endpoint
+        # (https://cloud.codesphere.com/api/docs), so it is checked in via
+        # upstream/dump/api_specs.py. Its `cs` CLI commands are validated
+        # separately, by the codesphere entry in cobra.py.
+        "policies": ["mondoo-codesphere-security.mql.yaml"],
+        "host": "https://cloud.codesphere.com",
+        "specs": [{"name": "codesphere", "file": "codesphere_openapi.json"}],
+        "remediation_ids": ("api",),
+    },
     "vercel": {
         # The Vercel policy documents its non-CLI fixes as `curl` calls
         # against the REST API under `- id: api`, and its audit steps use

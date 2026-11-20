@@ -107,6 +107,18 @@ COBRA_CLIS = {
             "  All platforms:    https://docs.databricks.com/dev-tools/cli/install.html"
         ),
     },
+    "codesphere": {
+        "cli": "cs",
+        "policies": ["mondoo-codesphere-security.mql.yaml"],
+        "include_audit": True,
+        # Validated locally with `make test/content/commands/codesphere`, not
+        # in CI, for the same reason as exo below.
+        "local_only": True,
+        "install": (
+            "  All platforms:    https://github.com/codesphere-cloud/cs-go/releases\n"
+            "  Go toolchain:     go install github.com/codesphere-cloud/cs-go/cli@latest"
+        ),
+    },
     "exoscale": {
         "cli": "exo",
         "policies": ["mondoo-exoscale-security.mql.yaml"],
