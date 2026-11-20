@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-m365-security
     name: Mondoo Microsoft 365 Security
-    version: 2.4.5
+    version: 2.5.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -49,6 +49,15 @@ policies:
           - uid: mondoo-m365-security-ensure-security-defaults-is-disabled-on-azure-active-directory
           - uid: mondoo-m365-security-ensure-that-between-two-and-four-global-admins-are-designated
           - uid: mondoo-m365-security-require-pim-for-privileged-roles
+      - title: Privileged Access & Entitlements
+        checks:
+          - uid: mondoo-m365-security-privileged-roles-limited-standing-holders
+          - uid: mondoo-m365-security-guests-hold-no-directory-roles
+          - uid: mondoo-m365-security-disabled-users-hold-no-directory-roles
+          - uid: mondoo-m365-security-privileged-users-recent-sign-in
+          - uid: mondoo-m365-security-privileged-users-cloud-only
+          - uid: mondoo-m365-security-service-principals-no-privileged-directory-roles
+          - uid: mondoo-m365-security-role-assignable-groups-no-service-principal-members
       - title: Password Policies
         checks:
           - uid: mondoo-m365-security-ensure-that-ms-365-passwords-are-not-set-to-expire
@@ -3320,3 +3329,707 @@ queries:
         title: Set up DMARC to validate the From address domain
       - url: https://learn.microsoft.com/en-us/defender-office-365/email-authentication-about
         title: Email authentication in Microsoft 365
+  # No Terraform variants: the check counts role holders across the whole tenant, which no single azuread resource describes.
+  - uid: mondoo-m365-security-privileged-roles-limited-standing-holders
+    title: Ensure few users hold privileged directory roles as standing assignments
+    filters: |
+      asset.platform == "microsoft365"
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-10
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-2
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-6
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-7-2-2
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    props:
+      - uid: mondooM365SecurityMaxStandingPrivilegedUsers
+        title: Most users allowed to hold a privileged directory role as an active assignment
+        mql: |
+          return 5
+    mql: |
+      microsoft.users.list.where(
+        directoryRoleAssignments.any(roleDefinition.isPrivileged)
+      ).length <= props.mondooM365SecurityMaxStandingPrivilegedUsers
+    docs:
+      desc: |
+        This check verifies that only a small number of users hold a privileged Microsoft Entra role at all times.
+
+        Microsoft marks a directory role as privileged when it can manage identities, credentials, authentication, or other roles, so that holding it can lead to control of the tenant. Global Administrator, Privileged Role Administrator, User Administrator, Helpdesk Administrator, and Authentication Administrator are among them. The admin center shows them with a **PRIVILEGED** label under **Entra ID > Roles & admins**. This check counts the users who hold any such role as an active assignment, given to them directly or to a role-assignable group they belong to, and requires no more than five. The limit is configurable.
+
+        **Why this matters**
+
+        Every standing privileged assignment is an account that can take over the tenant the moment it is phished, and attackers pick the least defended one. Helpdesk and user administrators reset passwords and multifactor methods for other users, so taking one of them is enough to take a Global Administrator next.
+
+        Standing assignments also outlive the reason they were granted. A role given for a migration or an incident stays until someone removes it, and nothing prompts that review.
+
+        Hold these roles through Privileged Identity Management eligibility instead, so a user activates the role for a bounded window when the work needs it. Keep the standing count to your emergency access accounts and the few administrators who genuinely need the role every day.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the Microsoft Entra admin center at `https://entra.microsoft.com`.
+        2. Go to **Entra ID** > **Roles & admins**.
+        3. For each role marked **PRIVILEGED**, open it and review the **Active assignments**, counting the members of any group listed.
+
+        A passing tenant has no more than five users with an active assignment to a privileged role. A failing tenant has more.
+
+        ### Audit via PowerShell
+
+        1. Connect to Microsoft Graph and count the users holding a privileged role, directly or through a group:
+
+        ```powershell
+        Connect-MgGraph -Scopes "RoleManagement.Read.Directory", "GroupMember.Read.All"
+        $privileged = Get-MgBetaRoleManagementDirectoryRoleDefinition -Filter "isPrivileged eq true" -All
+        $holders = foreach ($role in $privileged) {
+            foreach ($a in Get-MgRoleManagementDirectoryRoleAssignment -Filter "roleDefinitionId eq '$($role.Id)'" -All) {
+                $obj = Get-MgDirectoryObject -DirectoryObjectId $a.PrincipalId
+                switch ($obj.AdditionalProperties['@odata.type']) {
+                    '#microsoft.graph.user'  { $a.PrincipalId }
+                    '#microsoft.graph.group' { (Get-MgGroupMember -GroupId $a.PrincipalId -All).Id }
+                }
+            }
+        }
+        ($holders | Sort-Object -Unique).Count
+        ```
+
+        A passing tenant returns five or fewer. A failing tenant returns more.
+      remediation:
+        - id: console
+          desc: |
+            **To move privileged roles from standing to eligible assignments using the Microsoft Entra admin center:**
+
+            Privileged Identity Management requires a Microsoft Entra ID P2 or Microsoft Entra ID Governance license.
+
+            1. Sign in to the [Microsoft Entra admin center](https://entra.microsoft.com).
+            2. Go to **ID Governance** > **Privileged Identity Management** > **Microsoft Entra roles** > **Roles**.
+            3. For each privileged role, add an **Eligible** assignment for each user who needs it.
+            4. Go to **Assignments** > **Active assignments** and remove the standing assignments that the eligible ones replace.
+            5. Keep standing assignments only for emergency access accounts and administrators who need the role every day.
+        - id: powershell
+          desc: |
+            **To replace a standing assignment with an eligible one using Microsoft Graph PowerShell:**
+
+            1. Connect with the required scope:
+
+            ```powershell
+            Connect-MgGraph -Scopes "RoleManagement.ReadWrite.Directory"
+            ```
+
+            2. Create the eligible assignment:
+
+            ```powershell
+            New-MgRoleManagementDirectoryRoleEligibilityScheduleRequest -BodyParameter @{
+                action           = "adminAssign"
+                principalId      = "<user-object-id>"
+                roleDefinitionId = "<role-definition-id>"
+                directoryScopeId = "/"
+                scheduleInfo     = @{ startDateTime = (Get-Date); expiration = @{ type = "afterDuration"; duration = "P180D" } }
+            }
+            ```
+
+            3. Remove the standing assignment:
+
+            ```powershell
+            $assignment = Get-MgRoleManagementDirectoryRoleAssignment -Filter "principalId eq '<user-object-id>' and roleDefinitionId eq '<role-definition-id>'"
+            Remove-MgRoleManagementDirectoryRoleAssignment -UnifiedRoleAssignmentId $assignment.Id
+            ```
+        - id: terraform
+          desc: |
+            **To keep standing privileged assignments few using Terraform:**
+
+            Declare the remaining standing assignments explicitly with `azuread_directory_role_assignment`, so each one is reviewed in source control, and remove the resources for users who should activate the role through Privileged Identity Management instead.
+
+            ```hcl
+            resource "azuread_directory_role_assignment" "break_glass_global_admin" {
+              role_id             = "62e90394-69f5-4237-9190-012177145e10"
+              principal_object_id = azuread_user.break_glass.object_id
+            }
+            ```
+    refs:
+      - url: https://learn.microsoft.com/en-us/entra/identity/role-based-access-control/privileged-roles-permissions
+        title: Privileged roles and permissions in Microsoft Entra ID
+      - url: https://learn.microsoft.com/en-us/entra/id-governance/privileged-identity-management/pim-configure
+        title: What is Microsoft Entra Privileged Identity Management
+  # No Terraform variants: whether a user is a guest and which roles it holds are read from the live directory, not from configuration.
+  - uid: mondoo-m365-security-guests-hold-no-directory-roles
+    title: Ensure guest users hold no directory roles
+    filters: |
+      asset.platform == "microsoft365"
+    impact: 85
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-2
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-6
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-7-2-2
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    mql: |
+      microsoft.users.list.where(userType == "Guest").all(
+        directoryRoleAssignments.length == 0
+      )
+    docs:
+      desc: |
+        This check verifies that no guest account holds a Microsoft Entra directory role.
+
+        A guest is a user from another organization or a personal account, invited through Microsoft Entra B2B collaboration and authenticated by its home identity provider. Its directory roles are listed on the user under **Entra ID > Users**, on the **Assigned roles** page. This check requires every guest to have no active role assignment, whether given to the guest directly or to a role-assignable group the guest belongs to.
+
+        **Why this matters**
+
+        A guest's credentials, multifactor methods, and account lifecycle are controlled by another organization. Your Conditional Access policies and sign-in risk policies still apply, but whether the account is protected, offboarded when the person leaves, or already compromised is decided somewhere you cannot see.
+
+        A directory role on that account extends the outside organization's weakest point into your tenant's administration. An attacker who takes over the guest's home account inherits the role, and the takeover starts in an environment where your security team has no logs.
+
+        Give external administrators a member account in your tenant that you provision, protect, and remove yourself, or delegate through a partner relationship that you can revoke.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the Microsoft Entra admin center at `https://entra.microsoft.com`.
+        2. Go to **Entra ID** > **Users** and filter by **User type** equal to **Guest**.
+        3. For each guest, open **Assigned roles**.
+
+        A passing tenant has no guest with an assigned role. A failing tenant has at least one.
+
+        ### Audit via PowerShell
+
+        1. Connect to Microsoft Graph and list role assignments held by guests, directly or through a group:
+
+        ```powershell
+        Connect-MgGraph -Scopes "User.Read.All", "RoleManagement.Read.Directory"
+        Get-MgUser -Filter "userType eq 'Guest'" -All | ForEach-Object {
+            $roles = Get-MgUserTransitiveMemberOfAsDirectoryRole -UserId $_.Id -All
+            if ($roles) { [pscustomobject]@{ Guest = $_.UserPrincipalName; Roles = $roles.DisplayName -join ', ' } }
+        }
+        ```
+
+        A passing tenant returns nothing. A failing tenant lists each guest and its roles.
+      remediation:
+        - id: console
+          desc: |
+            **To remove directory roles from guests using the Microsoft Entra admin center:**
+
+            1. Sign in to the [Microsoft Entra admin center](https://entra.microsoft.com).
+            2. Go to **Entra ID** > **Users** and open the guest.
+            3. Select **Assigned roles**, select each role, and choose **Remove assignments**.
+            4. If the role comes from a group, remove the guest from that group under **Entra ID** > **Groups**.
+            5. Provision a member account for any external administrator who still needs the role.
+        - id: powershell
+          desc: |
+            **To remove a guest's directory role assignments using Microsoft Graph PowerShell:**
+
+            ```powershell
+            Connect-MgGraph -Scopes "RoleManagement.ReadWrite.Directory"
+            Get-MgRoleManagementDirectoryRoleAssignment -Filter "principalId eq '<guest-object-id>'" -All |
+                ForEach-Object { Remove-MgRoleManagementDirectoryRoleAssignment -UnifiedRoleAssignmentId $_.Id }
+            ```
+
+            Remove the guest from any role-assignable group with `Remove-MgGroupMemberByRef`.
+        - id: terraform
+          desc: |
+            **To remove a guest's directory role using Terraform:**
+
+            Delete the `azuread_directory_role_assignment` resource whose `principal_object_id` is the guest, and assign the role to a member account instead:
+
+            ```hcl
+            resource "azuread_directory_role_assignment" "exchange_admin" {
+              role_id             = "29232cdf-9323-42fd-ade2-1d097af3e4de"
+              principal_object_id = azuread_user.member_admin.object_id
+            }
+            ```
+    refs:
+      - url: https://learn.microsoft.com/en-us/entra/external-id/what-is-b2b
+        title: B2B collaboration overview
+      - url: https://learn.microsoft.com/en-us/entra/identity/role-based-access-control/best-practices
+        title: Best practices for Microsoft Entra roles
+  # No Terraform variants: whether an account is disabled and which roles it holds are read from the live directory.
+  - uid: mondoo-m365-security-disabled-users-hold-no-directory-roles
+    title: Ensure disabled users hold no directory roles
+    filters: |
+      asset.platform == "microsoft365"
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-07
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-308-a-3-ii-c-workforce-security-establish-termination-procedures
+      compliance/iso-27001-2022: iso-27001-2022-a-5-18
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-2
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-8-2-5
+      compliance/soc2-2017: soc2-control-cc6-2-2
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    mql: |
+      microsoft.users.list.where(accountEnabled == false).all(
+        directoryRoleAssignments.length == 0
+      )
+    docs:
+      desc: |
+        This check verifies that accounts blocked from signing in no longer hold Microsoft Entra directory roles.
+
+        Blocking sign-in on a user, shown as **Account enabled** set to **No** under **Entra ID > Users**, is a common first step when someone leaves, but it leaves the user's role assignments in place. This check requires every disabled user to have no active role assignment, directly or through a role-assignable group.
+
+        **Why this matters**
+
+        A disabled account with a role is privilege waiting to be switched back on. Any administrator who can enable users, including a compromised helpdesk account, can re-enable it and sign in with the role already attached, and the event looks like a routine account change rather than a privilege grant.
+
+        It also hides who holds a role. Reviews of administrator accounts skip disabled users, so a role parked on one is never reviewed.
+
+        Remove the role assignments as part of offboarding, before or together with blocking sign-in.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the Microsoft Entra admin center at `https://entra.microsoft.com`.
+        2. Go to **Entra ID** > **Users** and filter by **Account enabled** equal to **No**.
+        3. For each user, open **Assigned roles**.
+
+        A passing tenant has no disabled user with an assigned role. A failing tenant has at least one.
+
+        ### Audit via PowerShell
+
+        ```powershell
+        Connect-MgGraph -Scopes "User.Read.All", "RoleManagement.Read.Directory"
+        Get-MgUser -Filter "accountEnabled eq false" -All | ForEach-Object {
+            $roles = Get-MgUserTransitiveMemberOfAsDirectoryRole -UserId $_.Id -All
+            if ($roles) { [pscustomobject]@{ User = $_.UserPrincipalName; Roles = $roles.DisplayName -join ', ' } }
+        }
+        ```
+
+        A passing tenant returns nothing. A failing tenant lists each disabled user and its roles.
+      remediation:
+        - id: console
+          desc: |
+            **To remove directory roles from disabled users using the Microsoft Entra admin center:**
+
+            1. Sign in to the [Microsoft Entra admin center](https://entra.microsoft.com).
+            2. Go to **Entra ID** > **Users** and open the disabled user.
+            3. Select **Assigned roles**, select each role, and choose **Remove assignments**.
+            4. Remove the user from any role-assignable group that grants a role.
+        - id: powershell
+          desc: |
+            **To remove a disabled user's directory role assignments using Microsoft Graph PowerShell:**
+
+            ```powershell
+            Connect-MgGraph -Scopes "RoleManagement.ReadWrite.Directory"
+            Get-MgRoleManagementDirectoryRoleAssignment -Filter "principalId eq '<user-object-id>'" -All |
+                ForEach-Object { Remove-MgRoleManagementDirectoryRoleAssignment -UnifiedRoleAssignmentId $_.Id }
+            ```
+        - id: terraform
+          desc: |
+            **To remove a disabled user's directory role using Terraform:**
+
+            Delete the `azuread_directory_role_assignment` resources whose `principal_object_id` is the disabled user. When the user is managed as `azuread_user` with `account_enabled = false`, remove its role assignments in the same change.
+    refs:
+      - url: https://learn.microsoft.com/en-us/entra/identity/role-based-access-control/manage-roles-portal
+        title: Assign Microsoft Entra roles
+  # No Terraform variants: sign-in activity is runtime telemetry with no configuration counterpart.
+  - uid: mondoo-m365-security-privileged-users-recent-sign-in
+    title: Ensure users holding privileged directory roles have signed in recently
+    filters: |
+      asset.platform == "microsoft365"
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-08
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-308-a-4-ii-c-information-access-management-access-establishment-and-modification
+      compliance/iso-27001-2022: iso-27001-2022-a-8-2
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-2
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-8-2-6
+      compliance/soc2-2017: soc2-control-cc6-2-3
+      compliance/vda-isa-5: vda-isa-5-4-1-3
+    props:
+      - uid: mondooM365SecurityPrivilegedUserInactiveDays
+        title: Days without an interactive sign-in after which a privileged user is considered dormant
+        mql: |
+          return 90
+    mql: |
+      microsoft.users.list.where(
+        directoryRoleAssignments.any(roleDefinition.isPrivileged)
+      ).all(
+        signInActivity.lastSignInDateTime != empty &&
+        parse.date(signInActivity.lastSignInDateTime) > time.now - props.mondooM365SecurityPrivilegedUserInactiveDays * time.day
+      )
+    docs:
+      desc: |
+        This check verifies that every account holding a privileged Microsoft Entra role is in active use.
+
+        Microsoft Entra records each user's last interactive sign-in, shown under **Entra ID > Users** in the **Last sign-in** column and on the user's **Sign-in logs**. This check looks at every user holding a role Microsoft marks as privileged, as an active assignment given directly or through a role-assignable group, and requires an interactive sign-in within the last 90 days. A user who has never signed in fails. The period is configurable, and the data requires a Microsoft Entra ID P1 or P2 license.
+
+        **Why this matters**
+
+        An administrator account nobody uses is an administrator account nobody would notice being used. Its owner does not see the multifactor prompts or the new devices, and its sign-ins stand out to no one because nobody expects any.
+
+        Dormant privileged accounts are usually left over: a former project, a consultant who finished, a test account given a role. Each keeps the full power of its role while protecting it with whatever was configured when it was last used.
+
+        Remove the role from accounts that no longer need it, or disable the account. Emergency access accounts are meant to be dormant; track them separately and alert on their sign-ins instead.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the Microsoft Entra admin center at `https://entra.microsoft.com`.
+        2. Go to **Entra ID** > **Roles & admins** and note the users holding each role marked **PRIVILEGED**.
+        3. Go to **Entra ID** > **Users**, add the **Last sign-in** column, and find those users.
+
+        A passing tenant shows a sign-in within the last 90 days for each of them. A failing tenant has one older than that, or none.
+
+        ### Audit via PowerShell
+
+        ```powershell
+        Connect-MgGraph -Scopes "User.Read.All", "AuditLog.Read.All", "RoleManagement.Read.Directory"
+        $cutoff = (Get-Date).AddDays(-90)
+        $ids = Get-MgBetaRoleManagementDirectoryRoleDefinition -Filter "isPrivileged eq true" -All | ForEach-Object {
+            (Get-MgRoleManagementDirectoryRoleAssignment -Filter "roleDefinitionId eq '$($_.Id)'" -All).PrincipalId
+        } | Sort-Object -Unique
+        foreach ($id in $ids) {
+            $u = Get-MgUser -UserId $id -Property UserPrincipalName,SignInActivity -ErrorAction SilentlyContinue
+            if ($u -and ($null -eq $u.SignInActivity.LastSignInDateTime -or $u.SignInActivity.LastSignInDateTime -lt $cutoff)) {
+                $u.UserPrincipalName
+            }
+        }
+        ```
+
+        A passing tenant returns nothing. A failing tenant lists the dormant privileged users. The script covers direct assignments; review the members of groups holding a privileged role the same way.
+      remediation:
+        - id: console
+          desc: |
+            **To remove privileged roles from dormant accounts using the Microsoft Entra admin center:**
+
+            1. Sign in to the [Microsoft Entra admin center](https://entra.microsoft.com).
+            2. Go to **Entra ID** > **Users** and open the dormant user.
+            3. Select **Assigned roles** and remove each privileged role the user no longer needs.
+            4. If the account is no longer needed at all, set **Account enabled** to **No** and delete it after your retention period.
+        - id: powershell
+          desc: |
+            **To remove a dormant user's privileged role assignments using Microsoft Graph PowerShell:**
+
+            ```powershell
+            Connect-MgGraph -Scopes "RoleManagement.ReadWrite.Directory"
+            Get-MgRoleManagementDirectoryRoleAssignment -Filter "principalId eq '<user-object-id>'" -All |
+                ForEach-Object { Remove-MgRoleManagementDirectoryRoleAssignment -UnifiedRoleAssignmentId $_.Id }
+            ```
+        # No Terraform remediation: whether an account signs in is operational activity, not configuration Terraform manages.
+    refs:
+      - url: https://learn.microsoft.com/en-us/entra/identity/monitoring-health/howto-manage-inactive-user-accounts
+        title: How to manage inactive user accounts
+  # No Terraform variants: whether an account is synchronized from on-premises Active Directory is decided by Microsoft Entra Connect, not by a Terraform resource.
+  - uid: mondoo-m365-security-privileged-users-cloud-only
+    title: Ensure users holding privileged directory roles are cloud-only accounts
+    filters: |
+      asset.platform == "microsoft365"
+    impact: 75
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-10
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-2
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-2
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-6
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a07
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: soc2-control-cc6-1-8
+      compliance/vda-isa-5: vda-isa-5-4-1-2
+    mql: |
+      microsoft.users.list.where(
+        directoryRoleAssignments.any(roleDefinition.isPrivileged)
+      ).all(onPremisesSyncEnabled != true)
+    docs:
+      desc: |
+        This check verifies that accounts holding privileged Microsoft Entra roles exist only in the cloud and are not synchronized from on-premises Active Directory.
+
+        Microsoft Entra Connect and Cloud Sync copy users from Active Directory into Microsoft Entra. A synchronized user shows **On-premises sync enabled** set to **Yes** under **Entra ID > Users**, and its password and attributes are controlled from Active Directory. This check requires every user holding a role Microsoft marks as privileged, directly or through a role-assignable group, to be a cloud-only account.
+
+        **Why this matters**
+
+        A synchronized administrator ties the security of the cloud tenant to the on-premises domain. An attacker who compromises Active Directory, often the softer target, can reset that user's password on-premises and let synchronization carry it to the cloud, gaining the cloud role without touching any cloud defense.
+
+        A cloud-only administrator account breaks that path. The domain can fall without handing over the tenant, which is the separation incident responders need when the on-premises environment is the one under attack.
+
+        Create a dedicated cloud-only account for each administrator, assign the privileged roles to it, and remove them from the synchronized account.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the Microsoft Entra admin center at `https://entra.microsoft.com`.
+        2. Go to **Entra ID** > **Roles & admins** and note the users holding each role marked **PRIVILEGED**.
+        3. Go to **Entra ID** > **Users**, add the **On-premises sync enabled** column, and find those users.
+
+        A passing tenant shows **No** for each of them. A failing tenant shows **Yes** for at least one.
+
+        ### Audit via PowerShell
+
+        ```powershell
+        Connect-MgGraph -Scopes "User.Read.All", "RoleManagement.Read.Directory"
+        $ids = Get-MgBetaRoleManagementDirectoryRoleDefinition -Filter "isPrivileged eq true" -All | ForEach-Object {
+            (Get-MgRoleManagementDirectoryRoleAssignment -Filter "roleDefinitionId eq '$($_.Id)'" -All).PrincipalId
+        } | Sort-Object -Unique
+        foreach ($id in $ids) {
+            $u = Get-MgUser -UserId $id -Property UserPrincipalName,OnPremisesSyncEnabled -ErrorAction SilentlyContinue
+            if ($u.OnPremisesSyncEnabled) { $u.UserPrincipalName }
+        }
+        ```
+
+        A passing tenant returns nothing. A failing tenant lists the synchronized privileged users.
+      remediation:
+        - id: console
+          desc: |
+            **To move privileged roles to cloud-only accounts using the Microsoft Entra admin center:**
+
+            1. Sign in to the [Microsoft Entra admin center](https://entra.microsoft.com).
+            2. Go to **Entra ID** > **Users** > **New user** > **Create new user** and create an account in an `onmicrosoft.com` or cloud-managed domain for the administrator.
+            3. Assign the privileged roles to the new account under **Assigned roles**.
+            4. Open the synchronized account and remove the same roles.
+        - id: powershell
+          desc: |
+            **To create a cloud-only administrator account using Microsoft Graph PowerShell:**
+
+            ```powershell
+            Connect-MgGraph -Scopes "User.ReadWrite.All", "RoleManagement.ReadWrite.Directory"
+            $admin = New-MgUser -DisplayName "Admin - <name>" -UserPrincipalName "admin-<name>@<tenant>.onmicrosoft.com" `
+                -MailNickname "admin-<name>" -AccountEnabled `
+                -PasswordProfile @{ ForceChangePasswordNextSignIn = $true; Password = "<temporary-password>" }
+            New-MgRoleManagementDirectoryRoleAssignment -PrincipalId $admin.Id -RoleDefinitionId "<role-definition-id>" -DirectoryScopeId "/"
+            ```
+
+            Then remove the role from the synchronized account with `Remove-MgRoleManagementDirectoryRoleAssignment`.
+        - id: terraform
+          desc: |
+            **To assign privileged roles to cloud-only accounts using Terraform:**
+
+            Create the administrator as an `azuread_user`, which is always cloud-only, and point the role assignment at it:
+
+            ```hcl
+            resource "azuread_user" "admin" {
+              user_principal_name = "admin-jane@contoso.onmicrosoft.com"
+              display_name        = "Admin - Jane"
+              password            = var.initial_password
+            }
+
+            resource "azuread_directory_role_assignment" "admin_user_admin" {
+              role_id             = "fe930be7-5e62-47db-91af-98c3a49a38b1"
+              principal_object_id = azuread_user.admin.object_id
+            }
+            ```
+    refs:
+      - url: https://learn.microsoft.com/en-us/entra/architecture/protect-m365-from-on-premises-attacks
+        title: Protecting Microsoft 365 from on-premises attacks
+  # No Terraform variants: the check covers every service principal's role holdings across the tenant, which no single azuread resource describes.
+  - uid: mondoo-m365-security-service-principals-no-privileged-directory-roles
+    title: Ensure service principals hold no privileged directory roles
+    filters: |
+      asset.platform == "microsoft365"
+    impact: 90
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-2
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-7-2-5
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    props:
+      - uid: mondooM365SecurityAllowedServicePrincipalRoles
+        title: Template IDs of privileged directory roles a service principal may hold, such as Global Reader for a read-only scanner
+        mql: |
+          return ["f2ef992c-3afb-46b9-b7cf-a126ee74c451"]
+    mql: |
+      microsoft.serviceprincipals.all(
+        directoryRoleAssignments.where(roleDefinition.isPrivileged).all(
+          roleDefinition.templateId.in(props.mondooM365SecurityAllowedServicePrincipalRoles)
+        )
+      )
+    docs:
+      desc: |
+        This check verifies that no application or workload identity holds a privileged Microsoft Entra role.
+
+        Service principals, the identities of applications and managed identities in your tenant, can be assigned directory roles like users. Their roles are listed under **Entra ID > Enterprise apps**, on the application's **Roles and administrators** page. This check requires that no service principal holds a role Microsoft marks as privileged, directly or through a role-assignable group, other than roles on an allowlist. The allowlist starts with Global Reader, the read-only role security scanners commonly use, and is configurable.
+
+        **Why this matters**
+
+        A privileged service principal is a tenant administrator that never signs in with multifactor authentication. It authenticates with a secret or certificate, often stored in a pipeline, a configuration file, or a vendor's systems, and anyone holding that credential holds the role.
+
+        Conditional Access for users does not apply to it, its sign-ins are not reviewed the way an administrator's are, and owners of the application can add new credentials to it. Attackers who reach a tenant look for these identities first, because they turn one leaked secret into persistent administrative access.
+
+        Give applications Microsoft Graph application permissions scoped to the task instead of directory roles, and review any remaining role on a service principal as carefully as a Global Administrator.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the Microsoft Entra admin center at `https://entra.microsoft.com`.
+        2. Go to **Entra ID** > **Roles & admins**.
+        3. For each role marked **PRIVILEGED**, open **Active assignments** and look for entries of type **ServicePrincipal**.
+
+        A passing tenant has no service principal holding a privileged role other than Global Reader. A failing tenant has at least one.
+
+        ### Audit via PowerShell
+
+        ```powershell
+        Connect-MgGraph -Scopes "RoleManagement.Read.Directory", "Application.Read.All"
+        foreach ($role in Get-MgBetaRoleManagementDirectoryRoleDefinition -Filter "isPrivileged eq true" -All) {
+            if ($role.TemplateId -eq 'f2ef992c-3afb-46b9-b7cf-a126ee74c451') { continue }
+            foreach ($a in Get-MgRoleManagementDirectoryRoleAssignment -Filter "roleDefinitionId eq '$($role.Id)'" -All) {
+                $sp = Get-MgServicePrincipal -ServicePrincipalId $a.PrincipalId -ErrorAction SilentlyContinue
+                if ($sp) { [pscustomobject]@{ App = $sp.DisplayName; Role = $role.DisplayName } }
+            }
+        }
+        ```
+
+        A passing tenant returns nothing. A failing tenant lists each service principal and privileged role.
+      remediation:
+        - id: console
+          desc: |
+            **To remove privileged roles from service principals using the Microsoft Entra admin center:**
+
+            1. Sign in to the [Microsoft Entra admin center](https://entra.microsoft.com).
+            2. Go to **Entra ID** > **Roles & admins** and open the privileged role.
+            3. Select the service principal under **Active assignments** and choose **Remove assignments**.
+            4. Grant the application the specific Microsoft Graph application permissions it needs under **App registrations** > **API permissions** instead.
+        - id: powershell
+          desc: |
+            **To remove a service principal's privileged role using Microsoft Graph PowerShell:**
+
+            ```powershell
+            Connect-MgGraph -Scopes "RoleManagement.ReadWrite.Directory"
+            Get-MgRoleManagementDirectoryRoleAssignment -Filter "principalId eq '<service-principal-object-id>'" -All |
+                ForEach-Object { Remove-MgRoleManagementDirectoryRoleAssignment -UnifiedRoleAssignmentId $_.Id }
+            ```
+        - id: terraform
+          desc: |
+            **To remove a service principal's privileged role using Terraform:**
+
+            Delete the `azuread_directory_role_assignment` resource whose `principal_object_id` is the service principal, and grant a scoped application permission with `azuread_app_role_assignment` instead:
+
+            ```hcl
+            resource "azuread_app_role_assignment" "read_users" {
+              app_role_id         = azuread_service_principal.msgraph.app_role_ids["User.Read.All"]
+              principal_object_id = azuread_service_principal.app.object_id
+              resource_object_id  = azuread_service_principal.msgraph.object_id
+            }
+            ```
+    refs:
+      - url: https://learn.microsoft.com/en-us/entra/identity/role-based-access-control/privileged-roles-permissions
+        title: Privileged roles and permissions in Microsoft Entra ID
+      - url: https://learn.microsoft.com/en-us/entra/workload-id/workload-identities-overview
+        title: What are workload identities
+  # No Terraform variants: plan and state record group members only as object IDs, which do not say whether a member is a user or a service principal.
+  - uid: mondoo-m365-security-role-assignable-groups-no-service-principal-members
+    title: Ensure role-assignable groups have no service principal members
+    filters: |
+      asset.platform == "microsoft365"
+    impact: 85
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-2
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-7-2-5
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    mql: |
+      microsoft.groups.list.where(isAssignableToRole).all(
+        transitiveMemberServicePrincipals.length == 0
+      )
+    docs:
+      desc: |
+        This check verifies that no application identity holds a directory role through membership in a role-assignable group.
+
+        A role-assignable group is a Microsoft Entra group created with **Microsoft Entra roles can be assigned to the group** set to **Yes**. Every member holds the roles assigned to the group. Members can be users and service principals, which are listed under **Entra ID > Groups**, on the group's **Members** page. This check requires that no role-assignable group has a service principal among its members, directly or through a nested group.
+
+        **Why this matters**
+
+        Group membership is an indirect way to give an application a directory role, and it is easy to miss. Reviews of a service principal's roles look at its own assignments, while the group shows only that its members hold a role, so a privileged application in a group appears in neither list.
+
+        The application then authenticates with a secret or certificate, outside the multifactor and Conditional Access controls that protect the human members, and anyone with that credential holds every role the group carries.
+
+        Keep role-assignable groups for people, and give applications only the scoped permissions they need.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the Microsoft Entra admin center at `https://entra.microsoft.com`.
+        2. Go to **Entra ID** > **Groups** and filter for groups where **Microsoft Entra roles can be assigned to the group** is **Yes**.
+        3. Open each group's **Members** and look for members of type **Service principal**, including inside nested groups.
+
+        A passing tenant has none. A failing tenant has at least one.
+
+        ### Audit via PowerShell
+
+        ```powershell
+        Connect-MgGraph -Scopes "Group.Read.All", "GroupMember.Read.All"
+        Get-MgGroup -Filter "isAssignableToRole eq true" -All | ForEach-Object {
+            $sps = Get-MgGroupTransitiveMemberAsServicePrincipal -GroupId $_.Id -All
+            if ($sps) { [pscustomobject]@{ Group = $_.DisplayName; ServicePrincipals = $sps.DisplayName -join ', ' } }
+        }
+        ```
+
+        A passing tenant returns nothing. A failing tenant lists each group and its service principal members.
+      remediation:
+        - id: console
+          desc: |
+            **To remove service principals from role-assignable groups using the Microsoft Entra admin center:**
+
+            1. Sign in to the [Microsoft Entra admin center](https://entra.microsoft.com).
+            2. Go to **Entra ID** > **Groups** and open the role-assignable group.
+            3. Select **Members**, select the service principal, and choose **Remove**.
+        - id: powershell
+          desc: |
+            **To remove a service principal from a role-assignable group using Microsoft Graph PowerShell:**
+
+            ```powershell
+            Connect-MgGraph -Scopes "GroupMember.ReadWrite.All"
+            Remove-MgGroupMemberByRef -GroupId "<group-object-id>" -DirectoryObjectId "<service-principal-object-id>"
+            ```
+        - id: terraform
+          desc: |
+            **To keep service principals out of a role-assignable group using Terraform:**
+
+            Remove the `azuread_group_member` resource that adds the service principal, and list only user members on the group:
+
+            ```hcl
+            resource "azuread_group" "helpdesk_admins" {
+              display_name       = "Helpdesk Admins"
+              security_enabled   = true
+              assignable_to_role = true
+              members            = [azuread_user.alice.object_id, azuread_user.bob.object_id]
+            }
+            ```
+    refs:
+      - url: https://learn.microsoft.com/en-us/entra/identity/role-based-access-control/groups-concept
+        title: Use Microsoft Entra groups to manage role assignments
