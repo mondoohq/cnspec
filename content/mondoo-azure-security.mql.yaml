@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-azure-security
     name: Mondoo Microsoft Azure Security
-    version: 11.0.1
+    version: 11.1.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -42,11 +42,21 @@ policies:
       - title: Identity & Access
         docs:
           desc: |
-            Custom role definitions and time-bound Privileged Identity Management assignments.
+            Custom role definitions, time-bound Privileged Identity Management assignments, subscription Owners, Azure Lighthouse delegations, and the Azure roles held by service principals, managed identities, guests, disabled users, and deleted principals.
         checks:
           - uid: mondoo-azure-security-rbac-custom-roles-least-privilege
           - uid: mondoo-azure-security-rbac-no-custom-role-creation
           - uid: mondoo-azure-security-pim-active-assignments-time-bound
+          - uid: mondoo-azure-security-rbac-service-principals-no-privilege-escalating-roles
+          - uid: mondoo-azure-security-rbac-guests-no-privileged-roles
+          - uid: mondoo-azure-security-rbac-disabled-users-no-role-assignments
+          - uid: mondoo-azure-security-rbac-no-assignments-to-deleted-principals
+          - uid: mondoo-azure-security-rbac-external-tenant-apps-no-privilege-escalating-roles
+          - uid: mondoo-azure-security-resource-identities-no-privilege-escalating-roles
+          - uid: mondoo-azure-security-managed-identities-unattached-hold-no-roles
+          - uid: mondoo-azure-security-managed-identities-no-full-control-roles
+          - uid: mondoo-azure-security-subscription-owners-limited
+          - uid: mondoo-azure-security-lighthouse-delegations-no-user-access-administrator
       - title: Microsoft Defender for Cloud
         docs:
           desc: |
@@ -56066,4 +56076,1157 @@ queries:
     mql: |
       bicep.resources.where(type == "Microsoft.App/containerApps").all(
         body["identity"]["type"] != empty && body["identity"]["type"] != "None"
+      )
+  # No Terraform variants: whether a principal is a service principal is resolved by Azure from its ID; `principal_type` on azurerm_role_assignment is optional and usually omitted.
+  - uid: mondoo-azure-security-rbac-service-principals-no-privilege-escalating-roles
+    title: Ensure service principals hold no role that can grant Azure roles
+    impact: 90
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-2
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-7-2-5
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    props:
+      - uid: mondooAzureSecurityAllowedPrivilegedServicePrincipals
+        title: Object IDs of service principals and managed identities allowed to hold a role that can grant Azure roles
+        mql: |
+          return [""]
+    variants:
+      - uid: mondoo-azure-security-rbac-service-principals-no-privilege-escalating-roles-azure
+        tags:
+          mondoo.com/filter-title: Azure Subscription
+          mondoo.com/filter-icon: azure
+    docs:
+      desc: |
+        This check verifies that no application or managed identity in the subscription can grant Azure roles.
+
+        A role can grant other roles when it allows `Microsoft.Authorization/roleAssignments/write`, `Microsoft.Authorization/roleDefinitions/write`, or `Microsoft.Authorization/elevateAccess/action`. Owner, User Access Administrator, and Role Based Access Control Administrator do, as does any custom role that reaches those actions. Role assignments are listed on the subscription under **Access control (IAM)** > **Role assignments**, where service principals and managed identities appear with the type **App** or **Managed identity**. This check requires that no service principal or managed identity holds such a role at any scope the subscription inherits or contains, other than principals on a configurable allowlist of object IDs.
+
+        **Why this matters**
+
+        A workload identity that can write role assignments can make itself, or anything else, Owner. It authenticates with a secret, a certificate, a federated token from a CI system, or the managed identity endpoint of the resource it runs on, and none of these sits behind the multifactor authentication and Conditional Access that protect human administrators.
+
+        Pipelines are the usual holders: a deployment service principal given Owner so it can assign roles to what it deploys. Whoever can change the pipeline definition, or read its secret, then owns the subscription.
+
+        Microsoft Defender for Cloud creates managed identities with Role Based Access Control Administrator for some of its plans. They are reported by this check; review them and add their object IDs to the allowlist if you accept them. For pipelines, prefer Role Based Access Control Administrator with a condition that limits which roles it can assign.
+      audit: |
+        ### Audit via Azure CLI
+
+        1. List the role assignments of service principals and managed identities in the subscription:
+
+        ```bash
+        az role assignment list --all --include-inherited \
+          --query "[?principalType=='ServicePrincipal'].{principal:principalName, role:roleDefinitionName, scope:scope, condition:condition}" \
+          --output table
+        ```
+
+        2. Review the result for Owner, User Access Administrator, Role Based Access Control Administrator without a condition, and custom roles that allow `Microsoft.Authorization/roleAssignments/write`.
+
+        A passing subscription has no such assignment. A failing subscription has at least one.
+
+        ### Audit via Azure Portal
+
+        1. Open the subscription and select **Access control (IAM)** > **Role assignments**.
+        2. Filter **Type** to **App** and **Managed identity** and review the roles listed.
+      remediation:
+        - id: portal
+          desc: |
+            **To remove the role assignment using the Azure portal:**
+
+            1. Sign in to the [Azure portal](https://portal.azure.com) and open the subscription.
+            2. Select **Access control (IAM)** > **Role assignments**.
+            3. Find the assignment for the service principal or managed identity, select it, and choose **Delete**.
+            4. If the principal still needs access, add a narrower role at the smallest scope that covers the work.
+        - id: cli
+          desc: |
+            **To remove the role assignment using the Azure CLI:**
+
+            ```bash
+            az role assignment list --all --assignee <service-principal-object-id> --output table
+            az role assignment delete --assignee <service-principal-object-id> --role "<role name>" --scope "<scope>"
+            ```
+        - id: terraform
+          desc: |
+            **To remove the role assignment using Terraform:**
+
+            Delete the `azurerm_role_assignment` resource that grants the role. Where access is still needed, grant a narrower role at a narrower scope:
+
+            ```hcl
+            resource "azurerm_role_assignment" "reader" {
+              scope                = azurerm_resource_group.app.id
+              role_definition_name = "Reader"
+              principal_id         = var.principal_id
+            }
+            ```
+        - id: bicep
+          desc: |
+            **To remove the role assignment using Bicep:**
+
+            Remove the `Microsoft.Authorization/roleAssignments` resource that grants the role, and deploy a narrower one where access is still needed:
+
+            ```bicep
+            param principalId string
+
+            resource readerAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+              name: guid(resourceGroup().id, principalId, 'acdd72a7-3385-48ef-bd42-f606fba81ae7')
+              properties: {
+                roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'acdd72a7-3385-48ef-bd42-f606fba81ae7')
+                principalId: principalId
+              }
+            }
+            ```
+    refs:
+      - url: https://learn.microsoft.com/en-us/azure/role-based-access-control/role-assignments-portal
+        title: Assign Azure roles using the Azure portal
+      - url: https://learn.microsoft.com/en-us/azure/role-based-access-control/delegate-role-assignments-overview
+        title: Delegate Azure role assignment management to others with conditions
+  - uid: mondoo-azure-security-rbac-service-principals-no-privilege-escalating-roles-azure
+    filters: asset.platform == "azure"
+    mql: |
+      azure.subscription.iam.principals.where(
+        principalType == "servicePrincipal" &&
+        id.in(props.mondooAzureSecurityAllowedPrivilegedServicePrincipals) == false
+      ).all(
+        roleAssignments.none(role.isPrivilegeEscalating)
+      )
+  # No Terraform variants: whether a user is a guest is a Microsoft Entra attribute of the account, not part of the role assignment.
+  - uid: mondoo-azure-security-rbac-guests-no-privileged-roles
+    title: Ensure guest users hold no Owner, Contributor, or role-granting Azure role
+    impact: 85
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-2
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-6
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-7-2-2
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    variants:
+      - uid: mondoo-azure-security-rbac-guests-no-privileged-roles-azure
+        tags:
+          mondoo.com/filter-title: Azure Subscription
+          mondoo.com/filter-icon: azure
+    docs:
+      desc: |
+        This check verifies that accounts from outside the organization cannot change or take over the subscription.
+
+        A guest is a Microsoft Entra B2B user invited from another organization or a personal account. Guests appear in the subscription's **Access control (IAM)** > **Role assignments** with their email address and the user type **Guest** in Microsoft Entra ID. This check requires that no guest holds Contributor or a role that can grant roles, such as Owner or User Access Administrator, at any scope the subscription inherits or contains.
+
+        **Why this matters**
+
+        A guest's sign-in, multifactor methods, and account lifecycle are controlled by its home organization. When the person leaves that organization, or their home account is compromised, nothing in your tenant changes, and the role on your subscription stays live.
+
+        Contributor lets a guest deploy and reconfigure every resource, read keys and connection strings through management operations, and run code on virtual machines. Owner or User Access Administrator adds the ability to grant all of that to anyone.
+
+        Give contractors and partners member accounts that you provision and remove, or delegate through Azure Lighthouse so the access is tied to an agreement you can revoke.
+      audit: |
+        ### Audit via Azure CLI
+
+        1. List guest users in the tenant and check their role assignments in the subscription:
+
+        ```bash
+        for id in $(az ad user list --filter "userType eq 'Guest'" --query "[].id" --output tsv); do
+          az role assignment list --all --include-inherited --assignee "$id" \
+            --query "[?roleDefinitionName=='Owner' || roleDefinitionName=='Contributor' || roleDefinitionName=='User Access Administrator' || roleDefinitionName=='Role Based Access Control Administrator'].{principal:principalName, role:roleDefinitionName, scope:scope}" \
+            --output table
+        done
+        ```
+
+        A passing subscription returns no rows. A failing subscription lists a guest with one of those roles.
+
+        ### Audit via Azure Portal
+
+        1. Open the subscription and select **Access control (IAM)** > **Role assignments**.
+        2. Look for users whose sign-in name contains `#EXT#` or who are listed as guests in Microsoft Entra ID, holding Owner, Contributor, or an access administration role.
+      remediation:
+        - id: portal
+          desc: |
+            **To remove the role assignment using the Azure portal:**
+
+            1. Sign in to the [Azure portal](https://portal.azure.com) and open the subscription.
+            2. Select **Access control (IAM)** > **Role assignments**.
+            3. Find the assignment for the guest, select it, and choose **Delete**.
+            4. If the principal still needs access, add a narrower role at the smallest scope that covers the work.
+        - id: cli
+          desc: |
+            **To remove the role assignment using the Azure CLI:**
+
+            ```bash
+            az role assignment list --all --assignee <guest-object-id> --output table
+            az role assignment delete --assignee <guest-object-id> --role "<role name>" --scope "<scope>"
+            ```
+        - id: terraform
+          desc: |
+            **To remove the role assignment using Terraform:**
+
+            Delete the `azurerm_role_assignment` resource that grants the role. Where access is still needed, grant a narrower role at a narrower scope:
+
+            ```hcl
+            resource "azurerm_role_assignment" "reader" {
+              scope                = azurerm_resource_group.app.id
+              role_definition_name = "Reader"
+              principal_id         = var.principal_id
+            }
+            ```
+        - id: bicep
+          desc: |
+            **To remove the role assignment using Bicep:**
+
+            Remove the `Microsoft.Authorization/roleAssignments` resource that grants the role, and deploy a narrower one where access is still needed:
+
+            ```bicep
+            param principalId string
+
+            resource readerAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+              name: guid(resourceGroup().id, principalId, 'acdd72a7-3385-48ef-bd42-f606fba81ae7')
+              properties: {
+                roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'acdd72a7-3385-48ef-bd42-f606fba81ae7')
+                principalId: principalId
+              }
+            }
+            ```
+    refs:
+      - url: https://learn.microsoft.com/en-us/entra/external-id/what-is-b2b
+        title: B2B collaboration overview
+      - url: https://learn.microsoft.com/en-us/azure/lighthouse/overview
+        title: What is Azure Lighthouse
+  - uid: mondoo-azure-security-rbac-guests-no-privileged-roles-azure
+    filters: asset.platform == "azure"
+    mql: |
+      azure.subscription.iam.principals.where(userType == "Guest").all(
+        roleAssignments.none(role.isPrivilegeEscalating || role.name == "Contributor")
+      )
+  # No Terraform variants: whether an account is disabled is a Microsoft Entra attribute, not part of the role assignment.
+  - uid: mondoo-azure-security-rbac-disabled-users-no-role-assignments
+    title: Ensure disabled user accounts hold no Azure role assignments
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-07
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-308-a-3-ii-c-workforce-security-establish-termination-procedures
+      compliance/iso-27001-2022: iso-27001-2022-a-5-18
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-2
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-8-2-5
+      compliance/soc2-2017: soc2-control-cc6-2-2
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    variants:
+      - uid: mondoo-azure-security-rbac-disabled-users-no-role-assignments-azure
+        tags:
+          mondoo.com/filter-title: Azure Subscription
+          mondoo.com/filter-icon: azure
+    docs:
+      desc: |
+        This check verifies that accounts blocked from signing in no longer hold Azure roles in the subscription.
+
+        Blocking sign-in, shown as **Account enabled** set to **No** on the user in Microsoft Entra ID, is a common first step when someone leaves. It leaves their Azure role assignments in place. This check looks at every user holding a role assignment at a scope the subscription inherits or contains and requires that none of them is disabled.
+
+        **Why this matters**
+
+        A disabled account with a role is access waiting to be switched back on. Anyone who can enable users in Microsoft Entra ID, including a compromised helpdesk account, can re-enable it and sign in with the Azure role already attached, an event that looks like a routine account change rather than a grant of access to production.
+
+        It also hides who has access. Reviews of the subscription's role assignments skip people known to have left, so the assignment is never revisited.
+
+        Remove Azure role assignments during offboarding, together with blocking sign-in.
+      audit: |
+        ### Audit via Azure CLI
+
+        ```bash
+        for id in $(az ad user list --filter "accountEnabled eq false" --query "[].id" --output tsv); do
+          az role assignment list --all --include-inherited --assignee "$id" \
+            --query "[].{principal:principalName, role:roleDefinitionName, scope:scope}" --output table
+        done
+        ```
+
+        A passing subscription returns no rows. A failing subscription lists a disabled user with a role.
+
+        ### Audit via Azure Portal
+
+        1. Open the subscription and select **Access control (IAM)** > **Role assignments**.
+        2. For each user listed, open the user in Microsoft Entra ID and check **Account enabled**.
+      remediation:
+        - id: portal
+          desc: |
+            **To remove the role assignment using the Azure portal:**
+
+            1. Sign in to the [Azure portal](https://portal.azure.com) and open the subscription.
+            2. Select **Access control (IAM)** > **Role assignments**.
+            3. Find the assignment for the disabled user, select it, and choose **Delete**.
+            4. If the principal still needs access, add a narrower role at the smallest scope that covers the work.
+        - id: cli
+          desc: |
+            **To remove the role assignment using the Azure CLI:**
+
+            ```bash
+            az role assignment list --all --assignee <user-object-id> --output table
+            az role assignment delete --assignee <user-object-id> --role "<role name>" --scope "<scope>"
+            ```
+        - id: terraform
+          desc: |
+            **To remove a disabled user's role assignments using Terraform:**
+
+            Delete every `azurerm_role_assignment` resource whose `principal_id` is the disabled user, in the same change that sets `account_enabled = false` on its `azuread_user`.
+        - id: bicep
+          desc: |
+            **To remove a disabled user's role assignments using Bicep:**
+
+            Remove every `Microsoft.Authorization/roleAssignments` resource whose `principalId` is the disabled user and redeploy. In complete deployment mode Azure deletes the assignments that are no longer declared; in incremental mode delete them with `az role assignment delete`.
+    refs:
+      - url: https://learn.microsoft.com/en-us/azure/role-based-access-control/role-assignments-remove
+        title: Remove Azure role assignments
+  - uid: mondoo-azure-security-rbac-disabled-users-no-role-assignments-azure
+    filters: asset.platform == "azure"
+    mql: |
+      azure.subscription.iam.principals.where(principalType == "user").none(
+        accountEnabled == false
+      )
+  # No Terraform variants: whether the principal still exists is only known by resolving its ID against Microsoft Entra ID at run time.
+  - uid: mondoo-azure-security-rbac-no-assignments-to-deleted-principals
+    title: Ensure no Azure role assignment names a deleted principal
+    impact: 60
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-07
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-308-a-4-ii-c-information-access-management-access-establishment-and-modification
+      compliance/iso-27001-2022: iso-27001-2022-a-5-18
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-2
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: soc2-control-cc6-2-2
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    variants:
+      - uid: mondoo-azure-security-rbac-no-assignments-to-deleted-principals-azure
+        tags:
+          mondoo.com/filter-title: Azure Subscription
+          mondoo.com/filter-icon: azure
+    docs:
+      desc: |
+        This check verifies that every Azure role assignment belongs to an identity that still exists.
+
+        When a user, group, or service principal is deleted from Microsoft Entra ID, its Azure role assignments are not removed. The portal lists them under **Access control (IAM)** > **Role assignments** as **Identity not found** with the type **Unknown**. This check requires that every role assignment at a scope the subscription inherits or contains resolves to an existing directory object.
+
+        **Why this matters**
+
+        An orphaned assignment grants nothing today, but it hides the state of access. It inflates the role assignment count toward the subscription limit, obscures which grants are real during an access review, and keeps an Owner or Contributor assignment visible as noise that reviewers learn to ignore.
+
+        The object ID can also come back. A deleted user or group can be restored from the Microsoft Entra recycle bin for 30 days, and restoring it brings every orphaned role assignment back into effect without anyone granting access again.
+
+        Delete orphaned assignments as part of removing the identity.
+      audit: |
+        ### Audit via Azure CLI
+
+        ```bash
+        az role assignment list --all --include-inherited \
+          --query "[?principalName==''].{principalId:principalId, role:roleDefinitionName, scope:scope}" --output table
+        ```
+
+        A passing subscription returns no rows. A failing subscription lists assignments whose principal no longer resolves.
+
+        ### Audit via Azure Portal
+
+        1. Open the subscription and select **Access control (IAM)** > **Role assignments**.
+        2. Look for entries named **Identity not found** with the type **Unknown**.
+      remediation:
+        - id: portal
+          desc: |
+            **To remove orphaned role assignments using the Azure portal:**
+
+            1. Sign in to the [Azure portal](https://portal.azure.com) and open the subscription.
+            2. Select **Access control (IAM)** > **Role assignments**.
+            3. Select the entries named **Identity not found** and choose **Delete**.
+        - id: cli
+          desc: |
+            **To remove orphaned role assignments using the Azure CLI:**
+
+            ```bash
+            for id in $(az role assignment list --all --query "[?principalName==''].id" --output tsv); do
+              az role assignment delete --ids "$id"
+            done
+            ```
+        - id: terraform
+          desc: |
+            **To remove orphaned role assignments using Terraform:**
+
+            Delete the `azurerm_role_assignment` resources whose `principal_id` refers to an identity that no longer exists, and remove the role assignment in the same change that deletes an `azuread_user`, `azuread_group`, or `azuread_service_principal`.
+        - id: bicep
+          desc: |
+            **To remove orphaned role assignments using Bicep:**
+
+            Remove the `Microsoft.Authorization/roleAssignments` resources for the deleted principal and redeploy. Assignments created outside the template are not removed by an incremental deployment; delete those with `az role assignment delete`.
+    refs:
+      - url: https://learn.microsoft.com/en-us/azure/role-based-access-control/troubleshoot-limits
+        title: Troubleshoot Azure RBAC limits and identity not found
+  - uid: mondoo-azure-security-rbac-no-assignments-to-deleted-principals-azure
+    filters: asset.platform == "azure"
+    mql: |
+      azure.subscription.iam.roleAssignments.none(principal == null)
+  # No Terraform variants: the tenant that owns an application is a Microsoft Entra attribute of its service principal, not part of the role assignment.
+  - uid: mondoo-azure-security-rbac-external-tenant-apps-no-privilege-escalating-roles
+    title: Ensure apps from other tenants hold no role that can grant Azure roles
+    impact: 85
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-2
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-7-2-5
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    variants:
+      - uid: mondoo-azure-security-rbac-external-tenant-apps-no-privilege-escalating-roles-azure
+        tags:
+          mondoo.com/filter-title: Azure Subscription
+          mondoo.com/filter-icon: azure
+    docs:
+      desc: |
+        This check verifies that no application registered by another organization can grant Azure roles in the subscription.
+
+        A multi-tenant application is registered in its publisher's tenant and represented in yours by an enterprise application, a service principal whose owning tenant is the publisher's. Such applications appear under **Access control (IAM)** > **Role assignments** with the type **App**, and their publisher under **Microsoft Entra ID** > **Enterprise applications** > **Properties**. This check requires that no application owned by a tenant other than yours and Microsoft's holds a role that can grant roles, such as Owner or User Access Administrator.
+
+        **Why this matters**
+
+        The credentials for a multi-tenant application are created and held by the publisher. Granting it a role that writes role assignments hands the publisher, and anyone who compromises the publisher, the ability to make itself Owner of your subscription.
+
+        A breach at a vendor then becomes control of every customer subscription that granted the application such a role, and the activity appears in your logs as the vendor's application acting normally.
+
+        Grant third-party applications the narrowest role their function needs, at the smallest scope, and use Role Based Access Control Administrator with a condition where an integration genuinely needs to assign roles.
+      audit: |
+        ### Audit via Azure CLI
+
+        1. List the applications holding a role in the subscription:
+
+        ```bash
+        az role assignment list --all --include-inherited \
+          --query "[?principalType=='ServicePrincipal'].{id:principalId, role:roleDefinitionName}" --output tsv
+        ```
+
+        2. For each principal holding Owner, User Access Administrator, or Role Based Access Control Administrator, check the owning tenant:
+
+        ```bash
+        az ad sp show --id <principal-id> --query "{name:displayName, ownerTenant:appOwnerOrganizationId}"
+        ```
+
+        A passing subscription has no such application owned by another tenant than yours or Microsoft's. A failing subscription has at least one.
+      remediation:
+        - id: portal
+          desc: |
+            **To remove the role assignment using the Azure portal:**
+
+            1. Sign in to the [Azure portal](https://portal.azure.com) and open the subscription.
+            2. Select **Access control (IAM)** > **Role assignments**.
+            3. Find the assignment for the application, select it, and choose **Delete**.
+            4. If the principal still needs access, add a narrower role at the smallest scope that covers the work.
+        - id: cli
+          desc: |
+            **To remove the role assignment using the Azure CLI:**
+
+            ```bash
+            az role assignment list --all --assignee <service-principal-object-id> --output table
+            az role assignment delete --assignee <service-principal-object-id> --role "<role name>" --scope "<scope>"
+            ```
+        - id: terraform
+          desc: |
+            **To remove the role assignment using Terraform:**
+
+            Delete the `azurerm_role_assignment` resource that grants the role. Where access is still needed, grant a narrower role at a narrower scope:
+
+            ```hcl
+            resource "azurerm_role_assignment" "reader" {
+              scope                = azurerm_resource_group.app.id
+              role_definition_name = "Reader"
+              principal_id         = var.principal_id
+            }
+            ```
+        - id: bicep
+          desc: |
+            **To remove the role assignment using Bicep:**
+
+            Remove the `Microsoft.Authorization/roleAssignments` resource that grants the role, and deploy a narrower one where access is still needed:
+
+            ```bicep
+            param principalId string
+
+            resource readerAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+              name: guid(resourceGroup().id, principalId, 'acdd72a7-3385-48ef-bd42-f606fba81ae7')
+              properties: {
+                roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'acdd72a7-3385-48ef-bd42-f606fba81ae7')
+                principalId: principalId
+              }
+            }
+            ```
+    refs:
+      - url: https://learn.microsoft.com/en-us/entra/identity-platform/single-and-multi-tenant-apps
+        title: Tenancy in Microsoft Entra ID
+  - uid: mondoo-azure-security-rbac-external-tenant-apps-no-privilege-escalating-roles-azure
+    filters: asset.platform == "azure"
+    mql: |
+      azure.subscription.iam.principals.where(
+        principalType == "servicePrincipal" &&
+        appOwnerTenantId != "" &&
+        appOwnerTenantId != azure.subscription.tenantId &&
+        appOwnerTenantId.in(["f8cdef31-a31e-4b4a-93e4-5f571e91255a", "72f988bf-86f1-41af-91ab-2d7cd011db47"]) == false
+      ).all(
+        roleAssignments.none(role.isPrivilegeEscalating)
+      )
+  # No Terraform variants: the roles a managed identity holds are separate azurerm_role_assignment resources that reference the identity only by a principal ID known after apply.
+  - uid: mondoo-azure-security-resource-identities-no-privilege-escalating-roles
+    title: Ensure resource managed identities hold no role that can grant roles
+    impact: 90
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-2
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-7-2-5
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    variants:
+      - uid: mondoo-azure-security-resource-identities-no-privilege-escalating-roles-azure
+        tags:
+          mondoo.com/filter-title: Azure Subscription
+          mondoo.com/filter-icon: azure
+    docs:
+      desc: |
+        This check verifies that no workload running in the subscription can grant itself or anything else more access.
+
+        Azure resources such as virtual machines, App Service apps, Function apps, and containers authenticate to other Azure services with a managed identity, either system-assigned to the resource or user-assigned and attached to it. The identity is shown on the resource's **Identity** blade, and its roles under **Azure role assignments**. This check looks at every resource with a managed identity and requires that neither its system-assigned nor any attached user-assigned identity holds a role that can grant roles, such as Owner or User Access Administrator.
+
+        **Why this matters**
+
+        Code on the resource obtains a token for its managed identity from the local metadata endpoint, with no secret involved. An attacker who gets code execution on the resource, through a vulnerable web application, a malicious dependency, or a compromised container image, gets that token too.
+
+        When the identity can write role assignments, that foothold becomes Owner of the subscription in one request. The resource exposed to the internet is often the one given broad rights for convenience during deployment.
+
+        Give workloads the narrowest data-plane role they need on the specific resources they use, and keep role assignment rights on deployment identities that are not exposed.
+      audit: |
+        ### Audit via Azure CLI
+
+        1. List the principal IDs of resource identities and their role assignments:
+
+        ```bash
+        for p in $(az resource list --query "[?identity.principalId!=null].identity.principalId" --output tsv); do
+          az role assignment list --all --include-inherited --assignee "$p" \
+            --query "[].{principal:principalName, role:roleDefinitionName, scope:scope}" --output table
+        done
+        ```
+
+        2. Repeat for user-assigned identities attached to resources, listed with `az identity list`.
+
+        A passing subscription shows no Owner, User Access Administrator, Role Based Access Control Administrator, or custom role that allows `Microsoft.Authorization/roleAssignments/write`. A failing subscription shows at least one.
+
+        ### Audit via Azure Portal
+
+        1. Open each resource with a managed identity and select **Identity** > **Azure role assignments**.
+      remediation:
+        - id: portal
+          desc: |
+            **To remove the role assignment using the Azure portal:**
+
+            1. Sign in to the [Azure portal](https://portal.azure.com) and open the subscription.
+            2. Select **Access control (IAM)** > **Role assignments**.
+            3. Find the assignment for the resource's managed identity, select it, and choose **Delete**.
+            4. If the principal still needs access, add a narrower role at the smallest scope that covers the work.
+        - id: cli
+          desc: |
+            **To remove the role assignment using the Azure CLI:**
+
+            ```bash
+            az role assignment list --all --assignee <managed-identity-principal-id> --output table
+            az role assignment delete --assignee <managed-identity-principal-id> --role "<role name>" --scope "<scope>"
+            ```
+        - id: terraform
+          desc: |
+            **To remove the role assignment using Terraform:**
+
+            Delete the `azurerm_role_assignment` resource that grants the role. Where access is still needed, grant a narrower role at a narrower scope:
+
+            ```hcl
+            resource "azurerm_role_assignment" "app_blob_reader" {
+              scope                = azurerm_storage_account.data.id
+              role_definition_name = "Storage Blob Data Reader"
+              principal_id         = azurerm_linux_web_app.app.identity[0].principal_id
+            }
+            ```
+        - id: bicep
+          desc: |
+            **To remove the role assignment using Bicep:**
+
+            Remove the `Microsoft.Authorization/roleAssignments` resource that grants the role, and deploy a narrower one where access is still needed:
+
+            ```bicep
+            param principalId string
+            param storageAccountName string
+
+            resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' existing = {
+              name: storageAccountName
+            }
+
+            resource blobReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+              name: guid(storage.id, principalId, '2a2b9908-6ea1-4ae2-8e65-a410df84e7d1')
+              scope: storage
+              properties: {
+                roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '2a2b9908-6ea1-4ae2-8e65-a410df84e7d1')
+                principalId: principalId
+                principalType: 'ServicePrincipal'
+              }
+            }
+            ```
+    refs:
+      - url: https://learn.microsoft.com/en-us/entra/identity/managed-identities-azure-resources/managed-identity-best-practice-recommendations
+        title: Managed identity best practice recommendations
+  - uid: mondoo-azure-security-resource-identities-no-privilege-escalating-roles-azure
+    filters: asset.platform == "azure"
+    mql: |
+      azure.subscription.resources.where(resourceIdentity != null).all(
+        resourceIdentity.roleAssignments.none(role.isPrivilegeEscalating)
+      )
+  # No Terraform variants: whether an identity is attached to a resource is decided by every resource that references it, which no single resource describes.
+  - uid: mondoo-azure-security-managed-identities-unattached-hold-no-roles
+    title: Ensure unattached user-assigned managed identities hold no roles
+    impact: 65
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-07
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-308-a-4-ii-c-information-access-management-access-establishment-and-modification
+      compliance/iso-27001-2022: iso-27001-2022-a-5-18
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-2
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-1
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-7-2-5-1
+      compliance/soc2-2017: soc2-control-cc6-1-9
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    variants:
+      - uid: mondoo-azure-security-managed-identities-unattached-hold-no-roles-azure
+        tags:
+          mondoo.com/filter-title: Azure Subscription
+          mondoo.com/filter-icon: azure
+    docs:
+      desc: |
+        This check verifies that user-assigned managed identities no workload uses do not keep standing access.
+
+        A user-assigned managed identity is a standalone Azure resource that can be attached to many resources, which then act as it. Its attachments are listed on each resource's **Identity** > **User assigned** tab, and its roles on the identity's **Azure role assignments** blade. This check requires that every user-assigned identity in the subscription that no resource in the subscription uses holds no role assignment.
+
+        **Why this matters**
+
+        An unattached identity with roles is access without an owner. The workload it was created for has been deleted or moved to another identity, but its grants remain and nobody reviews them, because the identity no longer shows up next to any running service.
+
+        Anyone with permission to attach managed identities, `Microsoft.ManagedIdentity/userAssignedIdentities/assign/action`, can attach it to a resource they control and act with its roles. Federated credentials on the identity let an external workload, such as a CI pipeline, obtain its tokens without attaching it at all.
+
+        Delete identities that are no longer used, or remove their role assignments.
+      audit: |
+        ### Audit via Azure CLI
+
+        1. List user-assigned identities and the resources that reference them:
+
+        ```bash
+        az identity list --query "[].{name:name, id:id, principalId:principalId}" --output table
+        az resource list --query "[?identity.userAssignedIdentities!=null].{name:name, identities:identity.userAssignedIdentities}"
+        ```
+
+        2. For each identity referenced by no resource, list its role assignments:
+
+        ```bash
+        az role assignment list --all --assignee <principal-id> --output table
+        ```
+
+        A passing subscription has no unreferenced identity with a role. A failing subscription has at least one.
+      remediation:
+        - id: portal
+          desc: |
+            **To remove an unused managed identity using the Azure portal:**
+
+            1. Sign in to the [Azure portal](https://portal.azure.com) and open **Managed Identities**.
+            2. Open the identity and confirm under **Associated resources** that nothing uses it.
+            3. Select **Delete**, or remove its role assignments under **Azure role assignments** if you plan to reuse it.
+        - id: cli
+          desc: |
+            **To remove an unused managed identity using the Azure CLI:**
+
+            ```bash
+            az identity delete --name <identity-name> --resource-group <resource-group>
+            ```
+
+            Deleting the identity leaves its role assignments orphaned; remove them first with `az role assignment delete --assignee <principal-id>`.
+        - id: terraform
+          desc: |
+            **To remove an unused managed identity using Terraform:**
+
+            Delete the `azurerm_user_assigned_identity` resource together with every `azurerm_role_assignment` whose `principal_id` references it.
+        - id: bicep
+          desc: |
+            **To remove an unused managed identity using Bicep:**
+
+            Remove the `Microsoft.ManagedIdentity/userAssignedIdentities` resource and its `Microsoft.Authorization/roleAssignments` from the template and redeploy, deleting the identity with `az identity delete` if the deployment is incremental.
+    refs:
+      - url: https://learn.microsoft.com/en-us/entra/identity/managed-identities-azure-resources/managed-identity-best-practice-recommendations
+        title: Managed identity best practice recommendations
+  - uid: mondoo-azure-security-managed-identities-unattached-hold-no-roles-azure
+    filters: asset.platform == "azure"
+    mql: |
+      azure.subscription.iam.managedIdentities.where(attachedResources.length == 0).all(
+        roleAssignments.length == 0
+      )
+  # No Terraform variants: the roles a managed identity holds are separate azurerm_role_assignment resources that reference the identity only by a principal ID known after apply.
+  - uid: mondoo-azure-security-managed-identities-no-full-control-roles
+    title: Ensure managed identities hold no role with full control of resources
+    impact: 85
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-5-15
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-7-2-5
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    variants:
+      - uid: mondoo-azure-security-managed-identities-no-full-control-roles-azure
+        tags:
+          mondoo.com/filter-title: Azure Subscription
+          mondoo.com/filter-icon: azure
+    docs:
+      desc: |
+        This check verifies that no workload identity has unrestricted control over the resources in its scope.
+
+        A role whose actions include the bare `*` allows every management operation on every resource type in its scope. Owner and Contributor are the built-in examples, and custom roles copied from them often are too. A managed identity's roles are listed on the identity's **Azure role assignments** blade. This check requires that no managed identity, system-assigned or user-assigned, holds a role with `*` among its allowed actions at any scope the subscription inherits or contains.
+
+        **Why this matters**
+
+        Anyone who runs code on a resource can use its managed identity. With full control, that code can reconfigure networks to expose other services, read storage account keys and connection strings, run commands on virtual machines, and delete backups, which is what ransomware crews do in Azure.
+
+        Workloads rarely need more than a few actions on a few resources. Contributor at subscription scope is usually granted because it was easier than finding the right role, and it turns every vulnerability in the workload into control of the subscription.
+
+        Replace full-control roles with a built-in role scoped to the task, such as Storage Blob Data Contributor or Key Vault Secrets User, or a custom role listing only the needed actions.
+      audit: |
+        ### Audit via Azure CLI
+
+        ```bash
+        az role assignment list --all --include-inherited \
+          --query "[?principalType=='ServicePrincipal' && (roleDefinitionName=='Owner' || roleDefinitionName=='Contributor')].{principal:principalName, role:roleDefinitionName, scope:scope}" \
+          --output table
+        ```
+
+        Then check custom roles assigned to managed identities with `az role definition list --custom-role-only true` for an `actions` entry of `*`. A passing subscription has no managed identity with such a role. A failing subscription has at least one.
+      remediation:
+        - id: portal
+          desc: |
+            **To remove the role assignment using the Azure portal:**
+
+            1. Sign in to the [Azure portal](https://portal.azure.com) and open the subscription.
+            2. Select **Access control (IAM)** > **Role assignments**.
+            3. Find the assignment for the managed identity, select it, and choose **Delete**.
+            4. If the principal still needs access, add a narrower role at the smallest scope that covers the work.
+        - id: cli
+          desc: |
+            **To remove the role assignment using the Azure CLI:**
+
+            ```bash
+            az role assignment list --all --assignee <managed-identity-principal-id> --output table
+            az role assignment delete --assignee <managed-identity-principal-id> --role "<role name>" --scope "<scope>"
+            ```
+        - id: terraform
+          desc: |
+            **To remove the role assignment using Terraform:**
+
+            Delete the `azurerm_role_assignment` resource that grants the role. Where access is still needed, grant a narrower role at a narrower scope:
+
+            ```hcl
+            resource "azurerm_role_assignment" "app_secrets_user" {
+              scope                = azurerm_key_vault.app.id
+              role_definition_name = "Key Vault Secrets User"
+              principal_id         = azurerm_user_assigned_identity.app.principal_id
+            }
+            ```
+        - id: bicep
+          desc: |
+            **To remove the role assignment using Bicep:**
+
+            Remove the `Microsoft.Authorization/roleAssignments` resource that grants the role, and deploy a narrower one where access is still needed:
+
+            ```bicep
+            param principalId string
+            param keyVaultName string
+
+            resource vault 'Microsoft.KeyVault/vaults@2023-07-01' existing = {
+              name: keyVaultName
+            }
+
+            resource secretsUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+              name: guid(vault.id, principalId, '4633458b-17de-408a-b874-0445c86b69e6')
+              scope: vault
+              properties: {
+                roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '4633458b-17de-408a-b874-0445c86b69e6')
+                principalId: principalId
+                principalType: 'ServicePrincipal'
+              }
+            }
+            ```
+    refs:
+      - url: https://learn.microsoft.com/en-us/azure/role-based-access-control/best-practices
+        title: Best practices for Azure RBAC
+  - uid: mondoo-azure-security-managed-identities-no-full-control-roles-azure
+    filters: asset.platform == "azure"
+    mql: |
+      azure.subscription.iam.principals.where(servicePrincipalType == "ManagedIdentity").all(
+        roleAssignments.none(role.permissions.any(allowedActions.contains("*")))
+      )
+  # No Terraform variants: the count spans every azurerm_role_assignment for the subscription, which may live in several configurations.
+  - uid: mondoo-azure-security-subscription-owners-limited
+    title: Ensure two or three principals hold Owner directly on the subscription
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-2
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-6
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-7-2-2
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    variants:
+      - uid: mondoo-azure-security-subscription-owners-limited-azure
+        tags:
+          mondoo.com/filter-title: Azure Subscription
+          mondoo.com/filter-icon: azure
+    docs:
+      desc: |
+        This check verifies that full control of the subscription rests with a small, named group.
+
+        Owner can manage every resource and grant any role. Assignments made directly on the subscription are listed under **Access control (IAM)** > **Role assignments** with the scope **This resource**. This check counts the distinct principals assigned Owner at the subscription scope itself and requires between two and three. Assignments inherited from a management group and assignments on resource groups are not counted.
+
+        **Why this matters**
+
+        Each Owner is an independent path to everything in the subscription, and the attacker needs only the weakest. Owner gets handed out for convenience, to a developer who needed to assign one role or a pipeline that deployed a template once, and the count only grows.
+
+        The lower bound covers the opposite failure. With a single Owner, one departure, lockout, or compromise leaves nobody able to grant access, rotate a compromised identity's rights, or recover the subscription during an incident.
+
+        Keep a few Owners for administration and break-glass, and give everyone else the narrowest role at the smallest scope.
+      audit: |
+        ### Audit via Azure CLI
+
+        ```bash
+        az role assignment list --scope "/subscriptions/<subscription-id>" --role Owner \
+          --query "[?scope=='/subscriptions/<subscription-id>'].{principal:principalName, type:principalType}" --output table
+        ```
+
+        A passing subscription lists two or three principals. A failing subscription lists fewer than two or more than three.
+
+        ### Audit via Azure Portal
+
+        1. Open the subscription and select **Access control (IAM)** > **Role assignments**.
+        2. Filter **Role** to **Owner** and **Scope** to **This resource**, and count the principals.
+      remediation:
+        - id: portal
+          desc: |
+            **To adjust the subscription's Owners using the Azure portal:**
+
+            1. Sign in to the [Azure portal](https://portal.azure.com) and open the subscription.
+            2. Select **Access control (IAM)** > **Role assignments** and filter **Role** to **Owner**.
+            3. Remove Owner from principals that do not need it, assigning a narrower role where they still need access.
+            4. If fewer than two remain, select **Add** > **Add role assignment** and assign Owner to a second administrator.
+        - id: cli
+          desc: |
+            **To adjust the subscription's Owners using the Azure CLI:**
+
+            ```bash
+            az role assignment delete --assignee <principal-id> --role Owner --scope "/subscriptions/<subscription-id>"
+            az role assignment create --assignee <admin-object-id> --role Owner --scope "/subscriptions/<subscription-id>"
+            ```
+        - id: terraform
+          desc: |
+            **To declare the subscription's Owners using Terraform:**
+
+            Declare each Owner explicitly so the count is reviewed in source control:
+
+            ```hcl
+            variable "owner_object_ids" {
+              type = list(string)
+            }
+
+            data "azurerm_subscription" "current" {}
+
+            resource "azurerm_role_assignment" "owners" {
+              for_each             = toset(var.owner_object_ids)
+              scope                = data.azurerm_subscription.current.id
+              role_definition_name = "Owner"
+              principal_id         = each.value
+            }
+            ```
+        - id: bicep
+          desc: |
+            **To declare the subscription's Owners using Bicep:**
+
+            Deploy at subscription scope and declare each Owner explicitly:
+
+            ```bicep
+            targetScope = 'subscription'
+
+            param ownerObjectIds array
+
+            resource owners 'Microsoft.Authorization/roleAssignments@2022-04-01' = [for id in ownerObjectIds: {
+              name: guid(subscription().id, id, '8e3af657-a8ff-443c-a75c-2fe8c4bcb635')
+              properties: {
+                roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '8e3af657-a8ff-443c-a75c-2fe8c4bcb635')
+                principalId: id
+              }
+            }]
+            ```
+    refs:
+      - url: https://learn.microsoft.com/en-us/azure/role-based-access-control/best-practices
+        title: Best practices for Azure RBAC
+  - uid: mondoo-azure-security-subscription-owners-limited-azure
+    filters: asset.platform == "azure"
+    mql: |
+      subscriptionOwners = azure.subscription.iam.roleAssignments.where(
+        roleDefinitionId == /8e3af657-a8ff-443c-a75c-2fe8c4bcb635$/ &&
+        scope == "/subscriptions/" + azure.subscription.subscriptionId
+      ).map(principalId).unique
+      subscriptionOwners.length >= 2
+      subscriptionOwners.length <= 3
+  - uid: mondoo-azure-security-lighthouse-delegations-no-user-access-administrator
+    title: Ensure Azure Lighthouse delegations do not grant User Access Administrator
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-2
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-6
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-7-2-2
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    variants:
+      - uid: mondoo-azure-security-lighthouse-delegations-no-user-access-administrator-azure
+        tags:
+          mondoo.com/filter-title: Azure Subscription
+          mondoo.com/filter-icon: azure
+      - uid: mondoo-azure-security-lighthouse-delegations-no-user-access-administrator-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-lighthouse-delegations-no-user-access-administrator-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-lighthouse-delegations-no-user-access-administrator-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-lighthouse-delegations-no-user-access-administrator-bicep
+        tags:
+          mondoo.com/filter-title: Bicep
+          mondoo.com/filter-icon: bicep
+    docs:
+      desc: |
+        This check verifies that no service provider managing the subscription through Azure Lighthouse can assign Azure roles in it.
+
+        Azure Lighthouse lets a managing tenant, usually a managed service provider, work in your subscription with its own identities. You review the delegations under **Service providers** > **Delegations**, and each lists the principals in the managing tenant and the built-in role each receives, permanently or through just-in-time activation. This check requires that no delegation, standing or eligible, grants User Access Administrator or Owner. Azure rejects Owner in a Lighthouse offer, so in practice the check is about User Access Administrator.
+
+        **Why this matters**
+
+        Lighthouse accepts User Access Administrator only so the provider can assign roles to managed identities, for example when deploying a policy remediation task. Those identities then act with the roles the provider assigned, inside your subscription, on behalf of code the provider controls.
+
+        The provider's identities authenticate in the provider's tenant, under its Conditional Access and its offboarding. A compromise of the managing tenant, a well-documented route into many customers at once, turns this grant into the ability to give any workload in your subscription broad access.
+
+        Grant providers task-specific roles instead, and where a provider genuinely needs to assign roles to managed identities, make the grant eligible with multifactor activation and limit its delegated roles to what the provider deploys.
+      audit: |
+        ### Audit via Azure CLI
+
+        1. List the Lighthouse registration definitions and their authorizations:
+
+        ```bash
+        az managedservices definition list \
+          --query "[].{offer:properties.registrationDefinitionName, managedBy:properties.managedByTenantId, roles:properties.authorizations[].roleDefinitionId, eligible:properties.eligibleAuthorizations[].roleDefinitionId}" \
+          --output json
+        ```
+
+        A passing subscription lists no `18d7d88d-d35e-4fb5-a5c3-7773c20a72d9` (User Access Administrator) or `8e3af657-a8ff-443c-a75c-2fe8c4bcb635` (Owner) role. A failing subscription lists one.
+
+        ### Audit via Azure Portal
+
+        1. Search for **Service providers** and select **Delegations**.
+        2. Open each delegation and review the roles granted to the provider's principals.
+      remediation:
+        - id: portal
+          desc: |
+            **To remove a role-granting Lighthouse delegation using the Azure portal:**
+
+            1. Sign in to the [Azure portal](https://portal.azure.com), search for **Service providers**, and select **Service provider offers**.
+            2. Select the offer that grants User Access Administrator and choose **Delete** to remove the provider's access.
+            3. Ask the provider for an offer that grants only task-specific roles, and accept that one instead.
+        - id: cli
+          desc: |
+            **To remove a role-granting Lighthouse delegation using the Azure CLI:**
+
+            ```bash
+            az managedservices assignment list --output table
+            az managedservices assignment delete --assignment <registration-assignment-id>
+            ```
+
+            Then onboard the provider again with an offer that grants only task-specific roles.
+        - id: terraform
+          desc: |
+            **To grant a Lighthouse provider task-specific roles using Terraform:**
+
+            Remove any `authorization` block that grants User Access Administrator from the `azurerm_lighthouse_definition`, and grant a role scoped to the provider's work:
+
+            ```hcl
+            data "azurerm_subscription" "current" {}
+
+            resource "azurerm_lighthouse_definition" "provider" {
+              name               = "Managed monitoring"
+              managing_tenant_id = var.provider_tenant_id
+              scope              = data.azurerm_subscription.current.id
+
+              authorization {
+                principal_id           = var.provider_group_object_id
+                role_definition_id     = "43d0d8ad-25c7-4714-9337-8ba259a9fe05"
+                principal_display_name = "Provider operators"
+              }
+            }
+            ```
+
+            `43d0d8ad-25c7-4714-9337-8ba259a9fe05` is the Monitoring Reader role.
+        - id: bicep
+          desc: |
+            **To grant a Lighthouse provider task-specific roles using Bicep:**
+
+            List only task-specific roles in the registration definition's `authorizations`:
+
+            ```bicep
+            targetScope = 'subscription'
+
+            param providerTenantId string
+            param providerGroupObjectId string
+
+            resource definition 'Microsoft.ManagedServices/registrationDefinitions@2022-10-01' = {
+              name: guid('managed-monitoring', providerTenantId)
+              properties: {
+                registrationDefinitionName: 'Managed monitoring'
+                managedByTenantId: providerTenantId
+                authorizations: [
+                  {
+                    principalId: providerGroupObjectId
+                    principalIdDisplayName: 'Provider operators'
+                    roleDefinitionId: '43d0d8ad-25c7-4714-9337-8ba259a9fe05'
+                  }
+                ]
+              }
+            }
+            ```
+    refs:
+      - url: https://learn.microsoft.com/en-us/azure/lighthouse/concepts/tenants-users-roles
+        title: Tenants, users, and roles in Azure Lighthouse scenarios
+      - url: https://learn.microsoft.com/en-us/azure/lighthouse/how-to/deploy-policy-remediation
+        title: Deploy a policy that can be remediated within a delegated subscription
+  - uid: mondoo-azure-security-lighthouse-delegations-no-user-access-administrator-azure
+    filters: asset.platform == "azure"
+    mql: |
+      azure.subscription.lighthouse.registrationDefinitions.all(
+        authorizations.none(roleDefinitionId == /(18d7d88d-d35e-4fb5-a5c3-7773c20a72d9|8e3af657-a8ff-443c-a75c-2fe8c4bcb635)$/)
+      )
+      azure.subscription.lighthouse.registrationDefinitions.all(
+        eligibleAuthorizations.none(roleDefinitionId == /(18d7d88d-d35e-4fb5-a5c3-7773c20a72d9|8e3af657-a8ff-443c-a75c-2fe8c4bcb635)$/)
+      )
+  - uid: mondoo-azure-security-lighthouse-delegations-no-user-access-administrator-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_lighthouse_definition")
+    mql: |
+      terraform.resources("azurerm_lighthouse_definition").all(
+        blocks.where(type == "authorization").none(arguments['role_definition_id'] == /(18d7d88d-d35e-4fb5-a5c3-7773c20a72d9|8e3af657-a8ff-443c-a75c-2fe8c4bcb635)$/)
+      )
+      terraform.resources("azurerm_lighthouse_definition").all(
+        blocks.where(type == "eligible_authorization").none(arguments['role_definition_id'] == /(18d7d88d-d35e-4fb5-a5c3-7773c20a72d9|8e3af657-a8ff-443c-a75c-2fe8c4bcb635)$/)
+      )
+  - uid: mondoo-azure-security-lighthouse-delegations-no-user-access-administrator-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_lighthouse_definition")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "azurerm_lighthouse_definition").all(
+        change.after['authorization'].none(_['role_definition_id'] == /(18d7d88d-d35e-4fb5-a5c3-7773c20a72d9|8e3af657-a8ff-443c-a75c-2fe8c4bcb635)$/)
+      )
+      terraform.plan.resourceChanges.where(type == "azurerm_lighthouse_definition").all(
+        change.after['eligible_authorization'] == empty ||
+        change.after['eligible_authorization'].none(_['role_definition_id'] == /(18d7d88d-d35e-4fb5-a5c3-7773c20a72d9|8e3af657-a8ff-443c-a75c-2fe8c4bcb635)$/)
+      )
+  - uid: mondoo-azure-security-lighthouse-delegations-no-user-access-administrator-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_lighthouse_definition")
+    mql: |
+      terraform.state.resources.where(type == "azurerm_lighthouse_definition").all(
+        values['authorization'].none(_['role_definition_id'] == /(18d7d88d-d35e-4fb5-a5c3-7773c20a72d9|8e3af657-a8ff-443c-a75c-2fe8c4bcb635)$/)
+      )
+      terraform.state.resources.where(type == "azurerm_lighthouse_definition").all(
+        values['eligible_authorization'] == empty ||
+        values['eligible_authorization'].none(_['role_definition_id'] == /(18d7d88d-d35e-4fb5-a5c3-7773c20a72d9|8e3af657-a8ff-443c-a75c-2fe8c4bcb635)$/)
+      )
+  - uid: mondoo-azure-security-lighthouse-delegations-no-user-access-administrator-bicep
+    filters: asset.platform == "bicep" && bicep.resources.any(type == "Microsoft.ManagedServices/registrationDefinitions")
+    mql: |
+      bicep.resources.where(type == "Microsoft.ManagedServices/registrationDefinitions").all(
+        properties['authorizations'].none(_['roleDefinitionId'] == /(18d7d88d-d35e-4fb5-a5c3-7773c20a72d9|8e3af657-a8ff-443c-a75c-2fe8c4bcb635)$/)
+      )
+      bicep.resources.where(type == "Microsoft.ManagedServices/registrationDefinitions").all(
+        properties['eligibleAuthorizations'] == empty ||
+        properties['eligibleAuthorizations'].none(_['roleDefinitionId'] == /(18d7d88d-d35e-4fb5-a5c3-7773c20a72d9|8e3af657-a8ff-443c-a75c-2fe8c4bcb635)$/)
       )
