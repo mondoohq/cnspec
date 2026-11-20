@@ -419,10 +419,17 @@ queries:
         parse.ini(_).params["CRON_DAILY_RUN"] == empty ||
         parse.ini(_).params["CRON_DAILY_RUN"] == /^["']?yes["']?$/
       )
-      aideDailyRunEnabled && file("/etc/cron.daily/aide").exists ||
+      // From aide-common 0.18 (Debian 12) the cron script exits when systemd is running and
+      // leaves the run to the timer, so the script counts only where it does not, under a running cron.
+      aideDailyRunEnabled && file("/etc/cron.daily/aide").exists &&
+      file("/etc/cron.daily/aide").content.contains("/run/systemd/system") == false &&
+      service("cron").running ||
       aideDailyRunEnabled && systemd.timer("dailyaidecheck").enabled ||
       crontab.entries.where(user == "root").any(command.contains("aide --check")) ||
       crontab.entries.where(user == "root").any(command.contains("aide.conf --check")) ||
+      // The aide package on Fedora and CentOS Stream 9 and 10 ships aide-check.timer.
+      // aidecheck.timer is the name of a unit created by hand.
+      systemd.timer('aide-check').enabled ||
       systemd.timer('aidecheck').enabled
 
       // A schedule does nothing unless the configuration it reads and the
@@ -433,7 +440,7 @@ queries:
       desc: |
         This check verifies that AIDE integrity comparisons run on a schedule rather than only when someone remembers to start one.
 
-        Any of three arrangements satisfies it: the daily check that the Debian and Ubuntu `aide-common` package schedules itself, a root crontab entry that runs `aide --check`, or an enabled `aidecheck` systemd timer. Distributions differ in which they ship, so any one of them is accepted. The `aide-common` check runs from `/etc/cron.daily/aide` on older releases and from `dailyaidecheck.timer` on newer ones, and either counts only while `CRON_DAILY_RUN` in `/etc/default/aide` is unset or `yes`. Setting it to any other value turns the daily run off. The check also requires the AIDE configuration, `/etc/aide/aide.conf` on Debian and Ubuntu or `/etc/aide.conf` elsewhere, and a database at `/var/lib/aide/aide.db` or `/var/lib/aide/aide.db.gz`, because a scheduled comparison without them fails every time it runs.
+        Any of three arrangements satisfies it: the daily check that the Debian and Ubuntu `aide-common` package schedules itself, a root crontab entry that runs `aide --check`, or an enabled `aide-check` or `aidecheck` systemd timer. Distributions differ in which they ship, so any one of them is accepted. The aide package on Fedora and on CentOS Stream 9 and 10 ships `aide-check.timer`, which runs `aide --check` daily once it is enabled, and `aidecheck.timer` is the name of a unit created by hand. The `aide-common` check runs from `/etc/cron.daily/aide` through cron on older releases and from `dailyaidecheck.timer` on newer ones, and either counts only while `CRON_DAILY_RUN` in `/etc/default/aide` is unset or `yes`. Setting it to any other value turns the daily run off. On the newer releases, such as Debian 12, `/etc/cron.daily/aide` is still installed but exits when systemd is running, so the script counts only where it has no such test and the `cron` service is running. The check also requires the AIDE configuration, `/etc/aide/aide.conf` on Debian and Ubuntu or `/etc/aide.conf` elsewhere, and a database at `/var/lib/aide/aide.db` or `/var/lib/aide/aide.db.gz`, because a scheduled comparison without them fails every time it runs.
 
         **Why this matters**
 
@@ -450,13 +457,16 @@ queries:
         ```bash
         grep -E '^CRON_DAILY_RUN' /etc/default/aide
         ls /etc/cron.daily/aide
+        grep -c /run/systemd/system /etc/cron.daily/aide
+        systemctl is-active cron
         systemctl is-enabled dailyaidecheck.timer
         crontab -u root -l | grep aide
+        systemctl is-enabled aide-check.timer
         systemctl is-enabled aidecheck.timer
         ls /etc/aide/aide.conf /etc/aide.conf /var/lib/aide/aide.db /var/lib/aide/aide.db.gz
         ```
 
-        A passing result shows one of these: `/etc/cron.daily/aide` exists or `dailyaidecheck.timer` is enabled while `CRON_DAILY_RUN` is absent, commented out, or `yes`; a root cron entry runs `aide --check`; or `aidecheck.timer` is enabled. `ls` must also list one configuration file and one database. A failing result shows none of these schedules, `CRON_DAILY_RUN` set to `no` with no other schedule in place, or `ls` finding no configuration file or no database.
+        A passing result shows one of these: `dailyaidecheck.timer` is enabled, or `/etc/cron.daily/aide` exists without a `/run/systemd/system` test and `cron` is active, while `CRON_DAILY_RUN` is absent, commented out, or `yes`; a root cron entry runs `aide --check`; or `aide-check.timer` or `aidecheck.timer` is enabled. `ls` must also list one configuration file and one database. A failing result shows none of these schedules, `CRON_DAILY_RUN` set to `no` with no other schedule in place, or `ls` finding no configuration file or no database.
       remediation:
         - id: cli
           desc: |
@@ -526,6 +536,14 @@ queries:
 
             **Using the CLI to setup systemd:**
 
+            Where the aide package ships `aide-check.timer`, as on Fedora and on CentOS Stream 9 and 10, build the AIDE database with the command from step 1 of the cron instructions above and enable the shipped timer instead of creating one:
+
+            ```bash
+            systemctl enable --now aide-check.timer
+            ```
+
+            On other distributions, create the units:
+
             1. Build the AIDE database with the command for your distribution from step 1 of the cron instructions above.
 
             2. Create the systemd service by creating the file `/etc/systemd/system/aidecheck.service` and adding the following lines. Set `ExecStart` to the check command for your distribution: `/usr/sbin/aide --check` on RHEL, Fedora, and Amazon Linux, `/usr/bin/aide --config /etc/aide/aide.conf --check` on Debian and Ubuntu, and `/usr/bin/aide --check` on SLES and openSUSE:
@@ -571,7 +589,7 @@ queries:
           desc: |
             **Using a Bash Script**
 
-            Use this Bash script to configure a daily AIDE check. It will auto-detect the package manager, install AIDE if not already installed, initialize the database, and set up a cron job for daily checks at 5AM. On hosts without cron, such as the Debian cloud image, it schedules the check with a systemd timer named `aidecheck.timer` instead.
+            Use this Bash script to configure a daily AIDE check. It will auto-detect the package manager, install AIDE if not already installed, initialize the database, and set up a cron job for daily checks at 5AM. Where the aide package ships `aide-check.timer`, as on Fedora and CentOS Stream 9 and 10, it enables that timer instead. On hosts without cron, such as the Debian cloud image, it schedules the check with a systemd timer named `aidecheck.timer` instead.
 
             ```bash
             #!/bin/bash
@@ -628,7 +646,11 @@ queries:
               AIDE_CHECK="$AIDE_BIN --check"
             fi
 
-            if command -v crontab >/dev/null 2>&1; then
+            if systemctl cat aide-check.timer >/dev/null 2>&1; then
+              # The aide package on Fedora and CentOS Stream 9 and 10 ships its own daily timer.
+              systemctl enable --now aide-check.timer
+              echo "AIDE daily check scheduled via the packaged aide-check.timer."
+            elif command -v crontab >/dev/null 2>&1; then
               # `grep -v` exits 1 when it selects nothing, which is what happens when root has
               # no crontab at all. Without the `|| true` that status aborts the subshell under
               # `set -e`, so `crontab -` reads empty input and clears the crontab instead of
@@ -666,7 +688,7 @@ queries:
           desc: |
             **Using Ansible**
 
-            Use this Ansible playbook to install AIDE, initialize its database, and run the check using a systemd timer named `aidecheck.timer`. The database and check commands differ by distribution, because Debian and Ubuntu use `aideinit` and need the configuration file passed explicitly, and the database and binary paths differ:
+            Use this Ansible playbook to install AIDE, initialize its database, and run the check using a systemd timer: the packaged `aide-check.timer` where the aide package ships one, as on Fedora and CentOS Stream 9 and 10, and an `aidecheck.timer` it creates elsewhere. The database and check commands differ by distribution, because Debian and Ubuntu use `aideinit` and need the configuration file passed explicitly, and the database and binary paths differ:
 
             ```yaml
             ---
@@ -726,6 +748,19 @@ queries:
                     creates: /var/lib/aide/aide.db.gz
                   when: ansible_facts['os_family'] == 'RedHat'
 
+                # The aide package on Fedora and CentOS Stream 9 and 10 ships its own daily timer
+                - name: Check for the packaged aide-check.timer
+                  ansible.builtin.stat:
+                    path: /usr/lib/systemd/system/aide-check.timer
+                  register: aide_packaged_timer
+
+                - name: Enable and start the packaged aide-check.timer
+                  ansible.builtin.systemd:
+                    name: aide-check.timer
+                    enabled: true
+                    state: started
+                  when: aide_packaged_timer.stat.exists
+
                 - name: Create systemd service unit for AIDE check
                   ansible.builtin.copy:
                     dest: /etc/systemd/system/aidecheck.service
@@ -742,6 +777,7 @@ queries:
 
                       [Install]
                       WantedBy=multi-user.target
+                  when: not aide_packaged_timer.stat.exists
 
                 - name: Create systemd timer unit for daily AIDE check at 5AM
                   ansible.builtin.copy:
@@ -759,6 +795,7 @@ queries:
 
                       [Install]
                       WantedBy=multi-user.target
+                  when: not aide_packaged_timer.stat.exists
 
                 - name: Reload systemd daemon to recognize new units
                   ansible.builtin.systemd:
@@ -768,18 +805,20 @@ queries:
                   ansible.builtin.systemd:
                     name: aidecheck.service
                     enabled: true
+                  when: not aide_packaged_timer.stat.exists
 
                 - name: Enable and start aidecheck.timer
                   ansible.builtin.systemd:
                     name: aidecheck.timer
                     enabled: true
                     state: started
+                  when: not aide_packaged_timer.stat.exists
             ```
         - id: chef
           desc: |
             **Using Chef Infra**
 
-            Use this Chef Infra recipe code to install AIDE, initialize its database, and run the check from a systemd timer named `aidecheck.timer`. The database and check commands differ by distribution, because Debian and Ubuntu use `aideinit` and need the configuration file passed explicitly, and the database and binary paths differ:
+            Use this Chef Infra recipe code to install AIDE, initialize its database, and run the check from a systemd timer: the packaged `aide-check.timer` where the aide package ships one, as on Fedora and CentOS Stream 9 and 10, and an `aidecheck.timer` it creates elsewhere. The database and check commands differ by distribution, because Debian and Ubuntu use `aideinit` and need the configuration file passed explicitly, and the database and binary paths differ:
 
             ```ruby
             if platform_family?('debian')
@@ -817,6 +856,14 @@ queries:
               creates aide_db
             end
 
+            # The aide package on Fedora and CentOS Stream 9 and 10 ships its own daily timer
+            packaged_timer = '/usr/lib/systemd/system/aide-check.timer'
+
+            systemd_unit 'aide-check.timer' do
+              action %i(enable start)
+              only_if { ::File.exist?(packaged_timer) }
+            end
+
             systemd_unit 'aidecheck.service' do
               content <<~UNIT
                 [Unit]
@@ -830,6 +877,7 @@ queries:
                 WantedBy=multi-user.target
               UNIT
               action %i(create enable)
+              not_if { ::File.exist?(packaged_timer) }
             end
 
             systemd_unit 'aidecheck.timer' do
@@ -845,6 +893,7 @@ queries:
                 WantedBy=multi-user.target
               UNIT
               action %i(create enable start)
+              not_if { ::File.exist?(packaged_timer) }
             end
             ```
     refs:
@@ -4389,9 +4438,12 @@ queries:
                     name: "{{ item }}"
                     state: stopped
                     enabled: no
+                  # Debian and Ubuntu declare smb.service as an alias of smbd.service. The module
+                  # disables a unit before it stops it, and disabling the alias removes it, so the
+                  # stop that follows fails. Handle smbd.service first; the alias is then gone.
                   loop:
-                    - smb
-                    - smbd
+                    - smbd.service
+                    - smb.service
                   register: samba_units
                   failed_when:
                     - samba_units.failed
@@ -5399,9 +5451,13 @@ queries:
       systemd.socket("tftp").running == false
       service("tftpd-hpa").enabled == false
       service("tftpd-hpa").running == false
+      // atftpd, the other Debian and Ubuntu TFTP server, is socket-activated
+      systemd.socket("atftpd").enabled == false
+      systemd.socket("atftpd").running == false
+      service("atftpd").running == false
     docs:
       desc: |
-        This check verifies that no TFTP server is running or enabled: neither the `tftp` systemd socket unit that Red Hat family systems use, nor the `tftpd-hpa` service that Debian and Ubuntu install.
+        This check verifies that no TFTP server is running or enabled: neither the `tftp` systemd socket unit that Red Hat family systems use, nor the `tftpd-hpa` service or the socket-activated `atftpd` service that Debian and Ubuntu install.
 
         **Why this matters**
 
@@ -5416,8 +5472,8 @@ queries:
         Run this command to confirm the TFTP server units are stopped and disabled:
 
         ```bash
-        systemctl is-active tftp.socket tftpd-hpa
-        systemctl is-enabled tftp.socket tftpd-hpa
+        systemctl is-active tftp.socket tftpd-hpa atftpd.socket atftpd
+        systemctl is-enabled tftp.socket tftpd-hpa atftpd.socket
         ```
 
         A passing result reports `inactive` and `disabled`, `masked`, or `not-found` for every listed unit. A failing result reports any unit as `active` or `enabled`.
@@ -5426,11 +5482,11 @@ queries:
           desc: |
             **Using CLI**
 
-            Run these commands to stop and disable tftp. Red Hat family systems use `tftp.socket`, and Debian and Ubuntu use `tftpd-hpa`:
+            Run these commands to stop and disable tftp. Red Hat family systems use `tftp.socket`, and Debian and Ubuntu use `tftpd-hpa` or `atftpd.socket`, which starts `atftpd`:
 
             ```bash
-            systemctl stop tftp.socket tftpd-hpa
-            systemctl disable tftp.socket tftpd-hpa
+            systemctl stop tftp.socket tftpd-hpa atftpd.socket atftpd
+            systemctl disable tftp.socket tftpd-hpa atftpd.socket atftpd
             ```
 
             A unit that is not installed reports an error that can be ignored.
@@ -5444,8 +5500,9 @@ queries:
             #!/bin/bash
             set -e
 
-            # tftp.socket is the Red Hat family unit, tftpd-hpa the Debian and Ubuntu one.
-            for unit in tftp.socket tftpd-hpa.service; do
+            # tftp.socket is the Red Hat family unit. Debian and Ubuntu use tftpd-hpa, or atftpd
+            # started by atftpd.socket.
+            for unit in tftp.socket tftpd-hpa.service atftpd.socket atftpd.service; do
               # Skip the unit when it is not installed. systemctl exits 5 on a unit it cannot load.
               if systemctl cat "$unit" >/dev/null 2>&1; then
                 echo "Stopping and disabling $unit..."
@@ -5467,13 +5524,16 @@ queries:
               become: true
 
               tasks:
-                # tftp.socket is the Red Hat family unit, tftpd-hpa the Debian and Ubuntu one.
+                # tftp.socket is the Red Hat family unit. Debian and Ubuntu use tftpd-hpa, or atftpd
+                # started by atftpd.socket.
                 - name: Read the state of the TFTP server units
                   ansible.builtin.systemd:
                     name: "{{ item }}"
                   loop:
                     - tftp.socket
                     - tftpd-hpa
+                    - atftpd.socket
+                    - atftpd.service
                   register: tftp_units
 
                 - name: Ensure the TFTP server units are stopped and disabled
@@ -5493,8 +5553,9 @@ queries:
             Use this Chef Infra recipe code to stop and disable the TFTP server units:
 
             ```ruby
-            # tftp.socket is the Red Hat family unit, tftpd-hpa the Debian and Ubuntu one.
-            %w(tftp.socket tftpd-hpa.service).each do |unit|
+            # tftp.socket is the Red Hat family unit. Debian and Ubuntu use tftpd-hpa, or atftpd
+            # started by atftpd.socket.
+            %w(tftp.socket tftpd-hpa.service atftpd.socket atftpd.service).each do |unit|
               systemd_unit unit do
                 action %i(stop disable)
                 only_if "systemctl cat #{unit}"
@@ -5604,8 +5665,8 @@ queries:
                   # rsyncd is the Red Hat family name, rsync the Debian and Ubuntu one.
                   loop:
                     - rsyncd.socket
-                    - rsyncd
-                    - rsync
+                    - rsyncd.service
+                    - rsync.service
                   register: rsync_units
                   failed_when:
                     - rsync_units.failed
@@ -13086,6 +13147,8 @@ queries:
       compliance/pci-dss-4: pcidss-requirement-10-2-1
       compliance/soc2-2017: soc2-control-cc7-2-1
       compliance/vda-isa-5: vda-isa-5-5-2-4
+    filters: |
+      package("rsyslog").installed
     mql: |
       rsyslog.conf.actions != empty
       rsyslog.conf.actions.where(type == "omfile").all(fileCreateMode == /^0?[0246][04]0$/)
@@ -13095,7 +13158,7 @@ queries:
 
         rsyslog sets the permissions of a log file at the moment it creates the file, which is separate from the permissions on files that already exist. Two settings control that mode, and which one applies depends on how the rule that writes the file is written. A rule in the traditional selector form, such as `auth.* /var/log/auth.log`, takes the mode from the most recent `$FileCreateMode` line above it. A rule written as `action(type="omfile" ...)` ignores `$FileCreateMode` entirely. It takes the mode from its own `fileCreateMode` parameter, else from `module(load="builtin:omfile" fileCreateMode="...")`, and falls back to `0644` when neither is set.
 
-        The check works out the mode that applies to every rule that writes a file, reading included files at the point rsyslog includes them, and requires `0640` or a stricter mode such as `0600` for each one. `0640` gives the owner read and write, the group read, and other users nothing. A host with no rsyslog configuration fails.
+        The check works out the mode that applies to every rule that writes a file, reading included files at the point rsyslog includes them, and requires `0640` or a stricter mode such as `0600` for each one. `0640` gives the owner read and write, the group read, and other users nothing. The check applies only where the `rsyslog` package is installed, and a host with the package but no rsyslog configuration fails.
 
         **Why this matters**
 
@@ -14280,18 +14343,35 @@ queries:
                 f /var/log/faillog 0640 root root -
                 f /var/log/lastlog 0640 root utmp -
                 f /var/log/sudo.log 0640 root utmp -
+                f /var/log/unattended-upgrades/unattended-upgrades.log 0640 root root -
+                f /var/log/unattended-upgrades/unattended-upgrades-dpkg.log 0640 root adm -
+                f /var/log/unattended-upgrades/unattended-upgrades-shutdown.log 0640 root root -
                 f /var/log/wtmp 0640 root utmp -
+                ```
+
+                Then apply the file now instead of at the next boot. This creates the files that do not exist yet, such as the logs `unattended-upgrades` would otherwise create with mode `0644` on its next daily run, and sets the mode of the ones that do:
+
+                ```bash
+                systemd-tmpfiles --create /etc/tmpfiles.d/log-permissions.conf
                 ```
 
             4. On Debian and Ubuntu, make apt restore the mode of its own logs after every package operation:
 
-                apt rewrites `/var/log/apt/history.log` and `/var/log/apt/eipp.log.xz` with mode `0644` each time it installs, removes, or upgrades a package, which undoes step 1 at the next package change. The `systemd-tmpfiles` entries apply only at boot. Create `/etc/apt/apt.conf.d/99-log-permissions` with this hook, which apt runs after each package operation:
+                apt rewrites `/var/log/apt/history.log` and `/var/log/apt/eipp.log.xz` with mode `0644` each time it installs, removes, or upgrades a package, which undoes step 1 at the next package change. The `systemd-tmpfiles` entries are applied again only at boot. Create `/etc/apt/apt.conf.d/99-log-permissions` with this hook, which apt runs after each package operation:
 
                 ```text
                 DPkg::Post-Invoke { "chmod g-wx,o-rwx /var/log/apt/history.log /var/log/apt/eipp.log.xz 2>/dev/null || true"; };
                 ```
 
-            5. On openSUSE, give `klog.service` a umask:
+            5. Make logrotate create rotated log files without group write or access for other users:
+
+                logrotate starts a new file after each rotation with the mode in the `create` directive of its configuration, and several packages ship one that undoes step 1, such as `create 644 root root` for `/var/log/dpkg.log` and `create 0664 root utmp` for `/var/log/wtmp`. Run this command. It rewrites any `create` mode looser than `0640` to `0640` and leaves `0640` or a stricter mode alone:
+
+                ```bash
+                sed -i -E 's/^([[:space:]]*create[[:space:]]+)0?[0-7]([1235-7][0-7]|[0-7][1-7])([[:space:]]|$)/\10640\3/' /etc/logrotate.conf /etc/logrotate.d/*
+                ```
+
+            6. On openSUSE, give `klog.service` a umask:
 
                 `klog.service` writes the kernel ring buffer to `/var/log/boot.msg` at every boot, and creates the file with mode `0644`, which undoes step 1 at the next boot. Create `/etc/systemd/system/klog.service.d/log-permissions.conf` with this content, so the service creates the file without group write or any access for other users. It takes effect at the next boot:
 
@@ -14362,8 +14442,15 @@ queries:
             f /var/log/faillog 0640 root root -
             f /var/log/lastlog 0640 root utmp -
             f /var/log/sudo.log 0640 root utmp -
+            f /var/log/unattended-upgrades/unattended-upgrades.log 0640 root root -
+            f /var/log/unattended-upgrades/unattended-upgrades-dpkg.log 0640 root adm -
+            f /var/log/unattended-upgrades/unattended-upgrades-shutdown.log 0640 root root -
             f /var/log/wtmp 0640 root utmp -
             EOF
+              # Apply the entries now, not only at boot. A log that does not exist yet, such as
+              # the ones unattended-upgrades creates with mode 0644 on its daily run, is created
+              # with the listed mode, and the daemon then appends to it.
+              systemd-tmpfiles --create /etc/tmpfiles.d/log-permissions.conf
             fi
 
             # apt rewrites its own logs with mode 0644 on every package operation, which
@@ -14373,6 +14460,15 @@ queries:
               cat <<'EOF' > /etc/apt/apt.conf.d/99-log-permissions
             DPkg::Post-Invoke { "chmod g-wx,o-rwx /var/log/apt/history.log /var/log/apt/eipp.log.xz 2>/dev/null || true"; };
             EOF
+            fi
+
+            # logrotate starts a new file after each rotation with the mode in its create
+            # directive, and packages ship modes such as "create 644 root root" for dpkg.log.
+            # Rewrite any create mode looser than 0640 to 0640; 0640 or stricter is left alone.
+            # find exits non-zero on a missing start path, which set -e turns into an abort.
+            if [ -f /etc/logrotate.conf ] && [ -d /etc/logrotate.d ]; then
+              echo "Setting the mode logrotate creates rotated log files with..."
+              find /etc/logrotate.conf /etc/logrotate.d -type f -exec sed -i -E 's/^([[:space:]]*create[[:space:]]+)0?[0-7]([1235-7][0-7]|[0-7][1-7])([[:space:]]|$)/\10640\3/' {} +
             fi
 
             # openSUSE's klog.service rewrites /var/log/boot.msg with mode 0644 at every boot.
@@ -14447,7 +14543,18 @@ queries:
                       f /var/log/faillog 0640 root root -
                       f /var/log/lastlog 0640 root utmp -
                       f /var/log/sudo.log 0640 root utmp -
+                      f /var/log/unattended-upgrades/unattended-upgrades.log 0640 root root -
+                      f /var/log/unattended-upgrades/unattended-upgrades-dpkg.log 0640 root adm -
+                      f /var/log/unattended-upgrades/unattended-upgrades-shutdown.log 0640 root root -
                       f /var/log/wtmp 0640 root utmp -
+                  register: log_tmpfiles
+
+                # A log that does not exist yet, such as the ones unattended-upgrades creates
+                # with mode 0644 on its daily run, is created now with the listed mode
+                - name: Apply the tmpfiles.d log permissions now instead of at the next boot
+                  ansible.builtin.command: systemd-tmpfiles --create /etc/tmpfiles.d/log-permissions.conf
+                  changed_when: true
+                  when: log_tmpfiles.changed
 
                 # apt rewrites its own logs with mode 0644 on every package operation
                 - name: Make apt restore the mode of its logs after each package operation
@@ -14459,6 +14566,27 @@ queries:
                     content: |
                       DPkg::Post-Invoke { "chmod g-wx,o-rwx /var/log/apt/history.log /var/log/apt/eipp.log.xz 2>/dev/null || true"; };
                   when: ansible_facts['os_family'] == 'Debian'
+
+                - name: Find the logrotate configuration files
+                  ansible.builtin.find:
+                    paths: /etc/logrotate.d
+                    file_type: file
+                  register: logrotate_dropins
+
+                - name: Check for the main logrotate configuration file
+                  ansible.builtin.stat:
+                    path: /etc/logrotate.conf
+                  register: logrotate_main
+
+                # logrotate starts a new file after each rotation with the mode in its create
+                # directive, and packages ship modes such as "create 644 root root" for dpkg.log.
+                # Rewrite any create mode looser than 0640 to 0640; 0640 or stricter is left alone.
+                - name: Make logrotate create rotated log files without group write or access for other users
+                  ansible.builtin.replace:
+                    path: "{{ item }}"
+                    regexp: '^([ \t]*create[ \t]+)0?[0-7]([1235-7][0-7]|[0-7][1-7])(?=[ \t]|$)'
+                    replace: '\g<1>0640'
+                  loop: "{{ (logrotate_dropins.files | map(attribute='path') | list) + (['/etc/logrotate.conf'] if logrotate_main.stat.exists else []) }}"
 
                 - name: Check for openSUSE's klog service
                   ansible.builtin.stat:
@@ -14558,11 +14686,22 @@ queries:
                 f /var/log/faillog 0640 root root -
                 f /var/log/lastlog 0640 root utmp -
                 f /var/log/sudo.log 0640 root utmp -
+                f /var/log/unattended-upgrades/unattended-upgrades.log 0640 root root -
+                f /var/log/unattended-upgrades/unattended-upgrades-dpkg.log 0640 root adm -
+                f /var/log/unattended-upgrades/unattended-upgrades-shutdown.log 0640 root root -
                 f /var/log/wtmp 0640 root utmp -
               TMPFILES
               owner 'root'
               group 'root'
               mode '0644'
+              notifies :run, 'execute[apply log-permissions tmpfiles]', :immediately
+            end
+
+            # A log that does not exist yet, such as the ones unattended-upgrades creates
+            # with mode 0644 on its daily run, is created now with the listed mode
+            execute 'apply log-permissions tmpfiles' do
+              command 'systemd-tmpfiles --create /etc/tmpfiles.d/log-permissions.conf'
+              action :nothing
             end
 
             # apt rewrites its own logs with mode 0644 on every package operation
@@ -14572,6 +14711,20 @@ queries:
               group 'root'
               mode '0644'
               only_if { ::File.directory?('/etc/apt/apt.conf.d') }
+            end
+
+            # logrotate starts a new file after each rotation with the mode in its create
+            # directive, and packages ship modes such as "create 644 root root" for dpkg.log.
+            # Rewrite any create mode looser than 0640 to 0640; 0640 or stricter is left alone.
+            logrotate_create = /^(?<lead>[ \t]*create[ \t]+)0?[0-7](?:[1235-7][0-7]|[0-7][1-7])(?=[ \t]|$)/
+
+            (['/etc/logrotate.conf'] + ::Dir.glob('/etc/logrotate.d/*')).each do |conf|
+              ruby_block "set the logrotate create mode in #{conf}" do
+                block do
+                  ::File.write(conf, ::File.read(conf).gsub(logrotate_create, '\k<lead>0640'))
+                end
+                only_if { ::File.file?(conf) && ::File.read(conf).match?(logrotate_create) }
+              end
             end
 
             # openSUSE's klog.service rewrites /var/log/boot.msg with mode 0644 at every boot
