@@ -1382,14 +1382,19 @@ queries:
       compliance/soc2-2017: soc2-control-cc6-3-3
       compliance/vda-isa-5: vda-isa-5-4-2-1
     mql: |
-      microsoft.users.list.where(
+      globalAdminUsers = microsoft.users.list.where(
         directoryRoleAssignments.any(roleDefinition.templateId == "62e90394-69f5-4237-9190-012177145e10")
-      ).length.inRange(2, 4)
+      ).length
+      globalAdminApps = microsoft.serviceprincipals.where(
+        directoryRoleAssignments.any(roleDefinition.templateId == "62e90394-69f5-4237-9190-012177145e10")
+      ).length
+      globalAdminUsers + globalAdminApps >= 2
+      globalAdminUsers + globalAdminApps <= 4
     docs:
       desc: |
         This check verifies that the Global Administrator role is held by a small named group, between two and four accounts.
 
-        Global Administrator is the unrestricted role in Microsoft 365. Microsoft imposes no upper or lower bound on how many accounts hold it, so the count drifts in both directions. You review the assignments in the Microsoft Entra admin center under **Entra ID > Roles & admins**, and change them there or from the Microsoft 365 admin center under **Users > Active Users** using **Manage roles**. This check counts the users who hold the role, whether it is assigned to them directly or to a role-assignable group they belong to, and requires that number to fall between two and four. A group assigned the role counts once per member, because every member holds it.
+        Global Administrator is the unrestricted role in Microsoft 365. Microsoft imposes no upper or lower bound on how many accounts hold it, so the count drifts in both directions. You review the assignments in the Microsoft Entra admin center under **Entra ID > Roles & admins**, and change them there or from the Microsoft 365 admin center under **Users > Active Users** using **Manage roles**. This check counts the users and service principals who hold the role, whether it is assigned to them directly or to a role-assignable group they belong to, and requires that number to fall between two and four. A group assigned the role counts once per member, because every member holds it.
 
         **Why this matters**
 
@@ -1408,11 +1413,11 @@ queries:
         3. Select the **Global Administrator** role and review its **Assignments**.
         4. For each assignment to a group, open the group and count its members.
 
-        A passing tenant has between two and four users holding the Global Administrator role, counting the members of every group assigned it. A failing tenant has fewer than two or more than four.
+        A passing tenant has between two and four users and service principals holding the Global Administrator role, counting the members of every group assigned it. A failing tenant has fewer than two or more than four.
 
         ### Audit via PowerShell
 
-        1. Connect to Microsoft Graph and count the users who hold the Global Administrator role, directly or through a group assigned it:
+        1. Connect to Microsoft Graph and count the users and service principals who hold the Global Administrator role, directly or through a group assigned it:
 
         ```powershell
         Connect-MgGraph -Scopes "RoleManagement.Read.Directory", "GroupMember.Read.All"
@@ -1420,7 +1425,7 @@ queries:
         $holders = foreach ($member in Get-MgDirectoryRoleMember -DirectoryRoleId $role.Id) {
             if ($member.AdditionalProperties['@odata.type'] -eq '#microsoft.graph.group') {
                 (Get-MgGroupMember -GroupId $member.Id -All).Id
-            } elseif ($member.AdditionalProperties['@odata.type'] -eq '#microsoft.graph.user') {
+            } else {
                 $member.Id
             }
         }
