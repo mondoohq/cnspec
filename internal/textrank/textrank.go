@@ -110,7 +110,8 @@ func (ix *Index) Search(query string, limit int) []Scored {
 }
 
 // SearchBonus ranks documents by BM25 plus an optional per-document bonus (e.g.
-// a provider match), applied before sorting. A nil bonus is a plain BM25 search.
+// a provider match), applied before sorting. The bonus reorders matches; it never
+// admits a document with no query term in it. A nil bonus is a plain BM25 search.
 func (ix *Index) SearchBonus(query string, limit int, bonus func(id string) float64) []Scored {
 	if limit <= 0 {
 		limit = 10
@@ -123,11 +124,15 @@ func (ix *Index) SearchBonus(query string, limit int, bonus func(id string) floa
 	scored := make([]Scored, 0, len(ix.ids))
 	for i, id := range ix.ids {
 		score := ix.bm25(terms, i)
-		if bonus != nil {
-			score += bonus(id)
-		}
+		// The relevance cut comes before the bonus. A bonus only reorders
+		// documents that match the query; applied first, it lets a document
+		// sharing no term with the query in on the bonus alone, where it
+		// outranks every real match scoring under the bonus.
 		if score <= 0 {
 			continue
+		}
+		if bonus != nil {
+			score += bonus(id)
 		}
 		scored = append(scored, Scored{ID: id, Score: score})
 	}

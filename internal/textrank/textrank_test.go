@@ -54,6 +54,25 @@ func TestSearchBonus(t *testing.T) {
 	}
 }
 
+// TestSearchBonusNeverAdmitsANonMatch: a same-provider document that shares no
+// term with the query must not be returned on its bonus, ahead of a real match.
+// Synthetic: the documents are chosen to separate relevance from the bonus.
+func TestSearchBonusNeverAdmitsANonMatch(t *testing.T) {
+	ix := Build([]Document{
+		doc("aws-account-root-mfa", "Root account requires MFA", "aws.iam.credentialReport"),
+		doc("gcp-bucket-public", "Storage buckets must block public access", "gcp.storage.buckets"),
+	})
+	got := ix.SearchBonus("buckets must block public ACLs", 5, func(id string) float64 {
+		if id == "aws-account-root-mfa" {
+			return 5
+		}
+		return 0
+	})
+	if len(got) != 1 || got[0].ID != "gcp-bucket-public" {
+		t.Fatalf("expected only the matching document, got %+v", got)
+	}
+}
+
 func TestEmptyIndexAndQuery(t *testing.T) {
 	if got := Build(nil).Search("anything", 5); len(got) != 0 {
 		t.Fatalf("empty index should return no results, got %+v", got)
