@@ -32,7 +32,7 @@ Every stage has a defined input, a defined cnspec action, and a defined output.
 | Stage | You provide | cnspec does | Output |
 |-------|-------------|-------------|--------|
 | **Requirement** | The thing to check, in your head or a compliance control | — | A one-line intent |
-| **Intent** | `title` (+ optional `docs.desc`) | Captures it (prompts for it in `-i`) | Natural-language intent |
+| **Intent** | `title` (+ optional `docs.desc`) | Captures it (prompts for it in `--interactive`) | Natural-language intent |
 | **Target** | Confirm/adjust the provider | Guesses the provider from the title and proposes the asset `filter` | `provider` + `filters:` |
 | **Grounding** | — | Ranks similar existing checks (BM25 over `./content`) and shows/feeds the top matches | Few-shot examples |
 | **Generate** | — | Builds a prompt (intent + schema hints + examples + correctness rules) and calls your agent CLI | Candidate MQL |
@@ -44,7 +44,7 @@ Every stage has a defined input, a defined cnspec action, and a defined output.
 
 The stages are the same; only the driver differs.
 
-### 1. Guided (the defined default) — `cnspec policy generate -i`
+### 1. Guided (the defined default) — `cnspec policy generate --interactive`
 An interactive session, one check at a time. cnspec asks what to verify, guesses
 the target, shows grounding, generates, and walks you through
 accept / edit / regenerate before writing. Best for authoring from scratch.
@@ -52,6 +52,15 @@ accept / edit / regenerate before writing. Best for authoring from scratch.
 ### 2. Batch — `cnspec policy generate <bundle> --in-place`
 You pre-write checks with `title` + `docs.desc` but no `mql`; cnspec fills them
 all in. Best for backfilling a bundle or a directory of policies.
+
+Each check reports as it goes (`… generating`, `↻ attempt 2/3, previous answer
+rejected: …`, `✓ generated`), so a long run never sits silent. A check with no
+asset filter of its own, in a group with none, gets its provider's default
+filter, and the run says so (`added asset filter asset.family.contains("linux")`):
+without one, the check would run against every asset a scan reaches. When a
+check fails, its last candidate is printed, never written, so you can fix a
+near-miss by hand. A failure several checks share (a provider that is not
+installed, say) is spelled out once and referenced after that.
 
 ### 3. Agent-driven — you're already in Claude Code / Codex
 You don't call `generate`; your agent does, using cnspec as the toolbox
@@ -63,21 +72,32 @@ You don't call `generate`; your agent does, using cnspec as the toolbox
 **Requirement:** "S3 buckets must be encrypted." (e.g. a CIS AWS control.)
 
 ```
-$ cnspec policy generate -i
+$ cnspec policy generate --interactive
+Bundle file to write checks to [policy.mql.yaml]: aws-s3.mql.yaml
+
+── New check ──────────────────────────────
 What should this check verify?: S3 buckets must be encrypted
 More detail (optional): All S3 buckets need server-side encryption
-Target provider [aws]:                      ← guessed from the title
+Target provider (aws, gcp, azure, os, k8s, …) [aws]:   ← guessed from the title
 Asset filter [asset.platform == "aws"]:     ← proposed from the provider
 
 Similar existing checks (used as grounding):
   • mondoo-aws-security-s3-bucket-server-side-encryption-enabled-aws
       aws.s3.bucket.encrypted == true
 
+Generating…
+  … s3-buckets-must-be-encrypted: generating
+
 Generated MQL:
     aws.s3.buckets.all(encryption != empty)
   [a]ccept, [e]dit, [r]egenerate with feedback, [s]kip [a]: a
+Check UID [s3-buckets-must-be-encrypted]:
   ✓ added s3-buckets-must-be-encrypted to aws-s3.mql.yaml
+Add another check? [Y/n]: n
 ```
+
+A bundle file name without `.mql.yaml` gets the suffix, and an existing file
+that cnspec cannot parse is reported at this first prompt, before any agent run.
 
 **Output** — written into the bundle, ready to `lint`, `scan` and commit:
 
@@ -86,6 +106,8 @@ policies:
   - uid: aws-s3
     name: Aws S3
     version: 1.0.0
+    require:
+      - provider: aws
     groups:
       - title: Generated checks
         checks:
@@ -104,6 +126,10 @@ so a bundle that only lints is not enough. When the file already has a policy,
 the check joins it (in a group of its own, so it does not inherit a group filter
 that was written for other checks).
 
+The policy also gets `require: [{provider: aws}]`, which is what lets
+`cnspec scan --policy-bundle` install the provider the check needs, and what
+lint's `policy-missing-require` rule asks for.
+
 Then: `cnspec policy lint aws-s3.mql.yaml` → `cnspec scan aws --policy-bundle
 aws-s3.mql.yaml` → commit.
 
@@ -118,6 +144,18 @@ aws-s3.mql.yaml` → commit.
 Compilation alone can't catch the semantic traps (`null && null == true`,
 dotted-path husks); execute-and-assert can. Prefer `--test-recording` for
 reproducible, credential-free validation.
+
+## The target provider
+
+Validation compiles against the provider that defines the check's resources, so
+the target has to be known and installed before the agent runs. cnspec takes it
+from, in order: the provider you confirmed in the guided flow, the check's
+filters, its uid, and the words of its title and description (whole words only,
+so "passwords" does not mean AWS RDS). A missing provider is installed the way
+`cnspec scan` installs one, unless `--auto-update=false` pins the installed set;
+if it cannot be installed, the check fails before any agent call, with the
+install command. When nothing names a target, the provider of the generated
+query's first resource is used for the asset filter.
 
 ## Guardrails
 

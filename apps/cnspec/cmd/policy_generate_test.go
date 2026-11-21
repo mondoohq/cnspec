@@ -247,7 +247,7 @@ func captureStdout(t *testing.T, fn func()) string {
 
 // TestPolicyGenerate_InteractiveRejectsInPlace pins that a flag the guided flow
 // cannot honour is refused rather than silently ignored. It is reachable without
-// typing -i: a bare tty run turns the wizard on by itself.
+// typing --interactive: a bare tty run turns the wizard on by itself.
 func TestPolicyGenerate_InteractiveRejectsInPlace(t *testing.T) {
 	cmd := &cobra.Command{}
 	cmd.Flags().AddFlagSet(policyGenerateCmd.Flags())

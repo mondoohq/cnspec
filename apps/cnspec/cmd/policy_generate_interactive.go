@@ -110,7 +110,46 @@ func (w *wizard) targetFile() (string, error) {
 	if def == "" {
 		def = "policy.mql.yaml"
 	}
-	return w.line("Bundle file to write checks to", def)
+	for {
+		answer, err := w.line("Bundle file to write checks to", def)
+		if err != nil {
+			return "", err
+		}
+		file, problem := checkBundleFile(answer)
+		if problem == "" {
+			if file != answer {
+				fmt.Fprintf(w.out, "  (writing to %s)\n", file)
+			}
+			return file, nil
+		}
+		fmt.Fprintf(w.out, "  %s\n", problem)
+	}
+}
+
+// checkBundleFile vets the bundle path the wizard will write to before the
+// author describes any check, rather than at the end of the first one. A
+// title typed one prompt too early ("SSH must not permit root login") used to
+// become the file name, and an existing file that does not parse failed only
+// after a billed agent run. A name without a YAML extension gets .mql.yaml, the
+// suffix `cnspec policy lint` and the bundle walkers look for.
+func checkBundleFile(name string) (file, problem string) {
+	file = strings.TrimSpace(name)
+	lower := strings.ToLower(file)
+	if !strings.HasSuffix(lower, ".yaml") && !strings.HasSuffix(lower, ".yml") {
+		if strings.ContainsAny(file, " \t") {
+			return "", fmt.Sprintf("%q does not look like a file name; policy bundles are files ending in .mql.yaml", file)
+		}
+		file += ".mql.yaml"
+	}
+	if info, err := os.Stat(file); err == nil {
+		if info.IsDir() {
+			return "", fmt.Sprintf("%s is a directory; name a .mql.yaml file to write checks to", file)
+		}
+		if _, err := bundle.LoadFile(file); err != nil {
+			return "", fmt.Sprintf("%s exists but is not a policy bundle cnspec can read (%v); fix it or name another file", file, err)
+		}
+	}
+	return file, ""
 }
 
 func (w *wizard) loop(ctx context.Context, file string) error {
@@ -136,9 +175,10 @@ func (w *wizard) loop(ctx context.Context, file string) error {
 		w.showGrounding(title+" "+desc, provider)
 
 		check := generate.Check{
-			UID:   bundle.CheckUIDForTitle(title),
-			Title: title,
-			Desc:  desc,
+			UID:      bundle.CheckUIDForTitle(title),
+			Title:    title,
+			Desc:     desc,
+			Provider: provider, // the author confirmed it; don't infer it again
 		}
 		if filter != "" {
 			check.Filters = []string{filter}
@@ -149,7 +189,7 @@ func (w *wizard) loop(ctx context.Context, file string) error {
 			return err
 		}
 		if ok {
-			if err := w.writeCheck(file, title, desc, filter, mql); err != nil {
+			if err := w.writeCheck(file, title, desc, filter, mql, provider); err != nil {
 				if errors.Is(err, errInputClosed) {
 					return err
 				}
@@ -185,7 +225,7 @@ func (w *wizard) showGrounding(intent, provider string) {
 
 // writeCheck asks for the uid and adds the accepted check to the bundle, or
 // previews it under --dry-run.
-func (w *wizard) writeCheck(file, title, desc, filter, mql string) error {
+func (w *wizard) writeCheck(file, title, desc, filter, mql, provider string) error {
 	uid, err := w.uniqueUID(file, bundle.CheckUIDForTitle(title))
 	if err != nil {
 		return err
@@ -195,7 +235,7 @@ func (w *wizard) writeCheck(file, title, desc, filter, mql string) error {
 	if err != nil {
 		return err
 	}
-	if err := bundle.AddCheck(b, bundle.PolicyUIDForFile(file), uid, title, desc, filter, mql); err != nil {
+	if err := bundle.AddCheck(b, bundle.PolicyUIDForFile(file), uid, title, desc, filter, mql, provider); err != nil {
 		return err
 	}
 	out, err := bundle.FormatBundle(b, false)
@@ -448,12 +488,14 @@ func (w *wizard) required(label string) (string, error) {
 }
 
 func (w *wizard) yesNo(msg string) (bool, error) {
-	s, err := w.line(msg+" [Y/n]", "y")
+	// [Y/n] already marks yes as the default; line() would add a second "[y]"
+	fmt.Fprintf(w.out, "%s [Y/n]: ", msg)
+	s, err := w.rawLine()
 	if err != nil {
 		return false, err
 	}
-	s = strings.ToLower(s)
-	return s == "y" || s == "yes", nil
+	s = strings.ToLower(strings.TrimSpace(s))
+	return s == "" || s == "y" || s == "yes", nil
 }
 
 func (w *wizard) choice(label string, opts ...string) (string, error) {
@@ -472,8 +514,7 @@ func (w *wizard) choice(label string, opts ...string) (string, error) {
 	}
 }
 
-// guessProvider makes a light guess at the target provider from the title so the
-// prompt can offer a sensible default.
+// indentBlock indents every line of a query for display.
 func indentBlock(s string) string {
 	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
 	for i := range lines {

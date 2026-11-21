@@ -44,13 +44,14 @@ func LoadFile(file string) (*Bundle, error) {
 }
 
 // AppendCheck adds a new check to a bundle file (creating it if absent),
-// preserving existing formatting/comments and writing atomically.
-func AppendCheck(file, uid, title, desc, filter, mql string) error {
+// preserving existing formatting/comments and writing atomically. provider, when
+// known, is added to the policy's require list (see AddCheck).
+func AppendCheck(file, uid, title, desc, filter, mql, provider string) error {
 	b, err := LoadFile(file)
 	if err != nil {
 		return err
 	}
-	if err := AddCheck(b, PolicyUIDForFile(file), uid, title, desc, filter, mql); err != nil {
+	if err := AddCheck(b, PolicyUIDForFile(file), uid, title, desc, filter, mql, provider); err != nil {
 		return err
 	}
 	out, err := FormatBundle(b, false)
@@ -67,7 +68,11 @@ func AppendCheck(file, uid, title, desc, filter, mql string) error {
 // fails with "a policy or framework mrn is required". Both front ends tell the
 // user to lint and scan what was written, so what is written has to survive
 // both.
-func AddCheck(b *Bundle, policyUID, uid, title, desc, filter, mql string) error {
+//
+// provider, when not empty, is added to the policy's `require:` list. Lint warns
+// on a policy without one (policy-missing-require), and it is what lets
+// `cnspec scan --policy-bundle` install the provider the check needs.
+func AddCheck(b *Bundle, policyUID, uid, title, desc, filter, mql, provider string) error {
 	if b == nil {
 		return errors.New("no bundle to add the check to")
 	}
@@ -86,9 +91,26 @@ func AddCheck(b *Bundle, policyUID, uid, title, desc, filter, mql string) error 
 		q.Docs = &MqueryDocs{Desc: desc}
 	}
 
-	group := generatedGroup(targetPolicy(b, policyUID))
+	policy := targetPolicy(b, policyUID)
+	group := generatedGroup(policy)
 	group.Checks = append(group.Checks, q)
+	requireProvider(policy, provider)
 	return nil
+}
+
+// requireProvider adds a provider to a policy's require list unless it is
+// already there.
+func requireProvider(p *Policy, provider string) {
+	provider = strings.TrimSpace(provider)
+	if p == nil || provider == "" {
+		return
+	}
+	for _, r := range p.Require {
+		if r != nil && r.Provider == provider {
+			return
+		}
+	}
+	p.Require = append(p.Require, &Requirement{Provider: provider})
 }
 
 // targetPolicy returns the policy new checks join: the bundle's first policy

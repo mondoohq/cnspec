@@ -73,6 +73,67 @@ func QueryFilterStrings(q *Mquery) []string {
 	return out
 }
 
+// ChecksMissingAssetFilter returns the uids of policy checks that have no asset
+// filter of their own and sit in no group that has one. Those are the checks
+// lint reports as policy-missing-asset-filter, and without a filter a check runs
+// against every asset in a scan, including assets it cannot apply to. A check
+// listed by uid in a group resolves to its top-level definition, so the uid is
+// what both share; a check with variants selects assets through them.
+func ChecksMissingAssetFilter(b *Bundle) map[string]bool {
+	out := map[string]bool{}
+	if b == nil {
+		return out
+	}
+	defs := map[string]*Mquery{}
+	for _, q := range AllQueries(b) {
+		if q != nil && q.Uid != "" && (defs[q.Uid] == nil || q.Mql != "" || q.Title != "") {
+			defs[q.Uid] = q
+		}
+	}
+	covered := map[string]bool{}
+	var candidates []string
+	for _, p := range b.Policies {
+		if p == nil {
+			continue
+		}
+		for _, g := range p.Groups {
+			if g == nil {
+				continue
+			}
+			groupFiltered := g.Filters != nil && len(g.Filters.Items) > 0
+			for _, c := range g.Checks {
+				if c == nil || c.Uid == "" {
+					continue
+				}
+				if groupFiltered {
+					covered[c.Uid] = true
+					continue
+				}
+				candidates = append(candidates, c.Uid)
+			}
+		}
+	}
+	for _, uid := range candidates {
+		if covered[uid] {
+			continue
+		}
+		q := defs[uid]
+		if q == nil || len(QueryFilterStrings(q)) > 0 || QueryHasVariants(q) {
+			continue
+		}
+		out[uid] = true
+	}
+	return out
+}
+
+// SetQueryFilter replaces a query's asset filter with a single expression.
+func SetQueryFilter(q *Mquery, filter string) {
+	if q == nil {
+		return
+	}
+	q.Filters = &Filters{Items: map[string]*Mquery{"": {Mql: filter}}}
+}
+
 // QueryHasVariants reports whether a query delegates its MQL to per-platform
 // variants (so the parent must not receive generated MQL).
 func QueryHasVariants(q *Mquery) bool {

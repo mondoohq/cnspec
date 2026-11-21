@@ -47,3 +47,34 @@ func TestCheckUIDForTitle(t *testing.T) {
 		}
 	}
 }
+
+// TestAddCheckRequiresProvider: the policy a check joins lists the check's
+// provider once, so the bundle lints without policy-missing-require and a scan
+// installs the provider. Synthetic.
+func TestAddCheckRequiresProvider(t *testing.T) {
+	b := &Bundle{}
+	for _, c := range []struct{ uid, provider string }{
+		{"s3-encrypted", "aws"},
+		{"s3-versioned", "aws"},
+		{"ssh-root", "os"},
+		{"unknown-target", ""},
+	} {
+		if err := AddCheck(b, "demo", c.uid, c.uid, "", "", "true", c.provider); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var got []string
+	for _, r := range b.Policies[0].Require {
+		got = append(got, r.Provider)
+	}
+	if strings.Join(got, ",") != "aws,os" {
+		t.Fatalf("require = %v, want [aws os]", got)
+	}
+	out, err := FormatBundle(b, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), "provider: aws") {
+		t.Errorf("require was not written:\n%s", out)
+	}
+}

@@ -248,7 +248,7 @@ Shipped in this change (all in the cnspec repo; no mql or schema changes):
   and reusable against a real agent to measure a model.
 - `apps/cnspec/cmd/policy_generate.go` — the `cnspec policy generate` command (UC2
   driver): batch fill-in over bundle files.
-- `apps/cnspec/cmd/policy_generate_interactive.go` — `--interactive` (`-i`): the
+- `apps/cnspec/cmd/policy_generate_interactive.go` — `--interactive`: the
   guided authoring flow (describe → guess target/filter → show grounding →
   generate → accept/edit/regenerate → write one check at a time). This is the
   defined end-to-end experience for authoring from scratch.

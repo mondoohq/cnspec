@@ -17,6 +17,7 @@ import (
 	"github.com/mattn/go-isatty"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 	"go.mondoo.com/cnspec/internal/bundle"
 	"go.mondoo.com/cnspec/internal/generate"
 	"go.mondoo.com/cnspec/policy"
@@ -34,7 +35,10 @@ func init() {
 	policyGenerateCmd.Flags().Bool("no-validate", false, "Skip in-process MQL compile validation of generated queries")
 	policyGenerateCmd.Flags().String("test-target", "", "Execute-and-assert generated MQL against this live target (e.g. local, aws, gcp, azure): requires each query to resolve to a concrete true/false verdict, not just compile")
 	policyGenerateCmd.Flags().String("test-recording", "", "Execute-and-assert generated MQL against a recording file (reproducible, no live credentials)")
-	policyGenerateCmd.Flags().BoolP("interactive", "i", false, "Guided authoring: describe a check, generate, review (accept/edit/regenerate), and write it out")
+	// No -i shorthand: the os provider's ssh connector uses -i for
+	// --identity-file, and the CLI pre-scans every provider's flags as one set,
+	// so -i here warned "flag needs an argument" on every run.
+	policyGenerateCmd.Flags().Bool("interactive", false, "Guided authoring: describe a check, generate, review (accept/edit/regenerate), and write it out")
 	policyCmd.AddCommand(policyGenerateCmd)
 }
 
@@ -102,6 +106,12 @@ func runPolicyGenerate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("--in-place cannot be combined with the guided flow (--interactive); the wizard writes into the bundle file you name")
 	}
 
+	// The flags are valid. From here a failure is about the run, not the
+	// command line: reprinting the usage text under a generation error buries
+	// it, and the root command already logs the error once.
+	cmd.SilenceUsage = true
+	cmd.SilenceErrors = true
+
 	backend, err := generate.Backend(agentName)
 	if err != nil {
 		return err
@@ -138,7 +148,7 @@ func runPolicyGenerate(cmd *cobra.Command, args []string) error {
 		}
 		fmt.Fprintf(os.Stderr, "Validation: compile + execute-and-assert against %s\n", label)
 	default:
-		validator, err = generate.NewCompileValidator()
+		validator, err = generate.NewCompileValidator(generate.WithProviderInstall(autoUpdateProviders()))
 		if err != nil {
 			validator = generate.NoopValidator{}
 			log.Warn().Err(err).Msg("could not initialize MQL validation; generated queries will not be compile-checked")
@@ -155,6 +165,7 @@ func runPolicyGenerate(cmd *cobra.Command, args []string) error {
 		Force:      force,
 		Explain:    explain,
 		SkillPaths: findSkills(),
+		OnAttempt:  printAttempt(os.Stderr),
 	})
 	if err != nil {
 		return err
@@ -286,6 +297,10 @@ func generateForFile(ctx context.Context, gen *generate.Generator, file string, 
 		return 0, 0, nil
 	}
 
+	// A shared cause (a provider that is not installed, an agent that is not
+	// logged in) fails every check the same way. The first one carries the full
+	// reason; repeating it verbatim per check buries the one line that matters.
+	firstWithReason := map[string]string{}
 	results := gen.Generate(ctx, checks, func(r generate.Result) {
 		switch r.Action {
 		// everything printed here comes from outside cnspec — the uid from a bundle
@@ -298,7 +313,18 @@ func generateForFile(ctx context.Context, gen *generate.Generator, file string, 
 				fmt.Fprintf(os.Stderr, "      %s\n", bundle.SanitizeText(r.Explanation))
 			}
 		case generate.ActionFailed:
+			if first, seen := firstWithReason[r.Reason]; seen {
+				fmt.Fprintf(os.Stderr, "  ✗ %s: same reason as %s\n", bundle.SanitizeText(r.UID), bundle.SanitizeText(first))
+				break
+			}
+			firstWithReason[r.Reason] = r.UID
 			fmt.Fprintf(os.Stderr, "  ✗ %s: %s\n", bundle.SanitizeText(r.UID), bundle.SanitizeText(r.Reason))
+			// The last candidate is often one field away from right. It is
+			// never written, but showing it lets the author fix it by hand
+			// instead of paying for another run.
+			if candidate := strings.TrimSpace(r.MQL); candidate != "" {
+				fmt.Fprintf(os.Stderr, "      last candidate (not written):\n%s\n", indentLines(bundle.SanitizeText(candidate), "        "))
+			}
 		case generate.ActionSkipped:
 			// skips are expected and numerous (existing mql, variant parents);
 			// the summary reports the count, so stay quiet here.
@@ -307,11 +333,23 @@ func generateForFile(ctx context.Context, gen *generate.Generator, file string, 
 
 	// apply generated MQL back onto the exact query definition (targets is
 	// index-aligned with checks and results)
+	unfiltered := bundle.ChecksMissingAssetFilter(raw)
 	for i, r := range results {
 		switch r.Action {
 		case generate.ActionGenerated:
 			targets[i].Mql = r.MQL
 			generated++
+			// A check without an asset filter runs against every asset in a
+			// scan, and lint warns about it. The guided flow proposes the
+			// provider's default filter; batch mode does the same, and says
+			// so, since the filter is a choice the author should see.
+			if unfiltered[targets[i].Uid] {
+				if f := generate.DefaultFilter(r.Provider); f != "" {
+					bundle.SetQueryFilter(targets[i], f)
+					unfiltered[targets[i].Uid] = false
+					fmt.Fprintf(os.Stderr, "    %s: added asset filter %s\n", bundle.SanitizeText(r.UID), f)
+				}
+			}
 		case generate.ActionFailed:
 			failed++
 		}
@@ -505,6 +543,47 @@ func findSkills() []string {
 		}
 	}
 	return out
+}
+
+// printAttempt reports each agent call as it starts. One agent call takes tens
+// of seconds and a check can take three, so without this a batch run prints
+// nothing for minutes. A retry says why the previous answer was rejected, which
+// is also the first sign that a whole bundle is failing for one shared reason.
+func printAttempt(out io.Writer) func(generate.Attempt) {
+	return func(a generate.Attempt) {
+		uid := bundle.SanitizeText(a.UID)
+		if a.Retrying == nil {
+			fmt.Fprintf(out, "  … %s: generating\n", uid)
+			return
+		}
+		fmt.Fprintf(out, "  ↻ %s: attempt %d/%d, previous answer rejected: %s\n",
+			uid, a.N, a.Max, bundle.SanitizeText(truncateLine(a.Retrying.Error(), 160)))
+	}
+}
+
+// indentLines prefixes every line of s.
+func indentLines(s, prefix string) string {
+	return prefix + strings.ReplaceAll(s, "\n", "\n"+prefix)
+}
+
+// truncateLine keeps the first line of s, cut to at most n runes.
+func truncateLine(s string, n int) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		s = s[:i]
+	}
+	if r := []rune(s); len(r) > n {
+		return string(r[:n-1]) + "…"
+	}
+	return s
+}
+
+// autoUpdateProviders reports the --auto-update setting (on by default), which
+// decides whether a provider the checks target is installed when missing.
+func autoUpdateProviders() bool {
+	if viper.IsSet("auto-update") {
+		return viper.GetBool("auto-update")
+	}
+	return true
 }
 
 // interruptGrace is how long an interrupted run gets to return on its own

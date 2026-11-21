@@ -120,3 +120,64 @@ func TestSanitizeTextMatchesFormatBundle(t *testing.T) {
 		t.Errorf("what FormatBundle wrote is not what SanitizeText shows:\nshown: %q\nfile:\n%s", shown, out)
 	}
 }
+
+func TestChecksMissingAssetFilter(t *testing.T) {
+	// Synthetic: one check per way a check can or cannot get an asset filter.
+	src := `policies:
+  - uid: p
+    name: P
+    groups:
+      - filters: asset.family.contains("linux")
+        checks:
+          - uid: group-filtered
+            title: In a filtered group
+      - checks:
+          - uid: own-filter
+            title: Has its own filter
+            filters: asset.platform == "aws"
+          - uid: bare
+            title: No filter anywhere
+          - uid: by-reference
+          - uid: with-variants
+            title: Selects through variants
+            variants:
+              - uid: with-variants-aws
+queries:
+  - uid: by-reference
+    title: Defined at top level, listed by uid
+  - uid: with-variants-aws
+    filters: asset.platform == "aws"
+`
+	b, err := ParseYaml([]byte(src))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := ChecksMissingAssetFilter(b)
+	for _, uid := range []string{"bare", "by-reference"} {
+		if !got[uid] {
+			t.Errorf("%s has no asset filter but was not reported", uid)
+		}
+	}
+	for _, uid := range []string{"group-filtered", "own-filter", "with-variants", "with-variants-aws"} {
+		if got[uid] {
+			t.Errorf("%s selects assets already but was reported", uid)
+		}
+	}
+
+	// setting one makes it lint-shaped and drops it from the set
+	for _, q := range AllQueries(b) {
+		if q.Uid == "bare" {
+			SetQueryFilter(q, `asset.family.contains("unix")`)
+		}
+	}
+	if ChecksMissingAssetFilter(b)["bare"] {
+		t.Error("bare is still reported after SetQueryFilter")
+	}
+	out, err := FormatBundle(b, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), `filters: asset.family.contains("unix")`) {
+		t.Errorf("the filter was not written:\n%s", out)
+	}
+}

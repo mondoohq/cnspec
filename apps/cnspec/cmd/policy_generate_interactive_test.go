@@ -307,7 +307,7 @@ func TestWizardJoinsExistingPolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := bundle.AppendCheck(file, "new-check", "A new check", "", `asset.platform == "aws"`, "aws.s3.buckets.length > 0"); err != nil {
+	if err := bundle.AppendCheck(file, "new-check", "A new check", "", `asset.platform == "aws"`, "aws.s3.buckets.length > 0", ""); err != nil {
 		t.Fatalf("appendCheck: %v", err)
 	}
 
@@ -342,10 +342,10 @@ func TestWizardJoinsExistingPolicy(t *testing.T) {
 func TestAppendCheck(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "policy.mql.yaml")
 
-	if err := bundle.AppendCheck(file, "c1", "First check", "does a thing", `asset.platform == "aws"`, "aws.s3.buckets.length > 0"); err != nil {
+	if err := bundle.AppendCheck(file, "c1", "First check", "does a thing", `asset.platform == "aws"`, "aws.s3.buckets.length > 0", ""); err != nil {
 		t.Fatalf("appendCheck 1: %v", err)
 	}
-	if err := bundle.AppendCheck(file, "c2", "Second check", "", "", "users.all(uid >= 0)"); err != nil {
+	if err := bundle.AppendCheck(file, "c2", "Second check", "", "", "users.all(uid >= 0)", ""); err != nil {
 		t.Fatalf("appendCheck 2: %v", err)
 	}
 
@@ -379,10 +379,10 @@ func TestAppendCheck(t *testing.T) {
 // (query-uid-unique) the user only discovers later.
 func TestAppendCheckRejectsDuplicateUID(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "policy.mql.yaml")
-	if err := bundle.AppendCheck(file, "c1", "First check", "does a thing", `asset.platform == "aws"`, "aws.s3.buckets.length > 0"); err != nil {
+	if err := bundle.AppendCheck(file, "c1", "First check", "does a thing", `asset.platform == "aws"`, "aws.s3.buckets.length > 0", ""); err != nil {
 		t.Fatalf("appendCheck 1: %v", err)
 	}
-	err := bundle.AppendCheck(file, "c1", "Second check", "", "", "users.all(uid >= 0)")
+	err := bundle.AppendCheck(file, "c1", "Second check", "", "", "users.all(uid >= 0)", "")
 	if err == nil {
 		t.Fatal("appending a duplicate uid succeeded; want an error")
 	}
@@ -403,7 +403,7 @@ func TestWizardRePromptsOnUIDCollision(t *testing.T) {
 	bin, _ := scriptedAgent(t, okAgentReply)
 	gen := testGenerator(t, bin)
 	file := filepath.Join(t.TempDir(), "policy.mql.yaml")
-	if err := bundle.AppendCheck(file, "taken", "Existing", "", `asset.platform == "aws"`, "existing.value == 1"); err != nil {
+	if err := bundle.AppendCheck(file, "taken", "Existing", "", `asset.platform == "aws"`, "existing.value == 1", ""); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 
@@ -427,7 +427,7 @@ func TestWizardRePromptsOnUIDCollision(t *testing.T) {
 
 // TestWizardDryRunWritesNothing pins --dry-run, which the wizard ignored: help
 // says "Preview what would be generated without writing anything", and the flag
-// is reachable without -i because a bare tty run turns the wizard on itself.
+// is reachable without --interactive because a bare tty run turns the wizard on itself.
 func TestWizardDryRunWritesNothing(t *testing.T) {
 	bin, _ := scriptedAgent(t, okAgentReply)
 	gen := testGenerator(t, bin)
@@ -499,4 +499,40 @@ func writtenCheck(t *testing.T, b *bundle.Bundle, uid string) *bundle.Mquery {
 	}
 	t.Fatalf("check %q not found in bundle", uid)
 	return nil
+}
+
+// TestWizardVetsTheBundleFile: a title typed into the file prompt must not
+// become the file name, and a broken existing file is reported before any
+// check is described.
+func TestWizardVetsTheBundleFile(t *testing.T) {
+	bin, counter := scriptedAgent(t, okAgentReply)
+	gen := testGenerator(t, bin)
+	dir := t.TempDir()
+	broken := filepath.Join(dir, "broken.mql.yaml")
+	if err := os.WriteFile(broken, []byte("policies: [unclosed"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(dir, "ssh")
+
+	// Synthetic answers: a title, then the broken file, then a bare name.
+	script := "SSH must not permit root login\n" + broken + "\n" + want + "\n"
+	out, err := driveWizard(t, gen, wizardOpts{}, script)
+	if err != nil {
+		t.Fatalf("wizard: %v", err)
+	}
+	if !strings.Contains(out, "does not look like a file name") {
+		t.Errorf("a title was accepted as the file name:\n%s", out)
+	}
+	if !strings.Contains(out, "is not a policy bundle cnspec can read") {
+		t.Errorf("the broken bundle was not reported up front:\n%s", out)
+	}
+	if !strings.Contains(out, "writing to "+want+".mql.yaml") {
+		t.Errorf("a bare name did not get the .mql.yaml suffix:\n%s", out)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "SSH must not permit root login")); err == nil {
+		t.Error("a file named after the title was created")
+	}
+	if n := agentCalls(t, counter); n != 0 {
+		t.Errorf("the agent ran %d time(s) before a check was described", n)
+	}
 }

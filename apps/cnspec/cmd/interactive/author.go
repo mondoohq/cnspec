@@ -128,6 +128,7 @@ type authorState struct {
 
 	mql         string
 	explanation string
+	provider    string // the target the run resolved; written to require:
 	warn        string // the gate rejected it, but the candidate is still offered
 	err         string
 	wrote       string
@@ -195,6 +196,7 @@ type authorGeneratedMsg struct {
 	seq         int
 	mql         string
 	explanation string
+	provider    string
 	warn        string
 	err         error
 }
@@ -215,7 +217,7 @@ type authorWroteMsg struct {
 func authorGenerateCmd(ctx context.Context, seq int, gen *generate.Generator, check generate.Check) tea.Cmd {
 	return func() tea.Msg {
 		res := gen.GenerateCheck(ctx, check)
-		msg := authorGeneratedMsg{seq: seq}
+		msg := authorGeneratedMsg{seq: seq, provider: res.Provider}
 		switch {
 		case res.Action == generate.ActionGenerated:
 			msg.mql = bundle.SanitizeText(res.MQL)
@@ -235,13 +237,13 @@ func authorGenerateCmd(ctx context.Context, seq int, gen *generate.Generator, ch
 }
 
 // authorWriteCmd appends the accepted check to its bundle.
-func authorWriteCmd(seq int, file, uid, title, desc, filter, mql string) tea.Cmd {
+func authorWriteCmd(seq int, file, uid, title, desc, filter, mql, provider string) tea.Cmd {
 	return func() tea.Msg {
 		taken := map[string]bool{}
 		if b, err := bundle.LoadFile(file); err == nil {
 			taken = bundle.QueryUIDs(b)
 		}
-		err := bundle.AppendCheck(file, bundle.NextFreeUID(uid, taken), title, desc, filter, mql)
+		err := bundle.AppendCheck(file, bundle.NextFreeUID(uid, taken), title, desc, filter, mql, provider)
 		return authorWroteMsg{seq: seq, path: file, err: err}
 	}
 }
@@ -322,6 +324,7 @@ func (m Model) authorGenerated(msg authorGeneratedMsg) (tea.Model, tea.Cmd) {
 	m.author.step = authorReview
 	m.author.mql = msg.mql
 	m.author.explanation = msg.explanation
+	m.author.provider = msg.provider
 	m.author.warn = msg.warn
 	return m, nil
 }
@@ -361,6 +364,7 @@ func (m Model) acceptAuthored() (tea.Model, tea.Cmd) {
 		strings.TrimSpace(a.fields[fieldDesc]),
 		strings.TrimSpace(a.fields[fieldFilter]),
 		a.mql,
+		a.provider,
 	)
 }
 
