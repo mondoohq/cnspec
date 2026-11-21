@@ -1,7 +1,9 @@
-# ADR-0004: Description-First Policy Authoring
+# 0013. Description-first policy authoring
 
-**Date:** 2026-08-08
-**Status:** Accepted (implemented)
+- **Status:** Accepted
+- **Date:** 2026-08-08
+- **Deciders:** @chris-rock
+- **Consulted / Informed:**
 
 ## Context
 
@@ -273,7 +275,7 @@ embedding-based semantic search is intentionally not added, to keep cnspec free
 of a model/embedding dependency (the same principle that keeps the LLM out of the
 binary).
 
-## Security considerations
+## Security implications
 
 - **Untrusted policy text is prompt-injection input.** A check's `title` and
   `docs.desc` become the prompt sent to the coding-agent CLI, and that agent can
@@ -305,7 +307,12 @@ binary).
   proxy and CA settings) and the agent's own auth (`ANTHROPIC_*`, `OPENAI_*`,
   `CODEX_*`, `KIMI_*`, `MOONSHOT_*`, `DEEPSEEK_*`), and nothing else.
   `CNSPEC_AGENT_ENV=NAME,OTHER` forwards more by name, and `CNSPEC_AGENT_ENV=*`
-  restores the old inherit-everything behavior for whoever needs it. The agent
+  restores the old inherit-everything behavior for whoever needs it. An agent
+  that authenticates through a cloud (Claude Code on Bedrock or Vertex AI) needs
+  that cloud's credentials, and those are not forwarded automatically, because
+  they are often the credentials of an account cnspec scans. When such an agent
+  fails, the error names the withheld variables (never their values) and the
+  `CNSPEC_AGENT_ENV` setting that forwards them. The agent
   still runs in the operator's working directory, because inspecting the bundle
   it is authoring is the point. The prompt is passed as a subprocess argument (no
   shell), so there is no shell-injection surface from prompt content.
@@ -333,6 +340,30 @@ binary).
 - **Write-back reformats the whole file** through the same formatter as
   `cnspec policy format` (comment-preserving, canonical layout); it carries the
   same round-trip contract and is intended to run under version control.
+
+## Performance implications
+
+Scan time is unaffected: generation runs only when a check is authored, and a
+generated check is stored as ordinary MQL, so a scan neither calls an agent nor
+loads the corpus.
+
+Authoring cost is dominated by the agent, not by cnspec. These figures are the
+configured bounds, not measurements of a typical run:
+
+- **Agent calls.** Each check gets at most 3 attempts (`MaxAttempts`), each
+  bounded by a 180-second timeout, so one check costs at most 3 billed agent
+  invocations and 9 minutes. A provider that cannot be validated on the machine
+  is reported before the first call, so it costs none.
+- **Memory.** Agent stdout is capped at 8 MiB and stderr at 256 KiB. Reading an
+  agent's stdout into an unbounded buffer cost 1.59 GB of RSS for 400 MB of
+  output (measured), which the caps rule out.
+- **Grounding search.** The example corpus is read from the bundle files once
+  per run and indexed in memory with BM25; each check runs one search over it.
+  Its cost for the shipped `content/` has not been measured; it is a linear
+  scan over a few thousand queries, small next to one agent call.
+- **Cancellation.** Ctrl-C, or esc in the authoring pane, cancels the run's
+  context, which kills the agent's process group, so an abandoned run stops
+  consuming time and tokens instead of running to its timeout.
 
 ## Consequences
 

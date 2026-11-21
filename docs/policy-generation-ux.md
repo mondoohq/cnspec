@@ -134,5 +134,5 @@ reproducible, credential-free validation.
 - **No lock-in.** cnspec ships no LLM SDK and stores no keys; it drives the
   coding-agent CLI you already have (`--agent claude|codex|kimi|deepseek`).
 
-See `docs/adr/0004-description-first-policy-authoring.md` for the design
+See `docs/adr/0013-description-first-policy-authoring.md` for the design
 rationale.
