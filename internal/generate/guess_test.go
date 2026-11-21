@@ -23,6 +23,36 @@ func TestGuessProvider(t *testing.T) {
 	}
 }
 
+// TestGuessProviderMatchesWholeWords pins the substring false positives: short
+// provider terms inside ordinary words must not pick a provider.
+func TestGuessProviderMatchesWholeWords(t *testing.T) {
+	cases := map[string]string{
+		// Synthetic: each title hides a provider term inside another word.
+		"Passwords must be at least 14 characters": "", // rds
+		"Audit records are retained":               "", // rds
+		"Accounts named william are removed":       "", // iam
+		"Rotate keys every 12 weeks":               "", // eks
+		"No credential leaks in logs":              "", // aks
+		"Company spam filter enabled":              "", // pam
+		"Tripod mounts are inventoried":            "", // pod
+		// Synthetic: the whole words still match, including plurals and phrases.
+		"Linux user passwords must expire":         "os",
+		"PAM faillock is configured":               "os",
+		"RDS instances are encrypted":              "aws",
+		"EKS clusters use private endpoints":       "aws",
+		"AKS clusters enable RBAC":                 "azure",
+		"Pods do not run as root":                  "k8s",
+		"Cloud SQL instances require SSL":          "gcp",
+		"Installed packages are up to date":        "os",
+		"Lambda functions use a supported runtime": "aws",
+	}
+	for title, want := range cases {
+		if got := GuessProvider(title); got != want {
+			t.Errorf("GuessProvider(%q) = %q, want %q", title, got, want)
+		}
+	}
+}
+
 // --- default asset filters ---------------------------------------------------
 
 var (

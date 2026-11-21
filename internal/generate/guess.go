@@ -6,6 +6,7 @@ package generate
 import (
 	"fmt"
 	"strings"
+	"unicode"
 
 	"go.mondoo.com/mql/providers"
 )
@@ -15,18 +16,22 @@ import (
 // to guess the same way, so it lives here beside ResolveProvider rather than
 // beside either of them.
 
+// Terms are matched as whole words (a trailing plural "s" allowed), never as
+// substrings: "rds" must not fire on "passwords", "iam" on "William", "eks" on
+// "weeks", "aks" on "leaks" or "pam" on "company". A wrong guess is worse than
+// none, because the pane fills in that provider's asset filter on its own.
 func GuessProvider(title string) string {
-	t := strings.ToLower(title)
+	t := newWordSet(title)
 	switch {
-	case containsAny(t, "aws", "s3", "ec2", "iam", "cloudtrail", "rds", "eks", "lambda"):
+	case t.hasAny("aws", "s3", "ec2", "iam", "cloudtrail", "rds", "eks", "lambda"):
 		return "aws"
-	case containsAny(t, "gcp", "gke", "bigquery", "cloud sql", "compute engine"):
+	case t.hasAny("gcp", "gke", "bigquery", "cloud sql", "compute engine"):
 		return "gcp"
-	case containsAny(t, "azure", "aks", "blob"):
+	case t.hasAny("azure", "aks", "blob"):
 		return "azure"
-	case containsAny(t, "ssh", "sshd", "kernel", "linux", "package", "systemd", "sudo", "pam"):
+	case t.hasAny("ssh", "sshd", "kernel", "linux", "package", "systemd", "sudo", "pam"):
 		return "os"
-	case containsAny(t, "kubernetes", "k8s", "pod", "container"):
+	case t.hasAny("kubernetes", "k8s", "pod", "container"):
 		return "k8s"
 	}
 	return ""
@@ -134,9 +139,35 @@ func lookupPlatform(provider string) (name, family string) {
 	return "", ""
 }
 
-func containsAny(s string, subs ...string) bool {
-	for _, sub := range subs {
-		if strings.Contains(s, sub) {
+// wordSet is a title split into lower-case alphanumeric words.
+type wordSet struct {
+	words  map[string]bool
+	joined string // " w1 w2 … wn ", for multi-word terms
+}
+
+func newWordSet(s string) wordSet {
+	fields := strings.FieldsFunc(strings.ToLower(s), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	})
+	ws := wordSet{words: make(map[string]bool, len(fields)), joined: " " + strings.Join(fields, " ") + " "}
+	for _, f := range fields {
+		ws.words[f] = true
+	}
+	return ws
+}
+
+// hasAny reports whether any term occurs as a whole word, or for a multi-word
+// term as a run of whole words. A single trailing "s" is accepted as a plural
+// ("pods", "packages", "containers").
+func (ws wordSet) hasAny(terms ...string) bool {
+	for _, term := range terms {
+		if strings.Contains(term, " ") {
+			if strings.Contains(ws.joined, " "+term+" ") || strings.Contains(ws.joined, " "+term+"s ") {
+				return true
+			}
+			continue
+		}
+		if ws.words[term] || ws.words[term+"s"] {
 			return true
 		}
 	}
