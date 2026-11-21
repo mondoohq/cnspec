@@ -136,7 +136,7 @@ func (w *wizard) loop(ctx context.Context, file string) error {
 		w.showGrounding(title+" "+desc, provider)
 
 		check := generate.Check{
-			UID:   bundle.Slugify(title),
+			UID:   bundle.CheckUIDForTitle(title),
 			Title: title,
 			Desc:  desc,
 		}
@@ -186,7 +186,7 @@ func (w *wizard) showGrounding(intent, provider string) {
 // writeCheck asks for the uid and adds the accepted check to the bundle, or
 // previews it under --dry-run.
 func (w *wizard) writeCheck(file, title, desc, filter, mql string) error {
-	uid, err := w.uniqueUID(file, bundle.Slugify(title))
+	uid, err := w.uniqueUID(file, bundle.CheckUIDForTitle(title))
 	if err != nil {
 		return err
 	}
@@ -260,7 +260,9 @@ func (w *wizard) review(ctx context.Context, check generate.Check) (string, bool
 			case "r":
 				continue
 			case "e":
-				return w.editAndValidate("", check.Props)
+				// start the editor from the agent's last attempt, if it made
+				// one: fixing a near-miss beats retyping it
+				return w.editAndValidate(bundle.SanitizeText(res.MQL), check.Props)
 			default:
 				return "", false, nil
 			}

@@ -4,6 +4,7 @@
 package interactive
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -279,5 +280,83 @@ func TestAuthorEmptyFieldShowsAPlaceholder(t *testing.T) {
 
 	if !strings.Contains(m.View(), fieldDesc.placeholder()) {
 		t.Errorf("an empty unfocused field shows nothing at all:\n%s", m.View())
+	}
+}
+
+// TestAuthorDoubleEnterWritesOnce: a second enter while the first write is
+// running must not start another, which would append the same check again as
+// <uid>-2.
+func TestAuthorDoubleEnterWritesOnce(t *testing.T) {
+	m := authoringModel(t)
+	file := m.author.fields[fieldFile]
+	m.author.fields[fieldTitle] = "SSH must not permit root login"
+	m.author.mql = `sshd.config.params["PermitRootLogin"] == "no"`
+	m.author.step = authorReview
+
+	nm, first := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = nm.(Model)
+	nm, second := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = nm.(Model)
+	if first == nil {
+		t.Fatal("the first enter started no write")
+	}
+	if second != nil {
+		t.Fatal("a second enter started another write while the first was running")
+	}
+	nm, _ = m.Update(first())
+	m = nm.(Model)
+	if m.author.step != authorDone {
+		t.Fatalf("write did not complete: step=%d err=%q", m.author.step, m.author.err)
+	}
+	data, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(string(data), "PermitRootLogin"); n != 1 {
+		t.Errorf("the check was written %d times:\n%s", n, data)
+	}
+}
+
+// TestAuthorEscCancelsTheRun: leaving the pane while the agent runs has to
+// cancel the run's context, which is what kills the agent's process tree.
+func TestAuthorEscCancelsTheRun(t *testing.T) {
+	m := authoringModel(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	m.author.step = authorWorking
+	m.author.cancel = cancel
+
+	nm, _ := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = nm.(Model)
+	if ctx.Err() == nil {
+		t.Fatal("esc left the pane without cancelling the agent run")
+	}
+	if m.phase == phaseAuthoring {
+		t.Error("esc did not leave the pane")
+	}
+}
+
+// TestAuthorUIDPassesLint: the pane picks the uid itself, so a short title
+// must still give one lint accepts.
+func TestAuthorUIDPassesLint(t *testing.T) {
+	m := authoringModel(t)
+	file := m.author.fields[fieldFile]
+	m.author.fields[fieldTitle] = "SSH"
+	m.author.mql = `sshd.config.params["PermitRootLogin"] == "no"`
+	m.author.step = authorReview
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("no write")
+	}
+	if msg := cmd().(authorWroteMsg); msg.err != nil {
+		t.Fatal(msg.err)
+	}
+	data, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "uid: ssh-check") {
+		t.Errorf("expected the padded uid ssh-check:\n%s", data)
 	}
 }

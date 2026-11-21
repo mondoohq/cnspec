@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 	"go.mondoo.com/cnspec/internal/bundle"
@@ -171,6 +172,49 @@ func TestPolicyGenerate_StdoutPassThrough(t *testing.T) {
 	}
 	if stdout != src {
 		t.Errorf("stdout is not the input bundle:\ngot:\n%s\nwant:\n%s", stdout, src)
+	}
+}
+
+// TestPolicyGenerate_OutputPassThrough is the --output half of the stdout
+// pass-through: with nothing to generate, -o must still write the input, both
+// when the file does not exist yet and when a stale one from an earlier run
+// does.
+func TestPolicyGenerate_OutputPassThrough(t *testing.T) {
+	dir := t.TempDir()
+	agent := stubAgent(t, dir, "unused.value == true")
+	t.Setenv("CNSPEC_AGENT_CLAUDE_BIN", agent)
+
+	file := filepath.Join(dir, "policy.mql.yaml")
+	src := "queries:\n  - uid: c1\n    title: A check\n    filters: asset.platform == \"aws\"\n    mql: old.value == 1\n"
+	if err := os.WriteFile(file, []byte(src), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	backend, _ := generate.Backend("claude")
+	gen, _ := generate.New(generate.Config{Backend: backend, Validator: generate.NoopValidator{}})
+
+	for name, stale := range map[string]string{"missing": "", "stale": "queries: []\n"} {
+		t.Run(name, func(t *testing.T) {
+			out := filepath.Join(t.TempDir(), "out.mql.yaml")
+			if stale != "" {
+				if err := os.WriteFile(out, []byte(stale), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			generated, _, err := generateForFile(context.Background(), gen, file, false, false, false, out, false)
+			if err != nil {
+				t.Fatalf("generateForFile: %v", err)
+			}
+			if generated != 0 {
+				t.Fatalf("expected nothing to generate, got %d", generated)
+			}
+			got, err := os.ReadFile(out)
+			if err != nil {
+				t.Fatalf("--output was not written: %v", err)
+			}
+			if string(got) != src {
+				t.Errorf("--output is not the input bundle:\ngot:\n%s\nwant:\n%s", got, src)
+			}
+		})
 	}
 }
 
@@ -343,5 +387,57 @@ func TestPropUsingContentChecksValidate(t *testing.T) {
 	}
 	if verified == 0 {
 		t.Skipf("no provider for any of the %d prop-using checks is installed; prop typing was not exercised", found)
+	}
+}
+
+// TestInterruptContextStopsTheAgent: Ctrl-C has to cancel the run's context,
+// because the agent sits in its own process group and never sees the
+// terminal's SIGINT; cancelling is what kills its tree. A run that does not
+// return within the grace period (the wizard blocked on stdin) must still exit.
+func TestInterruptContextStopsTheAgent(t *testing.T) {
+	self, err := os.FindProcess(os.Getpid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	orig := interruptGrace
+	interruptGrace = 50 * time.Millisecond
+	t.Cleanup(func() { interruptGrace = orig })
+
+	exited := make(chan int, 1)
+	ctx, stop := interruptContext(context.Background(), io.Discard, func(code int) { exited <- code })
+	defer stop()
+
+	if err := self.Signal(os.Interrupt); err != nil {
+		t.Skipf("cannot signal this process on this platform: %v", err)
+	}
+	select {
+	case <-ctx.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("SIGINT did not cancel the context, so the agent would keep running")
+	}
+	select {
+	case code := <-exited:
+		if code != 130 {
+			t.Fatalf("exit code = %d, want 130", code)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("a run that never returned after SIGINT did not exit")
+	}
+}
+
+// TestInterruptContextStopReleases: a run that finishes normally neither
+// cancels nor exits, and stop is safe to call twice.
+func TestInterruptContextStopReleases(t *testing.T) {
+	exited := make(chan int, 1)
+	ctx, stop := interruptContext(context.Background(), io.Discard, func(code int) { exited <- code })
+	if ctx.Err() != nil {
+		t.Fatal("context cancelled before any signal")
+	}
+	stop()
+	stop()
+	select {
+	case code := <-exited:
+		t.Fatalf("exit(%d) called without a signal", code)
+	case <-time.After(100 * time.Millisecond):
 	}
 }

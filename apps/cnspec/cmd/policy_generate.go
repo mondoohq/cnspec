@@ -6,9 +6,13 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/mattn/go-isatty"
 	"github.com/rs/zerolog/log"
@@ -64,6 +68,8 @@ Examples:
 }
 
 func runPolicyGenerate(cmd *cobra.Command, args []string) error {
+	ctx, stop := interruptContext(cmd.Context(), os.Stderr, os.Exit)
+	defer stop()
 	inPlace, _ := cmd.Flags().GetBool("in-place")
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	force, _ := cmd.Flags().GetBool("force")
@@ -167,7 +173,7 @@ func runPolicyGenerate(cmd *cobra.Command, args []string) error {
 		case len(args) > 0:
 			opts.File = args[0]
 		}
-		return runGenerateWizard(cmd.Context(), gen, opts)
+		return runGenerateWizard(ctx, gen, opts)
 	}
 
 	files, err := policy.WalkPolicyBundleFiles(args...)
@@ -189,7 +195,7 @@ func runPolicyGenerate(cmd *cobra.Command, args []string) error {
 	for _, f := range files {
 		// A hard error on one file must not abort the batch or leave the user
 		// guessing which files were written; record it and continue.
-		g, failed, ferr := generateForFile(cmd.Context(), gen, f, force, dryRun, inPlace, outputFile, explain)
+		g, failed, ferr := generateForFile(ctx, gen, f, force, dryRun, inPlace, outputFile, explain)
 		totalGenerated += g
 		totalFailed += failed
 		if ferr != nil {
@@ -274,8 +280,8 @@ func generateForFile(ctx context.Context, gen *generate.Generator, file string, 
 	fmt.Fprintf(os.Stderr, "  Need generation: %d\n\n", needGen)
 	if needGen == 0 {
 		fmt.Fprintln(os.Stderr, "  Nothing to generate.")
-		if stdoutMode {
-			passThrough(data)
+		if err := passThroughOutput(stdoutMode, outputFile, data); err != nil {
+			return 0, 0, err
 		}
 		return 0, 0, nil
 	}
@@ -312,9 +318,10 @@ func generateForFile(ctx context.Context, gen *generate.Generator, file string, 
 	}
 
 	if generated == 0 {
-		// nothing to write back, but stdout still owes the caller the bundle
-		if stdoutMode {
-			passThrough(data)
+		// nothing to write back, but stdout or --output still owes the caller
+		// the bundle
+		if err := passThroughOutput(stdoutMode, outputFile, data); err != nil {
+			return generated, failed, err
 		}
 		return generated, failed, nil
 	}
@@ -355,6 +362,24 @@ func generateForFile(ctx context.Context, gen *generate.Generator, file string, 
 // is byte-identical to its input.
 func passThrough(data []byte) {
 	fmt.Print(string(data))
+}
+
+// passThroughOutput delivers the unchanged input wherever this run's output
+// goes: stdout in stdout mode, the --output file when one was named. --output
+// owes the same as stdout: `generate in.yaml -o out.yaml && mv out.yaml in.yaml`
+// must not find out.yaml missing, or worse, find a stale one from an earlier
+// run and move it over the input. --in-place and --dry-run need nothing.
+func passThroughOutput(stdoutMode bool, outputFile string, data []byte) error {
+	switch {
+	case stdoutMode:
+		passThrough(data)
+	case outputFile != "":
+		if err := writeFileAtomic(outputFile, data); err != nil {
+			return fmt.Errorf("could not write %s: %w", outputFile, err)
+		}
+		fmt.Fprintf(os.Stderr, "  Wrote: %s (unchanged)\n", outputFile)
+	}
+	return nil
 }
 
 // writeFileAtomic writes data to path via a temp file in the same directory
@@ -480,4 +505,59 @@ func findSkills() []string {
 		}
 	}
 	return out
+}
+
+// interruptGrace is how long an interrupted run gets to return on its own
+// before the process exits.
+var interruptGrace = 3 * time.Second
+
+// interruptContext makes Ctrl-C stop the coding agent, not only cnspec.
+//
+// The agent runs in its own process group (so a timeout can kill its whole
+// tree), and a process group outside the terminal's foreground group never
+// receives the terminal's SIGINT. Without this, Ctrl-C ends cnspec and leaves
+// the agent running, still calling tools and still billed, with no timeout
+// left to stop it.
+//
+// The first SIGINT or SIGTERM cancels the context, which kills the agent's
+// process group through exec.Cmd.Cancel. The run then gets interruptGrace to
+// return; the interactive wizard may be blocked reading stdin and never will,
+// so after that, or on a second signal, the process exits with 130.
+func interruptContext(parent context.Context, out io.Writer, exit func(int)) (context.Context, func()) {
+	if parent == nil {
+		// a cobra command run without Execute has no context
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithCancel(parent)
+	sigs := make(chan os.Signal, 2)
+	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
+	done := make(chan struct{})
+
+	go func() {
+		select {
+		case <-sigs:
+		case <-done:
+			return
+		}
+		fmt.Fprintln(out, "\ninterrupted: stopping the agent")
+		cancel()
+		select {
+		case <-done:
+			return
+		case <-sigs:
+		case <-time.After(interruptGrace):
+		}
+		exit(130)
+	}()
+
+	var once bool
+	return ctx, func() {
+		if once {
+			return
+		}
+		once = true
+		signal.Stop(sigs)
+		close(done)
+		cancel()
+	}
 }

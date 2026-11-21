@@ -111,6 +111,15 @@ type authorState struct {
 
 	gen *generate.Generator
 
+	// cancel stops the agent run in flight. The agent is in its own process
+	// group, so leaving the pane without cancelling would leave it running and
+	// billed until its timeout.
+	cancel context.CancelFunc
+
+	// writing is set while the accepted check is being appended, so a second
+	// enter cannot append it again under a suffixed uid.
+	writing bool
+
 	// input edits whichever field has the cursor. It is the same arrangement
 	// detailState uses: one text box bound to the focused field, loaded on
 	// entry and stored on the way out, so the cursor is real rather than a
@@ -122,6 +131,14 @@ type authorState struct {
 	warn        string // the gate rejected it, but the candidate is still offered
 	err         string
 	wrote       string
+}
+
+// stopRun cancels the agent run in flight, if there is one.
+func (a *authorState) stopRun() {
+	if a.cancel != nil {
+		a.cancel()
+		a.cancel = nil
+	}
 }
 
 // loadField binds the text box to the field under the cursor.
@@ -195,9 +212,9 @@ type authorWroteMsg struct {
 // candidate plus whatever the gate said about it rather than a bare string: a
 // query that would not compile is still worth showing, because the reviewer can
 // fix it, and hiding it costs another billed run.
-func authorGenerateCmd(seq int, gen *generate.Generator, check generate.Check) tea.Cmd {
+func authorGenerateCmd(ctx context.Context, seq int, gen *generate.Generator, check generate.Check) tea.Cmd {
 	return func() tea.Msg {
-		res := gen.GenerateCheck(context.Background(), check)
+		res := gen.GenerateCheck(ctx, check)
 		msg := authorGeneratedMsg{seq: seq}
 		switch {
 		case res.Action == generate.ActionGenerated:
@@ -273,19 +290,22 @@ func (m Model) startAuthorGeneration() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	a.stopRun()
 	a.seq++
 	a.step = authorWorking
 	a.err, a.warn, a.mql, a.explanation = "", "", "", ""
+	ctx, cancel := context.WithCancel(context.Background())
+	a.cancel = cancel
 
 	check := generate.Check{
-		UID:   bundle.Slugify(title),
+		UID:   bundle.CheckUIDForTitle(title),
 		Title: title,
 		Desc:  strings.TrimSpace(a.fields[fieldDesc]),
 	}
 	if f := strings.TrimSpace(a.fields[fieldFilter]); f != "" {
 		check.Filters = []string{f}
 	}
-	return m, tea.Batch(authorGenerateCmd(a.seq, a.gen, check), m.spinner.Tick)
+	return m, tea.Batch(authorGenerateCmd(ctx, a.seq, a.gen, check), m.spinner.Tick)
 }
 
 // authorGenerated puts a finished run on screen, if it is still the current one.
@@ -293,6 +313,7 @@ func (m Model) authorGenerated(msg authorGeneratedMsg) (tea.Model, tea.Cmd) {
 	if msg.seq != m.author.seq || m.author.step != authorWorking {
 		return m, nil
 	}
+	m.author.stopRun() // the run is over; release its context
 	if msg.err != nil {
 		m.author.step = authorIntent
 		m.author.err = tui.OneLine(msg.err.Error())
@@ -310,6 +331,7 @@ func (m Model) authorWrote(msg authorWroteMsg) (tea.Model, tea.Cmd) {
 	if msg.seq != m.author.seq {
 		return m, nil
 	}
+	m.author.writing = false
 	if msg.err != nil {
 		m.author.step = authorReview
 		m.author.err = tui.OneLine(msg.err.Error())
@@ -323,14 +345,18 @@ func (m Model) authorWrote(msg authorWroteMsg) (tea.Model, tea.Cmd) {
 // acceptAuthored writes the candidate under review.
 func (m Model) acceptAuthored() (tea.Model, tea.Cmd) {
 	a := &m.author
+	if a.writing {
+		return m, nil // the first enter's write is still running
+	}
 	if strings.TrimSpace(a.mql) == "" {
 		a.err = "there is no query to write"
 		return m, nil
 	}
+	a.writing = true
 	a.seq++
 	return m, authorWriteCmd(a.seq,
 		strings.TrimSpace(a.fields[fieldFile]),
-		bundle.Slugify(a.fields[fieldTitle]),
+		bundle.CheckUIDForTitle(a.fields[fieldTitle]),
 		strings.TrimSpace(a.fields[fieldTitle]),
 		strings.TrimSpace(a.fields[fieldDesc]),
 		strings.TrimSpace(a.fields[fieldFilter]),
@@ -340,6 +366,7 @@ func (m Model) acceptAuthored() (tea.Model, tea.Cmd) {
 
 // closeAuthor returns to the launcher.
 func (m Model) closeAuthor() (tea.Model, tea.Cmd) {
+	m.author.stopRun()
 	m.author = authorState{seq: m.author.seq}
 	m.phase = phaseForm
 	return m, nil
@@ -484,9 +511,9 @@ func (m Model) authorKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	switch a.step {
 	case authorWorking:
-		// The run is not cancellable mid-flight -- the agent is a child process
-		// with its own timeout -- so esc leaves the pane and the late answer is
-		// dropped by its sequence number rather than drawn over the launcher.
+		// esc cancels the run, which kills the agent's process tree, and leaves
+		// the pane; the cancelled run's answer is still dropped by its sequence
+		// number rather than drawn over the launcher.
 		if msg.String() == "esc" || msg.String() == "ctrl+c" {
 			a.seq++
 			return m.closeAuthor()
@@ -498,6 +525,9 @@ func (m Model) authorKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "enter":
 			return m.acceptAuthored()
 		case "r":
+			if a.writing {
+				return m, nil
+			}
 			return m.startAuthorGeneration()
 		case "esc":
 			return m.closeAuthor()
