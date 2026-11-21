@@ -145,6 +145,30 @@ func PolicyUIDForFile(file string) string {
 	return uid
 }
 
+// maxCheckUIDLen leaves room under the 200-character limit of queryUid for the
+// "-N" suffix NextFreeUID appends on a collision.
+const maxCheckUIDLen = 190
+
+// CheckUIDForTitle derives a check uid from its title that passes lint's query
+// uid rule (5-200 characters). Slugify alone does not: a short title ("SSH")
+// gives a uid that is too short, a long one gives one that is too long, and a
+// title with no ASCII letters or digits gives an empty uid, which AppendCheck
+// refuses. A short slug is padded rather than replaced, so it still says what
+// the check is about; an empty one falls back to a generic uid.
+func CheckUIDForTitle(title string) string {
+	uid := Slugify(title)
+	if len(uid) > maxCheckUIDLen {
+		uid = strings.TrimRight(uid[:maxCheckUIDLen], "-")
+	}
+	switch {
+	case uid == "":
+		return "generated-check"
+	case !queryUid.MatchString(uid):
+		return uid + "-check"
+	}
+	return uid
+}
+
 // humanize turns a uid into a policy name ("aws-s3" -> "Aws S3").
 func humanize(uid string) string {
 	fields := strings.FieldsFunc(uid, func(r rune) bool { return r == '-' || r == '_' })
