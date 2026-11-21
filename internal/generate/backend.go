@@ -7,7 +7,7 @@
 // user already has installed and authenticated. cnspec ships no LLM SDK and no
 // API-key handling of its own; the agent brings its own model access.
 //
-// See docs/adr/0004-description-first-policy-authoring.md for the design.
+// See docs/adr/0013-description-first-policy-authoring.md for the design.
 package generate
 
 import (
@@ -144,7 +144,12 @@ func (b *cliBackend) Generate(ctx context.Context, t GenTask) (GenResult, error)
 		}
 		// The agent's own output goes into an error a human reads on a
 		// terminal, so it is sanitized like any other model-authored text.
-		return GenResult{}, errors.Wrapf(err, "agent %q failed: %s", b.name, SanitizeModelText(truncate(detail, 500)))
+		msg := SanitizeModelText(truncate(detail, 500))
+		// a failing agent may be missing a variable the allowlist withheld
+		if hint := agentEnvHint(os.Environ()); hint != "" {
+			msg += " (" + hint + ")"
+		}
+		return GenResult{}, errors.Wrapf(err, "agent %q failed: %s", b.name, msg)
 	}
 
 	// A truncated response must not be parsed: the tail of a fenced block is

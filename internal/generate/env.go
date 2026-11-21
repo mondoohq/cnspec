@@ -4,7 +4,9 @@
 package generate
 
 import (
+	"fmt"
 	"os"
+	"sort"
 	"strings"
 )
 
@@ -127,6 +129,64 @@ func passthroughFrom(environ []string) (extra map[string]bool, all bool) {
 		}
 	}
 	return extra, all
+}
+
+// agentEnvHint explains a failed agent run that may be the allowlist's doing.
+//
+// Claude Code on Amazon Bedrock or Google Vertex AI authenticates with the
+// cloud's own credentials (AWS_PROFILE, AWS_REGION, GOOGLE_APPLICATION_CREDENTIALS,
+// CLOUD_ML_REGION, ...). The CLAUDE_ prefix forwards the switch that selects
+// them, but those credentials are exactly what the allowlist withholds, so the
+// agent fails with an auth error that never mentions cnspec. They are not
+// forwarded automatically: the same variables are often the credentials of an
+// account cnspec scans, and handing those to the agent is the decision the
+// allowlist leaves to the operator. The hint names the withheld variables (never
+// their values) and the setting that forwards them.
+func agentEnvHint(environ []string) string {
+	extra, all := passthroughFrom(environ)
+	if all {
+		return ""
+	}
+	values := map[string]string{}
+	for _, kv := range environ {
+		if name, value, ok := strings.Cut(kv, "="); ok {
+			values[strings.ToUpper(name)] = value
+		}
+	}
+	truthy := func(name string) bool {
+		v := strings.TrimSpace(values[name])
+		return v != "" && v != "0" && !strings.EqualFold(v, "false")
+	}
+
+	var prefixes []string
+	var via string
+	switch {
+	case truthy("CLAUDE_CODE_USE_BEDROCK"):
+		prefixes, via = []string{"AWS_"}, "Claude Code on Bedrock"
+	case truthy("CLAUDE_CODE_USE_VERTEX"):
+		prefixes, via = []string{"GOOGLE_", "GCLOUD_", "CLOUDSDK_", "CLOUD_ML_", "VERTEX_"}, "Claude Code on Vertex AI"
+	}
+
+	var withheld []string
+	for name := range values {
+		if agentEnvAllows(name, extra) {
+			continue
+		}
+		for _, p := range prefixes {
+			if strings.HasPrefix(name, p) {
+				withheld = append(withheld, name)
+				break
+			}
+		}
+	}
+	sort.Strings(withheld)
+
+	if via != "" && len(withheld) > 0 {
+		return fmt.Sprintf("%s needs credentials cnspec does not pass to the agent (%s); forward them with %s=%s",
+			via, strings.Join(withheld, ", "), AgentEnvPassthroughVar, strings.Join(withheld, ","))
+	}
+	return fmt.Sprintf("the agent runs with a restricted environment; if it needs a variable cnspec withheld, name it in %s (comma-separated)",
+		AgentEnvPassthroughVar)
 }
 
 // agentEnviron is agentEnv over this process's environment.
