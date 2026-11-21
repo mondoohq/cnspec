@@ -61,9 +61,12 @@ const (
 
 // Result is the per-check outcome returned to the caller.
 type Result struct {
-	UID         string
-	Action      Action
-	Provider    string
+	UID      string
+	Action   Action
+	Provider string
+	// MQL is the validated query for ActionGenerated. For ActionFailed it is
+	// the last candidate the agent returned, if any, which did not pass the
+	// gate; never write it without review.
 	MQL         string
 	Explanation string
 	// Reason explains a skip or failure in one line.

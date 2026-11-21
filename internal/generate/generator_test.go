@@ -224,3 +224,33 @@ type brokenValidator struct{}
 func (brokenValidator) Validate(ValidationRequest) error {
 	return errors.Mark(errors.New("schema went away"), ErrValidationUnavailable)
 }
+
+// rejectingValidator fails every query, as the compile gate does for an answer
+// with a typo the agent repeats on every attempt.
+type rejectingValidator struct{}
+
+func (rejectingValidator) Validate(ValidationRequest) error {
+	return errors.New("cannot find field 'paramz'")
+}
+
+// TestGeneratorReturnsTheLastFailedCandidate: when every attempt fails the gate,
+// the caller still gets the last query the agent wrote, so the authoring pane
+// can offer it for a hand fix instead of another billed run.
+func TestGeneratorReturnsTheLastFailedCandidate(t *testing.T) {
+	backend := &fakeBackend{avail: true, responses: []string{
+		`{"mql":"sshd.config.paramz[\"A\"] == 1"}`,
+		`{"mql":"sshd.config.paramz[\"PermitRootLogin\"] == \"no\""}`,
+	}}
+	gen := mustGen(t, Config{Backend: backend, Validator: rejectingValidator{}, MaxAttempts: 2})
+
+	res := gen.GenerateCheck(context.Background(), Check{UID: "u", Title: "SSH root login disabled"})
+	if res.Action != ActionFailed {
+		t.Fatalf("expected failed, got %s", res.Action)
+	}
+	if want := `sshd.config.paramz["PermitRootLogin"] == "no"`; res.MQL != want {
+		t.Fatalf("failed result MQL = %q, want the last candidate %q", res.MQL, want)
+	}
+	if !strings.Contains(res.Reason, "paramz") {
+		t.Fatalf("the gate's error should be in the reason, got %q", res.Reason)
+	}
+}

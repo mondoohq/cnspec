@@ -241,6 +241,11 @@ func (g *Generator) GenerateCheck(ctx context.Context, c Check) Result {
 
 	res.Action = ActionFailed
 	res.Err = lastErr
+	// Hand back the last candidate the agent produced, even though it failed its
+	// gate: a reviewer can often fix a near-miss by hand, and dropping it costs
+	// another billed run. Callers that write only ActionGenerated results are
+	// unaffected; the authoring pane offers it with the failure as a warning.
+	res.MQL = lastMQL
 	attempts := strconv.Itoa(g.cfg.MaxAttempts)
 	if lastErr != nil {
 		res.Reason = "failed after " + attempts + " attempts: " + lastErr.Error()
