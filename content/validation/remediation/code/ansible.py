@@ -32,6 +32,7 @@ TARGETS = {
         CONTENT_DIR / "mondoo-linux-operational-policy.mql.yaml",
         CONTENT_DIR / "mondoo-linux-snmp-policy.mql.yaml",
         CONTENT_DIR / "mondoo-linux-workstation-security.mql.yaml",
+        CONTENT_DIR / "mondoo-java4shell-vulnerability.mql.yaml",
     ],
     "windows": [
         CONTENT_DIR / "mondoo-windows-security.mql.yaml",

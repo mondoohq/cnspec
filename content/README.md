@@ -50,6 +50,7 @@ Our comprehensive collection of security policies covers major platforms and ser
 - **Linux Workstation** - `mondoo-linux-workstation-security.mql.yaml` - Security baseline for Linux desktop and workstation environments
 - **Linux Operational** - `mondoo-linux-operational-policy.mql.yaml` - Linux operational best practices
 - **Linux SNMP** - `mondoo-linux-snmp-policy.mql.yaml` - SNMP security configuration for Linux systems
+- **Java4Shell (CVE-2026-114938)** - `mondoo-java4shell-vulnerability.mql.yaml` - Running Java runtimes on Linux exposed to Java4Shell, with the services to patch or mitigate
 - **FreeBSD** - `mondoo-freebsd-security.mql.yaml` - FreeBSD security hardening and configuration
 - **Oracle Solaris** - `mondoo-solaris-security.mql.yaml` - Oracle Solaris 11.4 security hardening and configuration
 - **macOS** - `mondoo-macos-security.mql.yaml` - macOS security baseline and configuration management
