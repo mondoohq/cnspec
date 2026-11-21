@@ -254,3 +254,65 @@ func TestGeneratorReturnsTheLastFailedCandidate(t *testing.T) {
 		t.Fatalf("the gate's error should be in the reason, got %q", res.Reason)
 	}
 }
+
+// TestGeneratorGuessesTheProviderWithoutFilters: a check written as a title and
+// description has no filters, and without a provider the up-front install check
+// is skipped, so a missing provider costs every attempt.
+func TestGeneratorGuessesTheProviderWithoutFilters(t *testing.T) {
+	backend := &fakeBackend{avail: true, responses: []string{`{"mql":"sshd.config.params[\"PermitRootLogin\"] == \"no\""}`}}
+	validator := &unavailableValidator{}
+	gen := mustGen(t, Config{Backend: backend, Validator: validator})
+
+	res := gen.GenerateCheck(context.Background(), Check{UID: "ssh-no-root", Title: "SSH must not permit root login"})
+	if res.Provider != "os" {
+		t.Fatalf("provider = %q, want os guessed from the title", res.Provider)
+	}
+	if len(validator.checked) != 1 || validator.checked[0] != "os" {
+		t.Fatalf("the guessed provider was not checked before the agent ran: %v", validator.checked)
+	}
+
+	// and a missing guessed provider costs no agent call
+	backend.calls = 0
+	res = gen.GenerateCheck(context.Background(), Check{UID: "s3", Title: "S3 buckets must be encrypted"})
+	if res.Action != ActionFailed || backend.calls != 0 {
+		t.Fatalf("expected an up-front failure with no agent call, got %s after %d call(s)", res.Action, backend.calls)
+	}
+}
+
+// TestGeneratorReportsEachAttempt: the front end is told before every agent
+// call, with the reason the previous answer was rejected, so a long run shows
+// what it is doing.
+func TestGeneratorReportsEachAttempt(t *testing.T) {
+	backend := &fakeBackend{avail: true, responses: []string{`{"mql":"sshd.config.paramz[\"A\"] == 1"}`}}
+	var seen []Attempt
+	gen := mustGen(t, Config{Backend: backend, Validator: rejectingValidator{}, MaxAttempts: 3,
+		OnAttempt: func(a Attempt) { seen = append(seen, a) }})
+
+	gen.GenerateCheck(context.Background(), Check{UID: "u", Title: "SSH root login disabled"})
+	if len(seen) != 3 {
+		t.Fatalf("got %d attempt reports, want 3", len(seen))
+	}
+	if seen[0].N != 1 || seen[0].Max != 3 || seen[0].Retrying != nil {
+		t.Errorf("first attempt = %+v, want N=1 Max=3 and no retry reason", seen[0])
+	}
+	if seen[2].N != 3 || seen[2].Retrying == nil || !strings.Contains(seen[2].Retrying.Error(), "paramz") {
+		t.Errorf("third attempt = %+v, want N=3 with the gate's error as the reason", seen[2])
+	}
+}
+
+// resolvingValidator accepts every query and names its provider.
+type resolvingValidator struct{}
+
+func (resolvingValidator) Validate(ValidationRequest) error { return nil }
+func (resolvingValidator) ProviderForQuery(string) string   { return "os" }
+
+// TestGeneratorTakesTheProviderFromTheQuery: when neither filters nor wording
+// name a target, the validated query does.
+func TestGeneratorTakesTheProviderFromTheQuery(t *testing.T) {
+	backend := &fakeBackend{avail: true, responses: []string{`{"mql":"file(\"/etc/shadow\").permissions.other_readable == false"}`}}
+	gen := mustGen(t, Config{Backend: backend, Validator: resolvingValidator{}})
+	res := gen.GenerateCheck(context.Background(), Check{UID: "shadow", Title: "/etc/shadow must not be world readable"})
+	if res.Action != ActionGenerated || res.Provider != "os" {
+		t.Fatalf("got %s with provider %q, want generated with os from the query", res.Action, res.Provider)
+	}
+}

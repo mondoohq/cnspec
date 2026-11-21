@@ -36,6 +36,19 @@ type Config struct {
 	ExampleLimit int
 	// Timeout bounds a single agent invocation. Default 180s.
 	Timeout time.Duration
+	// OnAttempt, when set, is called before each agent invocation. An agent
+	// call takes tens of seconds and a check can take three, so a front end
+	// that prints nothing in between looks hung.
+	OnAttempt func(Attempt)
+}
+
+// Attempt describes one agent invocation about to start.
+type Attempt struct {
+	UID string
+	// N is this attempt's number, from 1; Max is the configured limit.
+	N, Max int
+	// Retrying is why the previous attempt was rejected; nil on the first.
+	Retrying error
 }
 
 // Generator produces MQL for policy checks by driving an agent backend, grounded
@@ -120,9 +133,10 @@ func cancelledResult(c Check, err error) Result {
 		UID:      c.UID,
 		Action:   ActionFailed,
 		Provider: provider,
-		MQL:      c.Mql,
-		Reason:   "cancelled",
-		Err:      err,
+		// no MQL: for a failure it means "the agent's last candidate", and the
+		// run never asked the agent about this check
+		Reason: "cancelled",
+		Err:    err,
 	}
 }
 
@@ -152,7 +166,17 @@ func (g *Generator) GenerateCheck(ctx context.Context, c Check) Result {
 		return res
 	}
 
-	provider, _ := ResolveProvider(c)
+	provider := strings.TrimSpace(c.Provider)
+	if provider == "" {
+		provider, _ = ResolveProvider(c)
+	}
+	if provider == "" {
+		// A check written as a title and a description has no filters yet, so
+		// its wording is all there is to go on. Without a provider the prompt
+		// names no target and a missing provider is found only after every
+		// attempt has failed to compile.
+		provider = GuessProvider(c.Title + " " + c.Desc)
+	}
 	res.Provider = provider
 
 	// Ask up front whether this provider can be validated at all. Discovering it
@@ -183,6 +207,10 @@ func (g *Generator) GenerateCheck(ctx context.Context, c Check) Result {
 			res.Err = ctx.Err()
 			res.Reason = "cancelled"
 			return res
+		}
+
+		if g.cfg.OnAttempt != nil {
+			g.cfg.OnAttempt(Attempt{UID: c.UID, N: attempt, Max: g.cfg.MaxAttempts, Retrying: lastErr})
 		}
 
 		prompt := BuildPrompt(PromptData{
@@ -236,6 +264,12 @@ func (g *Generator) GenerateCheck(ctx context.Context, c Check) Result {
 		res.Action = ActionGenerated
 		res.MQL = mql
 		res.Explanation = gen.Explanation
+		if res.Provider == "" {
+			// nothing named a target, but the query does
+			if r, ok := g.cfg.Validator.(ProviderResolver); ok {
+				res.Provider = r.ProviderForQuery(mql)
+			}
+		}
 		return res
 	}
 

@@ -4,6 +4,7 @@
 package generate
 
 import (
+	"path"
 	"strings"
 	"sync"
 
@@ -50,6 +51,16 @@ type ProviderChecker interface {
 	CheckProvider(provider string) error
 }
 
+// ProviderResolver is another optional half of a Validator: it names the
+// provider a query reads from. A check whose wording names no target still
+// gets one this way once a query for it exists, which is what lets batch mode
+// give it an asset filter.
+type ProviderResolver interface {
+	// ProviderForQuery returns the provider of the query's leading resource,
+	// or "" when it is a core resource or not in the schema.
+	ProviderForQuery(mql string) string
+}
+
 // ErrValidationUnavailable marks the errors that mean "this query was not
 // judged", as opposed to "this query is wrong". Callers use errors.Is to tell
 // the two apart, because retrying the agent cannot fix the first kind.
@@ -69,15 +80,37 @@ type compileValidator struct {
 	// resolved once and reused. The compiler cannot distinguish "you named a
 	// resource that does not exist" from "the provider that defines it is not
 	// installed", so we answer that question before compiling.
-	installedOnce sync.Once
-	installed     map[string]bool
-	installedErr  error
+	installedMu  sync.Mutex
+	installed    map[string]bool
+	installedErr error
+
+	// autoInstall installs a missing provider instead of reporting it, the way
+	// `cnspec scan` and `cnspec policy lint` do when auto-update is on.
+	autoInstall   bool
+	installFailed map[string]error
+}
+
+// CompileOption configures NewCompileValidator.
+type CompileOption func(*compileValidator)
+
+// WithProviderInstall makes the validator install a target provider that is
+// missing, rather than refusing to judge its queries. Callers pass the
+// --auto-update setting, so a machine that pins its providers is left alone.
+func WithProviderInstall(enabled bool) CompileOption {
+	return func(v *compileValidator) { v.autoInstall = enabled }
+}
+
+// installProvider installs a provider by name. It is a variable so tests can
+// exercise the install path without the network.
+var installProvider = func(name string) error {
+	_, err := providers.EnsureProvider(providers.ProviderLookup{ProviderName: name}, true, nil)
+	return err
 }
 
 // NewCompileValidator builds a validator against the default runtime schema
 // (every locally installed provider plus core). It mirrors the linter's
 // compiler configuration so a query that passes here passes lint.
-func NewCompileValidator() (Validator, error) {
+func NewCompileValidator(opts ...CompileOption) (Validator, error) {
 	runtime := providers.DefaultRuntime()
 	if runtime == nil {
 		return nil, errors.New("no default runtime available for validation")
@@ -88,7 +121,11 @@ func NewCompileValidator() (Validator, error) {
 	}
 	features := mql.DefaultFeatures
 	features = append(features, byte(mql.FailIfNoEntryPoints))
-	return &compileValidator{schema: schema, features: features}, nil
+	v := &compileValidator{schema: schema, features: features}
+	for _, opt := range opts {
+		opt(v)
+	}
+	return v, nil
 }
 
 func (v *compileValidator) config() mqlc.CompilerConfig {
@@ -108,15 +145,39 @@ func (v *compileValidator) CheckProvider(provider string) error {
 		return nil // no target resolved; nothing to promise either way
 	}
 
-	v.installedOnce.Do(func() {
+	v.installedMu.Lock()
+	defer v.installedMu.Unlock()
+	if v.installed == nil && v.installedErr == nil {
 		v.installed, v.installedErr = installedProviderNames()
-	})
+	}
 	if v.installedErr != nil {
 		return errors.Mark(
 			errors.Wrapf(v.installedErr, "cannot tell whether the %q provider is installed, so generated MQL cannot be compile-checked", provider),
 			ErrValidationUnavailable)
 	}
 	if v.installed[provider] {
+		return nil
+	}
+	if v.autoInstall {
+		// A failed install is remembered: it retries the download several
+		// times, and every other check for this provider would pay for that
+		// again only to fail the same way.
+		if err, failed := v.installFailed[provider]; failed {
+			return err
+		}
+		// The schema picks a new install up on its next lookup, so compiling
+		// right after this sees the provider's resources.
+		if err := installProvider(provider); err != nil {
+			err = errors.Mark(
+				errors.Wrapf(err, "the %q provider is not installed and installing it failed, so its resources cannot be compile-checked; install it with `cnspec providers install %s`, or re-run with --no-validate", provider, provider),
+				ErrValidationUnavailable)
+			if v.installFailed == nil {
+				v.installFailed = map[string]error{}
+			}
+			v.installFailed[provider] = err
+			return err
+		}
+		v.installed[provider] = true
 		return nil
 	}
 	return errors.Mark(
@@ -136,9 +197,70 @@ func (v *compileValidator) Validate(req ValidationRequest) error {
 	conf := v.config()
 	bundle, err := mqlc.Compile(query, newPropsHandler(req.Props, conf), conf)
 	if err != nil {
-		return errors.Wrap(err, "MQL does not compile")
+		return errors.Newf("MQL does not compile: %s", compileErrorText(err))
 	}
 	return assertVerdict(bundle)
+}
+
+// compileErrorText is the compiler's message without the "failed to compile: "
+// prefixes it stacks as the error passes up through its own layers. The text is
+// what the agent is told on a retry and what a reviewer reads, and
+// "MQL does not compile: failed to compile: failed to compile: cannot find
+// resource" says the same thing three times before saying anything.
+func compileErrorText(err error) string {
+	msg := err.Error()
+	for {
+		trimmed := strings.TrimPrefix(msg, "failed to compile: ")
+		if trimmed == msg {
+			return msg
+		}
+		msg = trimmed
+	}
+}
+
+// ProviderForQuery looks the query's leading resource up in the schema, the
+// longest dotted prefix first (`sshd.config` before `sshd`), and returns the
+// short name of the provider that defines it. Core resources (asset, time,
+// props, ...) apply to any asset, so they name no target.
+func (v *compileValidator) ProviderForQuery(query string) string {
+	for _, name := range leadingResourcePaths(query) {
+		info := v.schema.Lookup(name)
+		if info == nil || info.Provider == "" {
+			continue
+		}
+		provider := path.Base(info.Provider)
+		if provider == "core" {
+			return ""
+		}
+		return provider
+	}
+	return ""
+}
+
+// leadingResourcePaths returns the dotted identifier a query starts with and
+// each of its prefixes, longest first: `sshd.config.params["x"]` gives
+// sshd.config.params, sshd.config, sshd.
+func leadingResourcePaths(query string) []string {
+	query = strings.TrimSpace(query)
+	end := 0
+	for end < len(query) {
+		c := query[end]
+		if c == '.' || c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') {
+			end++
+			continue
+		}
+		break
+	}
+	head := strings.Trim(query[:end], ".")
+	if head == "" {
+		return nil
+	}
+	parts := strings.Split(head, ".")
+	out := make([]string, 0, len(parts))
+	for i := len(parts); i > 0; i-- {
+		out = append(out, strings.Join(parts[:i], "."))
+	}
+	return out
 }
 
 // installedProviderNames returns the provider names available locally, builtin
@@ -294,6 +416,14 @@ func NewExecuteValidator(runner QueryRunner, compile Validator) (Validator, erro
 		}
 	}
 	return &executeValidator{compile: compile, runner: runner}, nil
+}
+
+// ProviderForQuery defers to the compile stage.
+func (v *executeValidator) ProviderForQuery(query string) string {
+	if r, ok := v.compile.(ProviderResolver); ok {
+		return r.ProviderForQuery(query)
+	}
+	return ""
 }
 
 // CheckProvider defers to the compile stage, so a missing provider is still

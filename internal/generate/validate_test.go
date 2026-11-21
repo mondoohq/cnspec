@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/cockroachdb/errors"
+	"go.mondoo.com/mql/providers-sdk/v1/resources"
 	"go.mondoo.com/mql/types"
 )
 
@@ -120,8 +121,7 @@ func TestCompileValidatorRejectsNonVerdicts(t *testing.T) {
 // three times per check, after three agent invocations, phrased as though the
 // generated query were at fault.
 func TestCompileValidatorReportsAMissingProvider(t *testing.T) {
-	v := &compileValidator{}
-	v.installedOnce.Do(func() { v.installed = map[string]bool{"os": true} })
+	v := &compileValidator{installed: map[string]bool{"os": true}}
 
 	if err := v.CheckProvider("os"); err != nil {
 		t.Fatalf("an installed provider must pass: %v", err)
@@ -145,5 +145,91 @@ func TestCompileValidatorReportsAMissingProvider(t *testing.T) {
 	// still cannot mistake it for a compile failure
 	if err := v.Validate(ValidationRequest{MQL: "aws.s3.buckets", Provider: "aws"}); !errors.Is(err, ErrValidationUnavailable) {
 		t.Fatalf("Validate must report the missing provider, got: %v", err)
+	}
+}
+
+// TestCheckProviderInstallsAMissingProvider: with auto-update on, a missing
+// target provider is installed rather than reported, and a failed install is
+// tried once per run, not once per check. Synthetic: installProvider is stubbed,
+// so nothing is downloaded.
+func TestCheckProviderInstallsAMissingProvider(t *testing.T) {
+	orig := installProvider
+	t.Cleanup(func() { installProvider = orig })
+
+	var calls []string
+	installProvider = func(name string) error {
+		calls = append(calls, name)
+		if name == "gcp" {
+			return errors.New("network unreachable")
+		}
+		return nil
+	}
+
+	v := &compileValidator{installed: map[string]bool{"core": true}, autoInstall: true}
+	if err := v.CheckProvider("os"); err != nil {
+		t.Fatalf("a provider that installed was still reported missing: %v", err)
+	}
+	if err := v.CheckProvider("os"); err != nil {
+		t.Fatalf("second check of an installed provider failed: %v", err)
+	}
+
+	for range 2 {
+		err := v.CheckProvider("gcp")
+		if err == nil || !errors.Is(err, ErrValidationUnavailable) {
+			t.Fatalf("a failed install must be reported as validation unavailable, got %v", err)
+		}
+		if !strings.Contains(err.Error(), "cnspec providers install gcp") {
+			t.Errorf("the failure does not say how to install it: %v", err)
+		}
+	}
+	if want := []string{"os", "gcp"}; strings.Join(calls, ",") != strings.Join(want, ",") {
+		t.Errorf("installs attempted = %v, want %v (one per provider)", calls, want)
+	}
+
+	// auto-update off: report, never install
+	calls = nil
+	off := &compileValidator{installed: map[string]bool{"core": true}}
+	if err := off.CheckProvider("os"); err == nil || !errors.Is(err, ErrValidationUnavailable) {
+		t.Fatalf("expected the missing provider to be reported, got %v", err)
+	}
+	if len(calls) != 0 {
+		t.Errorf("installed %v with auto-update off", calls)
+	}
+}
+
+func TestCompileErrorTextDropsStackedPrefixes(t *testing.T) {
+	// Measured: the message mqlc returned for `sshd.config` with no os provider
+	// installed, cnspec built from this branch, 2026-11-21.
+	in := errors.New("failed to compile: failed to compile: cannot find resource for identifier 'sshd'")
+	if got, want := compileErrorText(in), "cannot find resource for identifier 'sshd'"; got != want {
+		t.Errorf("compileErrorText = %q, want %q", got, want)
+	}
+	// Synthetic: a message with no prefix is returned unchanged.
+	if got := compileErrorText(errors.New("unexpected token")); got != "unexpected token" {
+		t.Errorf("an unprefixed message changed: %q", got)
+	}
+}
+
+// TestProviderForQuery reads a query's target from the schema. Synthetic
+// schema; the provider IDs have the shape installed providers declare.
+func TestProviderForQuery(t *testing.T) {
+	v := &compileValidator{schema: &resources.Schema{Resources: map[string]*resources.ResourceInfo{
+		"file":        {Provider: "go.mondoo.com/mql/providers/os"},
+		"sshd.config": {Provider: "go.mondoo.com/mql/providers/os"},
+		"aws.s3":      {Provider: "go.mondoo.com/mql/providers/aws"},
+		"asset":       {Provider: "go.mondoo.com/mql/providers/core"},
+	}}}
+	cases := map[string]string{
+		`file("/etc/shadow") { permissions.other_readable == false }`: "os",
+		`sshd.config.params["PermitRootLogin"] == "no"`:               "os",
+		`aws.s3.buckets.all(encryption != empty)`:                     "aws",
+		`asset.family.contains("linux")`:                              "",
+		`unknown.resource == 1`:                                       "",
+		`== 1`:                                                        "",
+	}
+	for q, want := range cases {
+		if got := v.ProviderForQuery(q); got != want {
+			t.Errorf("ProviderForQuery(%q) = %q, want %q", q, got, want)
+		}
 	}
 }

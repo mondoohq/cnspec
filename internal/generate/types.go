@@ -25,6 +25,9 @@ type Check struct {
 	// HasVariants marks a variant-parent check whose MQL lives in its per-platform
 	// variants. Such a check must not get MQL generated onto the parent.
 	HasVariants bool
+	// Provider, when set, is the target provider the author chose, and wins
+	// over anything inferred from the filters, uid or wording.
+	Provider string
 	// Guidance is optional extra author steering (e.g. feedback from an
 	// interactive "regenerate" step), added to the prompt.
 	Guidance string
