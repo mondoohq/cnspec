@@ -28,7 +28,18 @@ import (
 //   - Unicode bidi overrides and invisible marks (the "trojan source" class),
 //     which reorder a line's rendering without changing its bytes.
 //   - Invalid UTF-8 bytes, which some terminals interpret as their own commands.
+//
+// Line endings are normalized first: CRLF and a lone CR both become LF. An agent
+// on Windows emits CRLF, and escaping the CR would leave a literal `\x0d` at the
+// end of every line of the query, so it would fail to compile or, inside a
+// string literal, compile into a different query. A lone CR folded to LF can no
+// longer return the cursor to overwrite a line, and the reviewer sees the line
+// break the terminal would otherwise have hidden.
 func SanitizeModelText(s string) string {
+	if strings.IndexByte(s, '\r') >= 0 {
+		s = strings.ReplaceAll(s, "\r\n", "\n")
+		s = strings.ReplaceAll(s, "\r", "\n")
+	}
 	if !needsSanitizing(s) {
 		return s // the overwhelmingly common case: return the input unchanged
 	}

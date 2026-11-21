@@ -23,7 +23,10 @@ func TestSanitizeModelText(t *testing.T) {
 			"asset.name != 'safe-looking'\x1b[2K\x1b[1GBACKDOOR",
 			`asset.name != 'safe-looking'\x1b[2K\x1b[1GBACKDOOR`,
 		},
-		{"carriage return is escaped", "safe\rmalicious", `safe\x0dmalicious`},
+		// a lone CR would return the cursor and let "malicious" overwrite
+		// "safe"; as a line break both stay on screen
+		{"lone carriage return becomes a line break", "safe\rmalicious", "safe\nmalicious"},
+		{"crlf becomes lf", "a == 1\r\nb == 2\r\n", "a == 1\nb == 2\n"},
 		{"bell and delete are escaped", "a\x07b\x7fc", `a\x07b\x7fc`},
 		{"c1 controls are escaped", "a\u0085b", `a\u0085b`},
 		{"bidi override is escaped", "a\u202eb", `a\u202eb`},
@@ -60,5 +63,30 @@ func TestParseResponseSanitizesModelText(t *testing.T) {
 	}
 	if strings.ContainsRune(res.Explanation, 0x1b) {
 		t.Fatalf("parsed explanation still carries an escape sequence: %q", res.Explanation)
+	}
+}
+
+// TestParseResponseNormalizesCRLF covers an agent that answers with Windows line
+// endings. Synthetic: no agent run was captured; the bytes are what a CRLF
+// writer produces for a fenced answer.
+func TestParseResponseNormalizesCRLF(t *testing.T) {
+	// two lines, so the CR sits inside the query where TrimSpace cannot reach it
+	line1 := `sshd.config.params["PermitRootLogin"] == "no"`
+	line2 := `sshd.config.params["PasswordAuthentication"] == "no"`
+	want := line1 + "\n" + line2
+	esc := func(s string) string { return strings.ReplaceAll(s, `"`, `\"`) }
+	for name, raw := range map[string]string{
+		"fenced": "```mql\r\n" + line1 + "\r\n" + line2 + "\r\n```\r\n",
+		"json":   "```json\r\n{\"mql\": \"" + esc(line1) + "\\r\\n" + esc(line2) + "\", \"explanation\": \"x\"}\r\n```",
+	} {
+		t.Run(name, func(t *testing.T) {
+			res := parseResponse(raw)
+			if strings.TrimSpace(res.MQL) != want {
+				t.Fatalf("parsed MQL = %q, want %q", res.MQL, want)
+			}
+			if strings.Contains(res.MQL, `\x0d`) || strings.ContainsRune(res.MQL, '\r') {
+				t.Fatalf("parsed MQL still carries a carriage return: %q", res.MQL)
+			}
+		})
 	}
 }
