@@ -66,6 +66,13 @@ type Model struct {
 	// outlives a keypress the same way launching does, and for the same reason
 	// -- the OS keychain dialog.
 	export exportState
+	// author is the check-authoring pane: the intent being described, the
+	// agent run in flight, and the candidate awaiting a verdict. See author.go.
+	//
+	// A sibling of scan for the same reason export is a sibling of launching:
+	// it outlives the keypress that started it, and the run it is waiting on
+	// answers to a sequence number rather than to whatever is on screen.
+	author authorState
 
 	// --- the launcher's own chrome ------------------------------------------
 
@@ -276,6 +283,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateScanning(msg)
 	case phaseViewing:
 		return m.updateViewing(msg)
+	case phaseAuthoring:
+		return m.updateAuthoring(msg)
 	}
 
 	switch msg := msg.(type) {
@@ -398,6 +407,13 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// up and must not be left standing behind another box.
 	if msg.String() == "ctrl+e" {
 		return m.openExport()
+	}
+
+	// Authoring is the launcher's other verb: it writes a check rather than
+	// running one. Reachable from the form for the same reason export is --
+	// it acts on the session, not on the connector under the cursor.
+	if msg.String() == "ctrl+g" {
+		return m.openAuthor()
 	}
 
 	// The report of the last scan is still in memory, so leaving the viewer is
