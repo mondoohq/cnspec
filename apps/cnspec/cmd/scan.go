@@ -91,7 +91,15 @@ func init() {
 	_ = scanCmd.Flags().Bool("collect-support-bundle", false, "Collect a support bundle (debug logs, asset bundle, inventory, resolved policy, report, provider versions) for sharing with Mondoo support. By default writes to a timestamped directory in the current working dir; override with --support-bundle-dir.")
 	_ = scanCmd.Flags().String("support-bundle-dir", "", "Directory to write the support bundle into. Only used when --collect-support-bundle is set. Defaults to ./cnspec-support-bundle-<timestamp>/.")
 	_ = scanCmd.Flags().String("exceptions-submit", "auto", "Preview: When to submit exceptions from mondoo.yml files to Mondoo Platform: auto (a CI run on the default branch; set MONDOO_DEFAULT_BRANCH on Jenkins, Azure Pipelines or CircleCI if they cannot tell it), always, or never")
+	_ = scanCmd.Flags().Bool("vuln-results", true, "Wait for Mondoo Platform to analyze each scanned asset's packages and show the vulnerabilities found")
+	_ = scanCmd.Flags().Duration("vuln-results-timeout", defaultVulnResultsTimeout, "How long to wait for each asset's vulnerability results before printing a link to them instead")
 }
+
+// defaultVulnResultsTimeout bounds the wait for one asset's vulnerability
+// results. It covers the platform processing the upload, which takes longer
+// when the platform is busy. When it runs out, the scan points to the results
+// in the platform instead.
+const defaultVulnResultsTimeout = 120 * time.Second
 
 var scanCmd = &cobra.Command{
 	Use:   "scan",
@@ -137,6 +145,8 @@ To manually configure a policy, use this:
 		_ = viper.BindPFlag("score-threshold", cmd.Flags().Lookup("score-threshold"))
 		_ = viper.BindPFlag("risk-threshold", cmd.Flags().Lookup("risk-threshold"))
 		_ = viper.BindPFlag("exceptions-submit", cmd.Flags().Lookup("exceptions-submit"))
+		_ = viper.BindPFlag("vuln-results", cmd.Flags().Lookup("vuln-results"))
+		_ = viper.BindPFlag("vuln-results-timeout", cmd.Flags().Lookup("vuln-results-timeout"))
 
 		// for all assets
 		_ = viper.BindPFlag("incognito", cmd.Flags().Lookup("incognito"))
@@ -206,7 +216,13 @@ var scanCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 	// it can be ctx-aware and only fires for scan, not policy lint).
 	scandump.YAML(ctx, "resolved_mql_bundle.mql", conf.Bundle)
 
-	res, err := RunScanResult(ctx, conf, scan.WithReportType(conf.ReportType), scan.WithAutoUpdate(AutoUpdateEnabled()))
+	// Only `cnspec scan` waits for vulnerability results: a person or a CI job
+	// reads its output. Services (serve, the scan API) upload and move on.
+	var vulnResultsTimeout time.Duration
+	if viper.GetBool("vuln-results") {
+		vulnResultsTimeout = viper.GetDuration("vuln-results-timeout")
+	}
+	res, err := RunScanResult(ctx, conf, scan.WithReportType(conf.ReportType), scan.WithAutoUpdate(AutoUpdateEnabled()), scan.WithVulnResults(vulnResultsTimeout))
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to run scan")
 	}

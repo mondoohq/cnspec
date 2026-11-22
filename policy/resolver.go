@@ -289,6 +289,17 @@ func (s *LocalServices) GetDownloadURL(ctx context.Context, req *GetDownloadURLR
 	return nil, status.Error(codes.Unimplemented, "local services do not support download URLs")
 }
 
+// GetUploadVulnResult returns the vulnerability result for one upload. Only
+// the upstream analyses vulnerabilities.
+func (s *LocalServices) GetUploadVulnResult(ctx context.Context, req *GetUploadVulnResultReq) (*GetUploadVulnResultResp, error) {
+	// Only forward to upstream if we have one and are not in incognito mode
+	if s.Upstream != nil && !s.Incognito {
+		return s.Upstream.GetUploadVulnResult(ctx, req)
+	}
+
+	return nil, status.Error(codes.Unimplemented, "local services do not analyse vulnerabilities")
+}
+
 // SubmitExceptions forwards exceptions read from config files to the upstream,
 // which decides on them (ADR-0006). Without an upstream, exceptions are not
 // submitted but applied: see LocalServices.AssetExceptions.

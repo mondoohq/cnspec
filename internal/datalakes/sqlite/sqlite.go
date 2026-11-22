@@ -276,6 +276,10 @@ func uploadScanDataStore(ctx context.Context, services *policy.Services, assetMr
 			uploadOutcomeTags(uploadReportKindRecovered, out, assetMrn))
 	}
 
+	if receipt := uploadReceiptFromCtx(ctx); receipt != nil {
+		receipt.SessionID = out.sessionID
+	}
+
 	log.Info().
 		Str("session", out.sessionID).
 		Int64("bytes", out.okRes.BytesSent).

@@ -13,7 +13,6 @@ import (
 	"go.mondoo.com/cnspec/policy"
 	"go.mondoo.com/mql/llx"
 	"go.mondoo.com/mql/providers-sdk/v1/inventory"
-	"go.mondoo.com/mql/providers-sdk/v1/upstream/gql"
 	"go.mondoo.com/mql/providers-sdk/v1/upstream/mvd"
 )
 
@@ -24,6 +23,7 @@ type AggregateReporter struct {
 	assets           map[string]*inventory.Asset
 	assetReports     map[string]*policy.Report
 	assetVulnReports map[string]*mvd.VulnReport
+	vulnAssessments  map[string]*policy.VulnAssessment
 	assetErrors      map[string]error
 	bundle           *policy.Bundle
 	resolvedPolicies map[string]*policy.ResolvedPolicy
@@ -39,6 +39,7 @@ func NewAggregateReporter() *AggregateReporter {
 		assetErrors:      map[string]error{},
 		resolvedPolicies: map[string]*policy.ResolvedPolicy{},
 		assetVulnReports: map[string]*mvd.VulnReport{},
+		vulnAssessments:  map[string]*policy.VulnAssessment{},
 		exceptions:       map[string]*policy.ExceptionDecisions{},
 	}
 }
@@ -69,17 +70,19 @@ func (r *AggregateReporter) AddReport(asset *inventory.Asset, results *AssetRepo
 	r.worstCheckScore = lowerScore(r.worstCheckScore, policy.WorstCheckScore(results.ResolvedPolicy, results.Report))
 }
 
-func (r *AggregateReporter) AddVulnReport(asset *inventory.Asset, vulnReport *gql.VulnReport) {
-	if vulnReport == nil {
+func (r *AggregateReporter) AddVulnResult(asset *inventory.Asset, assessment *policy.VulnAssessment, vulnReport *mvd.VulnReport) {
+	if assessment == nil {
 		return
 	}
-	log.Debug().Str("asset", asset.Name).Msg("add scan result to report")
+	log.Debug().Str("asset", asset.Name).Str("state", assessment.State.String()).Msg("add vulnerability result to report")
 
-	mvdVulnReport := gql.ConvertToMvdVulnReport(vulnReport)
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.assets[asset.Mrn] = asset
-	r.assetVulnReports[asset.Mrn] = mvdVulnReport
+	r.vulnAssessments[asset.Mrn] = assessment
+	if vulnReport != nil {
+		r.assetVulnReports[asset.Mrn] = vulnReport
+	}
 }
 
 func (r *AggregateReporter) AddScanError(asset *inventory.Asset, err error) {
@@ -133,6 +136,7 @@ func (r *AggregateReporter) Reports() *ScanResult {
 				Bundle:             r.bundle,
 				ResolvedPolicies:   r.resolvedPolicies,
 				VulnReports:        r.assetVulnReports,
+				VulnAssessments:    r.vulnAssessments,
 				ExceptionDecisions: r.exceptions,
 			},
 		},

@@ -323,8 +323,7 @@ func (r *defaultReporter) printAssetSections(orderedAssets []assetMrnName) {
 		}
 
 		if r.Conf.printVulnerabilities {
-			// TODO: we should re-use the report results
-			r.printVulns(report, assetMrn)
+			r.printVulns(assetMrn)
 		}
 
 	}
@@ -848,26 +847,50 @@ func (r *defaultReporter) printCheck(score simpleScore, query *policy.Mquery, re
 
 // ============================= ^^ ============================================
 
-func (r *defaultReporter) printVulns(report *policy.Report, assetMrn string) {
+func (r *defaultReporter) printVulns(assetMrn string) {
 	print := r.Printer
 
+	assessment := r.data.VulnAssessments[assetMrn]
 	vulnReport := r.data.VulnReports[assetMrn]
-
-	if vulnReport == nil {
+	if assessment == nil && vulnReport == nil {
 		return
 	}
 	r.beginAssetSection()
 	r.out(print.Primary("Vulnerabilities:" + NewLineCharacter))
 
-	score := report.Scores[advisoryPolicyMrn]
-	_ = score
+	if vulnReport == nil || vulnReport.GetStats() == nil {
+		r.printVulnsNotAssessed(assessment, r.data.Assets[assetMrn].GetUrl())
+		return
+	}
+
+	if assessment.GetNewerScan() {
+		note := "Results from a newer scan of this asset"
+		if t := assessment.GetNewerScanTime(); t != nil {
+			note += " (" + t.AsTime().Local().Format(time.RFC3339) + ")"
+		}
+		r.out(termenv.String(note).Foreground(r.Colors.Disabled).String())
+		r.out(NewLineCharacter)
+	}
 
 	r.printVulnList(vulnReport)
 	r.printVulnSummary(vulnReport)
 }
 
+// printVulnsNotAssessed says why there are no vulnerability results. It never
+// prints a score: no data is not zero findings.
+func (r *defaultReporter) printVulnsNotAssessed(assessment *policy.VulnAssessment, assetUrl string) {
+	line := ". Not assessed: " + vulnNotAssessedReason(assessment)
+	r.out(termenv.String(line).Foreground(r.Colors.Disabled).String())
+	r.out(NewLineCharacter)
+	if assetUrl != "" && assessment.GetState() != policy.VulnResultState_VULN_RESULT_STATE_NOT_ASSESSED {
+		r.out("  See the results in Mondoo Platform: " + assetUrl)
+		r.out(NewLineCharacter)
+	}
+	r.out(NewLineCharacter)
+}
+
 func (r *defaultReporter) printVulnList(report *mvd.VulnReport) {
-	if report.GetStats() == nil || report.Stats.Advisories.Total == 0 {
+	if report.Stats.Advisories.GetTotal() == 0 {
 		color := cnspecComponents.DefaultRatingColors.Color(policy.ScoreRating_aPlus)
 		indicatorChar := '■'
 		title := "No advisories found"
