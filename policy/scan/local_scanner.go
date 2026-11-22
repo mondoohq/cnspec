@@ -40,13 +40,13 @@ import (
 	"go.mondoo.com/mql/providers-sdk/v1/plugin"
 	"go.mondoo.com/mql/providers-sdk/v1/recording"
 	"go.mondoo.com/mql/providers-sdk/v1/upstream"
-	"go.mondoo.com/mql/providers-sdk/v1/upstream/gql"
 	"go.mondoo.com/mql/providers-sdk/v1/upstream/health"
 	"go.mondoo.com/mql/utils/multierr"
 	ranger "go.mondoo.com/ranger-rpc"
 	"go.mondoo.com/ranger-rpc/codes"
 	"go.mondoo.com/ranger-rpc/status"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 const (
@@ -87,6 +87,9 @@ type LocalScanner struct {
 	strict bool
 	// exceptions is how exceptions from config files are treated (ADR-0006).
 	exceptions *exceptionsConfig
+	// vulnResultsTimeout bounds the per-asset wait for the upstream's
+	// vulnerability result. Zero skips the wait.
+	vulnResultsTimeout time.Duration
 }
 
 const (
@@ -169,6 +172,16 @@ func WithScanSource(source string) ScannerOption {
 // WithActivityTrigger records how scans run by this scanner came to be:
 // started by a person, by a schedule, or by a remote request. It is reported
 // upstream when a scan starts so the platform can show assets being scanned.
+// WithVulnResults makes the scanner wait up to timeout per asset for the
+// upstream's vulnerability result for that asset's upload. Zero, the default,
+// skips the wait: the upload is processed either way, and only a reader of
+// this scan's output needs the result.
+func WithVulnResults(timeout time.Duration) ScannerOption {
+	return func(s *LocalScanner) {
+		s.vulnResultsTimeout = timeout
+	}
+}
+
 func WithActivityTrigger(trigger policy.AssetActivityTrigger) ScannerOption {
 	return func(s *LocalScanner) {
 		s.activityTrigger = trigger
@@ -1139,6 +1152,13 @@ func (s *LocalScanner) upstreamServices(ctx context.Context, conf *upstream.Upst
 func (s *LocalScanner) RunAssetJob(job *AssetJob) {
 	log.Debug().Msgf("connecting to asset %s", job.Asset.HumanName())
 
+	// What the vulnerability result is asked for by: the bucket upload's
+	// session, filled in by the upload, or for results sent with
+	// StoreResults, the time this scan started.
+	scanStart := time.Now()
+	receipt := &sqlite.UploadReceipt{}
+	job.Ctx = sqlite.WithUploadReceipt(job.Ctx, receipt)
+
 	results, err := s.runMotorizedAsset(job)
 	if err != nil {
 		log.Debug().Str("asset", job.Asset.Name).Msg("could not complete scan for asset")
@@ -1164,22 +1184,26 @@ func (s *LocalScanner) RunAssetJob(job *AssetJob) {
 		}
 	}()
 
-	upstream := s.upstreamServices(job.Ctx, job.UpstreamConfig)
-	// The vuln report is relevant only when we have an aggregate reporter
-	if vulnReporter, isAggregateReporter := job.Reporter.(VulnReporter); upstream != nil && isAggregateReporter {
-		// get new gql client
-		mondooClient, err := gql.NewClient(job.UpstreamConfig, s._upstreamClient.HttpClient)
-		if err != nil {
-			return
-		}
-
-		gqlVulnReport, err := mondooClient.GetVulnCompactReport(job.Asset.Mrn)
-		if err != nil {
-			log.Error().Err(err).Msg("could not get vulnerability report")
-			return
-		}
-		vulnReporter.AddVulnReport(job.Asset, gqlVulnReport)
+	// The vuln result is relevant only when we have an aggregate reporter,
+	// and someone reads this scan's output (see WithVulnResults).
+	vulnReporter, isAggregateReporter := job.Reporter.(VulnReporter)
+	if !isAggregateReporter || s.vulnResultsTimeout <= 0 {
+		return
 	}
+	upstream := s.upstreamServices(job.Ctx, job.UpstreamConfig)
+	if upstream == nil {
+		return
+	}
+
+	req := &policy.GetUploadVulnResultReq{
+		UploadSessionId: receipt.SessionID,
+		ScopeMrn:        job.Asset.Mrn,
+	}
+	if receipt.SessionID == "" {
+		req.NotBefore = timestamppb.New(scanStart)
+	}
+	assessment, vulnReport := awaitVulnResult(job.Ctx, upstream, req, s.vulnResultsTimeout)
+	vulnReporter.AddVulnResult(job.Asset, assessment, vulnReport)
 }
 
 func (s *LocalScanner) upstreamClient(ctx context.Context, conf *upstream.UpstreamConfig) (*upstream.UpstreamClient, error) {

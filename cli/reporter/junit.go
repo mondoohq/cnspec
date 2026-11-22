@@ -185,7 +185,22 @@ func assetMvdTests(r *policy.ReportCollection, assetMrn string, assetObj *invent
 	// check if we have a vulnerability report
 	vulnReport, ok := r.VulnReports[assetMrn]
 	if !ok {
-		return nil
+		// No report but an assessment: the scan has no vulnerability data
+		// for the asset. Say so as a skipped test, never as a pass.
+		assessment, ok := r.VulnAssessments[assetMrn]
+		if !ok {
+			return nil
+		}
+		return &junit.Testsuite{
+			Name:    "Vulnerability Report for " + assetObj.Name,
+			Tests:   1,
+			Skipped: 1,
+			Testcases: []junit.Testcase{{
+				Classname: "vulnerability-report",
+				Name:      "Vulnerabilities not assessed",
+				Skipped:   &junit.Result{Message: vulnNotAssessedReason(assessment)},
+			}},
+		}
 	}
 
 	ts := &junit.Testsuite{

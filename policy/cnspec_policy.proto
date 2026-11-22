@@ -1052,6 +1052,11 @@ message ReportCollection {
   // What became of each exception read from config for an asset (ADR-0006),
   // keyed by asset MRN. Local output, never sent upstream.
   map<string, ExceptionDecisions> exception_decisions = 8;
+  // How each asset's vulnerabilities were assessed, keyed by asset MRN. An
+  // asset with an entry in vuln_reports has one here too; an entry here
+  // without a report means the scan has no vulnerability data for the asset,
+  // and says why.
+  map<string, VulnAssessment> vuln_assessments = 9;
 }
 
 message FrameworkReport {
@@ -1326,6 +1331,14 @@ service PolicyResolver {
   // Unimplemented. Clients must treat any error here exactly like an
   // absent download_url: upload in full.
   rpc GetDownloadURL(GetDownloadURLReq) returns (GetDownloadURLResp) {}
+  // Returns the vulnerability result for one scan upload: the analysis of the
+  // packages that upload carried, or of a newer upload's packages if one has
+  // already replaced them. Never blocks on ingest: until the upload's packages
+  // are synced it answers PENDING, and the client decides whether to poll.
+  // Servers that predate this RPC answer NotFound (ranger's unknown-method
+  // response); in-process local services answer Unimplemented. Clients treat
+  // either as "not assessed", never as zero findings.
+  rpc GetUploadVulnResult(GetUploadVulnResultReq) returns (GetUploadVulnResultResp) {}
 
   rpc GetReport(EntityScoreReq) returns (Report) {}
   rpc GetFrameworkReport(EntityScoreReq) returns (FrameworkReport) {}
@@ -1590,6 +1603,54 @@ message ReportUploadCompletedReq {
   // Completion is still the scan signal in both outcomes — statistics ride
   // details exactly as for a full upload.
   bool unchanged = 4;
+}
+
+// VulnResultState is where an upload's vulnerability result stands.
+enum VulnResultState {
+  VULN_RESULT_STATE_UNSPECIFIED = 0;
+  // The upload's packages are not synced yet. Ask again later.
+  VULN_RESULT_STATE_PENDING = 1;
+  // report holds the result.
+  VULN_RESULT_STATE_READY = 2;
+  // The asset's platform has no vulnerability support. Not zero findings.
+  VULN_RESULT_STATE_NOT_ASSESSED = 3;
+  // The upload failed or its result could not be computed; message says why.
+  VULN_RESULT_STATE_FAILED = 4;
+}
+
+// GetUploadVulnResultReq addresses one upload. A bucket upload is named by its
+// upload_session_id. Results sent with StoreResults have no session; they are
+// named by scope_mrn plus not_before, the time the client started the scan,
+// and answer READY once the asset's packages were synced at or after it.
+message GetUploadVulnResultReq {
+  string upload_session_id = 1;
+  // The asset MRN. Required in both forms.
+  string scope_mrn = 2;
+  google.protobuf.Timestamp not_before = 3;
+}
+
+message GetUploadVulnResultResp {
+  VulnResultState state = 1;
+  // Set when state is READY.
+  mondoo.mvd.v1.VulnReport report = 2;
+  // newer_scan is set when report analyses a newer upload of the same asset
+  // than the one asked about, because that upload's packages have already
+  // replaced this one's. newer_scan_time is when that upload was created.
+  bool newer_scan = 3;
+  google.protobuf.Timestamp newer_scan_time = 4;
+  // Why the state is NOT_ASSESSED or FAILED.
+  string message = 5;
+}
+
+// VulnAssessment is what a scan learned about an asset's vulnerabilities,
+// beside the report itself. It exists so that "no data" is never shown as
+// "no findings".
+message VulnAssessment {
+  // PENDING here means the client stopped waiting: the timeout ran out.
+  VulnResultState state = 1;
+  bool newer_scan = 2;
+  google.protobuf.Timestamp newer_scan_time = 3;
+  string message = 4;
 }
 
 // DownloadKind addresses the artifact GetDownloadURL serves. Kind-addressed

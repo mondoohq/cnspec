@@ -159,6 +159,13 @@ func newAssetRun(r *policy.ReportCollection, ctx *sarifRunContext) *sarif.Run {
 	}
 	addRunScoreProperties(props, r, ctx.assetMrn)
 	addRunVulnProperties(props, r.VulnReports[ctx.assetMrn])
+	// Without a report the run has no vulnerability results at all; say why,
+	// so a consumer can tell that from "no vulnerabilities".
+	if _, ok := r.VulnReports[ctx.assetMrn]; !ok {
+		if assessment, ok := r.VulnAssessments[ctx.assetMrn]; ok {
+			props["vulnerabilitiesNotAssessed"] = vulnNotAssessedReason(assessment)
+		}
+	}
 	run.Properties = props
 
 	return run

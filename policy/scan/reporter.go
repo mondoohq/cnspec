@@ -6,7 +6,7 @@ package scan
 import (
 	"go.mondoo.com/cnspec/policy"
 	"go.mondoo.com/mql/providers-sdk/v1/inventory"
-	"go.mondoo.com/mql/providers-sdk/v1/upstream/gql"
+	"go.mondoo.com/mql/providers-sdk/v1/upstream/mvd"
 )
 
 type AssetReport struct {
@@ -19,8 +19,10 @@ type AssetReport struct {
 }
 
 type VulnReporter interface {
-	// AddVulnReport adds the vulnerability scan results to the reporter
-	AddVulnReport(asset *inventory.Asset, vulnReport *gql.VulnReport)
+	// AddVulnResult adds how the asset's vulnerabilities were assessed, and
+	// the report when there is one. A nil report means no data, never zero
+	// findings; assessment says why.
+	AddVulnResult(asset *inventory.Asset, assessment *policy.VulnAssessment, vulnReport *mvd.VulnReport)
 }
 
 type Reporter interface {

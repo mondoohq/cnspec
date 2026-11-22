@@ -440,6 +440,7 @@ type PolicyResolver interface {
 	GetUploadURL(context.Context, *GetUploadURLReq) (*GetUploadURLResp, error)
 	ReportUploadCompleted(context.Context, *ReportUploadCompletedReq) (*Empty, error)
 	GetDownloadURL(context.Context, *GetDownloadURLReq) (*GetDownloadURLResp, error)
+	GetUploadVulnResult(context.Context, *GetUploadVulnResultReq) (*GetUploadVulnResultResp, error)
 	GetReport(context.Context, *EntityScoreReq) (*Report, error)
 	GetFrameworkReport(context.Context, *EntityScoreReq) (*FrameworkReport, error)
 	GetScore(context.Context, *EntityScoreReq) (*Report, error)
@@ -547,6 +548,11 @@ func (c *PolicyResolverClient) GetDownloadURL(ctx context.Context, in *GetDownlo
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/GetDownloadURL"}, ""), in, out)
 	return out, err
 }
+func (c *PolicyResolverClient) GetUploadVulnResult(ctx context.Context, in *GetUploadVulnResultReq) (*GetUploadVulnResultResp, error) {
+	out := new(GetUploadVulnResultResp)
+	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/GetUploadVulnResult"}, ""), in, out)
+	return out, err
+}
 func (c *PolicyResolverClient) GetReport(ctx context.Context, in *EntityScoreReq) (*Report, error) {
 	out := new(Report)
 	err := c.DoClientRequest(ctx, c.httpclient, strings.Join([]string{c.prefix, "/GetReport"}, ""), in, out)
@@ -629,6 +635,7 @@ func NewPolicyResolverServer(handler PolicyResolver, opts ...PolicyResolverServe
 			"GetUploadURL":               srv.GetUploadURL,
 			"ReportUploadCompleted":      srv.ReportUploadCompleted,
 			"GetDownloadURL":             srv.GetDownloadURL,
+			"GetUploadVulnResult":        srv.GetUploadVulnResult,
 			"GetReport":                  srv.GetReport,
 			"GetFrameworkReport":         srv.GetFrameworkReport,
 			"GetScore":                   srv.GetScore,
@@ -983,6 +990,30 @@ func (p *PolicyResolverServer) GetDownloadURL(ctx context.Context, reqBytes *[]b
 		return nil, err
 	}
 	return p.handler.GetDownloadURL(ctx, &req)
+}
+func (p *PolicyResolverServer) GetUploadVulnResult(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
+	var req GetUploadVulnResultReq
+	var err error
+
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return nil, errors.New("could not access header")
+	}
+
+	switch md.First("Content-Type") {
+	case "application/protobuf", "application/octet-stream", "application/grpc+proto":
+		err = pb.Unmarshal(*reqBytes, &req)
+	default:
+		// handle case of empty object
+		if len(*reqBytes) > 0 {
+			err = jsonpb.UnmarshalOptions{DiscardUnknown: true}.Unmarshal(*reqBytes, &req)
+		}
+	}
+
+	if err != nil {
+		return nil, err
+	}
+	return p.handler.GetUploadVulnResult(ctx, &req)
 }
 func (p *PolicyResolverServer) GetReport(ctx context.Context, reqBytes *[]byte) (pb.Message, error) {
 	var req EntityScoreReq
