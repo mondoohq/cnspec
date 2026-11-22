@@ -160,3 +160,22 @@ func TestParseVersion(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "1.3.0, 1.9.0")
 }
+
+// TestConfidenceIDIsOmittedWhenUnset: confidence_id is in omit_unknown, so an
+// unset confidence is left out, while other enum ids keep writing their zero.
+func TestConfidenceIDIsOmittedWhenUnset(t *testing.T) {
+	f := NewDetectionFinding(DetectionFindingActivityCreate)
+
+	raw, err := json.Marshal(f)
+	require.NoError(t, err)
+	var got map[string]any
+	require.NoError(t, json.Unmarshal(raw, &got))
+	assert.NotContains(t, got, "confidence_id")
+	assert.Contains(t, got, "risk_level_id", "an enum id without the exception still writes 0")
+
+	f.ConfidenceID = ConfidenceHigh
+	raw, err = json.Marshal(f)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(raw, &got))
+	assert.EqualValues(t, ConfidenceHigh, got["confidence_id"])
+}

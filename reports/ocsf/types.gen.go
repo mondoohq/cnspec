@@ -289,6 +289,26 @@ type DetectionFinding struct {
 	// Describes the supporting information about a generated finding.
 	FindingInfo FindingInfo `json:"finding_info" parquet:"finding_info"`
 
+	// Confidence Id
+	//
+	// The normalized confidence refers to the accuracy of the rule that
+	// created the finding. A rule with a low confidence means that the finding
+	// scope is wide and may create finding reports that may not be malicious
+	// in nature.
+	ConfidenceID int `json:"confidence_id,omitempty" parquet:"confidence_id,optional"`
+
+	// Confidence
+	//
+	// The confidence, normalized to the caption of the confidence_id value. In
+	// the case of 'Other', it is defined by the event source.
+	Confidence string `json:"confidence,omitempty" parquet:"confidence,optional"`
+
+	// Evidence Artifacts
+	//
+	// Describes various evidence artifacts associated to the
+	// activity/activities that triggered a security detection.
+	Evidences []Evidences `json:"evidences,omitempty" parquet:"evidences,list"`
+
 	// Risk Score
 	//
 	// The risk score as reported by the event source.
@@ -652,6 +672,23 @@ type Account struct {
 	Type string `json:"type,omitempty" parquet:"type,optional"`
 }
 
+// Actor is the OCSF Actor object.
+//
+// The Actor object contains details about the user, role, application,
+// service, or process that initiated or performed a specific activity.
+type Actor struct {
+	// Process
+	//
+	// The process that initiated the activity.
+	Process *Process `json:"process,omitempty" parquet:"process,optional"`
+
+	// User
+	//
+	// The user that initiated the activity or the user context from which the
+	// activity was initiated.
+	User *User `json:"user,omitempty" parquet:"user,optional"`
+}
+
 // Advisory is the OCSF Advisory object.
 //
 // The Advisory object represents publicly disclosed cybersecurity
@@ -774,6 +811,30 @@ type Analytic struct {
 	Version string `json:"version,omitempty" parquet:"version,optional"`
 }
 
+// Attack is the OCSF MITRE ATT&CK® object.
+//
+// The MITRE ATT&CK® object describes the tactic, technique & sub-technique
+// associated to an attack as defined in ATT&CK® Matrix.
+type Attack struct {
+	// Tactic
+	//
+	// The Tactic object describes the tactic ID and/or name that is associated
+	// to an attack, as defined by ATT&CK® Matrix.
+	Tactic *Tactic `json:"tactic,omitempty" parquet:"tactic,optional"`
+
+	// Technique
+	//
+	// The Technique object describes the technique ID and/or name associated
+	// to an attack, as defined by ATT&CK® Matrix.
+	Technique *Technique `json:"technique,omitempty" parquet:"technique,optional"`
+
+	// Sub Technique
+	//
+	// The Sub Technique object describes the sub technique ID and/or name
+	// associated to an attack, as defined by ATT&CK® Matrix.
+	SubTechnique *SubTechnique `json:"sub_technique,omitempty" parquet:"sub_technique,optional"`
+}
+
 // Cloud is the OCSF Cloud object.
 //
 // The Cloud object contains information about a cloud account such as AWS
@@ -876,6 +937,37 @@ type Compliance struct {
 	//
 	// Only in OCSF 1.9.0; empty otherwise.
 	Desc string `json:"desc,omitempty" parquet:"desc,optional"`
+}
+
+// Container is the OCSF Container object.
+//
+// The Container object describes an instance of a specific container. A
+// container is a prepackaged, portable system image that runs isolated on an
+// existing system using a container runtime like containerd.
+type Container struct {
+	// Unique ID
+	//
+	// The full container unique identifier for this instantiation of the
+	// container. For example:
+	// ac2ea168264a08f9aaca0dfc82ff3551418dfd22d02b713142a6843caa2f61bf.
+	UID string `json:"uid,omitempty" parquet:"uid,optional"`
+
+	// Name
+	//
+	// The container name.
+	Name string `json:"name,omitempty" parquet:"name,optional"`
+
+	// Image
+	//
+	// The container image used as a template to run the container.
+	Image *Image `json:"image,omitempty" parquet:"image,optional"`
+
+	// Hash
+	//
+	// Commit hash of image created for docker or the SHA256 hash of the
+	// container. For example:
+	// 13550340a8681c84c861aac2e5b440161c2b33a3e4f302ac680ca5b686de48de.
+	Hash *Fingerprint `json:"hash,omitempty" parquet:"hash,optional"`
 }
 
 // CPUInfo is the OCSF CPU Information object.
@@ -1060,6 +1152,119 @@ type DeviceHwInfo struct {
 	CPUInfoList []CPUInfo `json:"cpu_info_list,omitempty" parquet:"cpu_info_list,list"`
 }
 
+// DnsQuery is the OCSF DNS Query object.
+//
+// The DNS query object represents a specific request made to the Domain Name
+// System (DNS) to retrieve information about a domain or perform a DNS
+// operation. This object encapsulates the necessary attributes and methods to
+// construct and send DNS queries, specify the query type (e.g., A, AAAA, MX).
+// Defined by D3FEND d3f:DNSLookup.
+type DnsQuery struct {
+	// Hostname
+	//
+	// The hostname or domain being queried. For example: www.example.com
+	Hostname string `json:"hostname" parquet:"hostname"`
+
+	// Resource Record Type
+	//
+	// The type of resource records being queried. See RFC1035. For example: A,
+	// AAAA, CNAME, MX, and NS.
+	Type string `json:"type,omitempty" parquet:"type,optional"`
+}
+
+// Evidences is the OCSF Evidence Artifacts object.
+//
+// A collection of evidence artifacts associated to the activity/activities
+// that triggered a security detection.
+type Evidences struct {
+	// Actor
+	//
+	// Describes details about the user/role/process that was the source of the
+	// activity that triggered the detection.
+	Actor *Actor `json:"actor,omitempty" parquet:"actor,optional"`
+
+	// Process
+	//
+	// Describes details about the process associated to the activity that
+	// triggered the detection.
+	Process *Process `json:"process,omitempty" parquet:"process,optional"`
+
+	// File
+	//
+	// Describes details about the file associated to the activity that
+	// triggered the detection.
+	File *File `json:"file,omitempty" parquet:"file,optional"`
+
+	// User
+	//
+	// Describes details about the user that was the target or somehow else
+	// associated with the activity that triggered the detection.
+	User *User `json:"user,omitempty" parquet:"user,optional"`
+
+	// Source Endpoint
+	//
+	// Describes details about the source of the network activity that
+	// triggered the detection.
+	SrcEndpoint *NetworkEndpoint `json:"src_endpoint,omitempty" parquet:"src_endpoint,optional"`
+
+	// Destination Endpoint
+	//
+	// Describes details about the destination of the network activity that
+	// triggered the detection.
+	DstEndpoint *NetworkEndpoint `json:"dst_endpoint,omitempty" parquet:"dst_endpoint,optional"`
+
+	// Connection Info
+	//
+	// Describes details about the network connection associated to the
+	// activity that triggered the detection.
+	ConnectionInfo *NetworkConnectionInfo `json:"connection_info,omitempty" parquet:"connection_info,optional"`
+
+	// DNS Query
+	//
+	// Describes details about the DNS query associated to the activity that
+	// triggered the detection.
+	Query *DnsQuery `json:"query,omitempty" parquet:"query,optional"`
+
+	// Container
+	//
+	// Describes details about the container associated to the activity that
+	// triggered the detection.
+	Container *Container `json:"container,omitempty" parquet:"container,optional"`
+}
+
+// File is the OCSF File object.
+//
+// The File object represents the metadata associated with a file stored in a
+// computer system. It encompasses information about the file itself, including
+// its attributes, properties, and organizational details. Defined by D3FEND
+// d3f:File.
+type File struct {
+	// Path
+	//
+	// The full path to the file. For example: c:\windows\system32\svchost.exe.
+	Path string `json:"path,omitempty" parquet:"path,optional"`
+
+	// Name
+	//
+	// The name of the file. For example: svchost.exe
+	Name string `json:"name" parquet:"name"`
+
+	// Type ID
+	//
+	// The file type ID.
+	TypeID int `json:"type_id" parquet:"type_id"`
+
+	// Size
+	//
+	// The size of data, in bytes.
+	Size int64 `json:"size,omitempty" parquet:"size,optional"`
+
+	// Hashes
+	//
+	// An array of hash attributes.
+	Hashes []Fingerprint `json:"hashes,omitempty" parquet:"hashes,list"`
+}
+
 // FindingInfo is the OCSF Finding Information object.
 //
 // The Finding Information object describes metadata related to a security
@@ -1092,6 +1297,14 @@ type FindingInfo struct {
 	// timestamp, which reflects the time this finding was created.
 	FirstSeenTime int64 `json:"first_seen_time,omitempty" parquet:"first_seen_time,optional"`
 
+	// Last Seen
+	//
+	// The time when the finding was most recently observed. e.g. The time when
+	// a vulnerability was most recently observed. It can differ from the
+	// modified_time timestamp, which reflects the time this finding was last
+	// modified.
+	LastSeenTime int64 `json:"last_seen_time,omitempty" parquet:"last_seen_time,optional"`
+
 	// Modified Time
 	//
 	// The time when the finding was last modified.
@@ -1122,6 +1335,60 @@ type FindingInfo struct {
 	// The analytic technique used to analyze and derive insights from the data
 	// or information that led to the finding or conclusion.
 	Analytic *Analytic `json:"analytic,omitempty" parquet:"analytic,optional"`
+
+	// MITRE ATT&CK® Details
+	//
+	// The MITRE ATT&CK® technique and associated tactics related to the
+	// finding.
+	Attacks []Attack `json:"attacks,omitempty" parquet:"attacks,list"`
+}
+
+// Fingerprint is the OCSF Fingerprint object.
+//
+// The Fingerprint object provides detailed information about a digital
+// fingerprint, which is a compact representation of data used to identify a
+// longer piece of information, such as a public key or file content. It
+// contains the algorithm and value of the fingerprint, enabling efficient and
+// reliable identification of the associated data.
+type Fingerprint struct {
+	// Algorithm ID
+	//
+	// The identifier of the normalized hash algorithm, which was used to
+	// create the digital fingerprint.
+	AlgorithmID int `json:"algorithm_id" parquet:"algorithm_id"`
+
+	// Algorithm
+	//
+	// The hash algorithm used to create the digital fingerprint, normalized to
+	// the caption of 'algorithm_id'. In the case of 'Other', it is defined by
+	// the event source.
+	Algorithm string `json:"algorithm,omitempty" parquet:"algorithm,optional"`
+
+	// Value
+	//
+	// The digital fingerprint value.
+	Value string `json:"value" parquet:"value"`
+}
+
+// Image is the OCSF Image object.
+//
+// The Image object provides a description of a specific Virtual Machine (VM)
+// or Container image. Defined by D3FEND d3f:ContainerImage.
+type Image struct {
+	// Unique ID
+	//
+	// The unique image ID. For example: 77af4d6b9913.
+	UID string `json:"uid" parquet:"uid"`
+
+	// Name
+	//
+	// The image name. For example: elixir.
+	Name string `json:"name,omitempty" parquet:"name,optional"`
+
+	// Image Tag
+	//
+	// The image tag. For example: 1.11-alpine.
+	Tag string `json:"tag,omitempty" parquet:"tag,optional"`
 }
 
 // Metadata is the OCSF Metadata object.
@@ -1182,6 +1449,53 @@ type Metadata struct {
 	Labels []string `json:"labels,omitempty" parquet:"labels,list"`
 }
 
+// NetworkConnectionInfo is the OCSF Network Connection Information object.
+//
+// The Network Connection Information object describes characteristics of a
+// network connection. Defined by D3FEND d3f:NetworkSession.
+type NetworkConnectionInfo struct {
+	// Protocol Number
+	//
+	// The TCP/IP protocol number, as defined by the Internet Assigned Numbers
+	// Authority (IANA). Use -1 if the protocol is not defined by IANA. See
+	// Protocol Numbers. For example: 6 for TCP and 17 for UDP.
+	ProtocolNum int `json:"protocol_num,omitempty" parquet:"protocol_num,optional"`
+
+	// Protocol Name
+	//
+	// The TCP/IP protocol name in lowercase, as defined by the Internet
+	// Assigned Numbers Authority (IANA). See Protocol Numbers. For example:
+	// tcp or udp.
+	ProtocolName string `json:"protocol_name,omitempty" parquet:"protocol_name,optional"`
+
+	// Direction ID
+	//
+	// The normalized identifier of the direction of the initiated connection,
+	// traffic, or email.
+	DirectionID int `json:"direction_id" parquet:"direction_id"`
+}
+
+// NetworkEndpoint is the OCSF Network Endpoint object.
+//
+// The Network Endpoint object describes characteristics of a network endpoint.
+// These can be a source or destination of a network connection.
+type NetworkEndpoint struct {
+	// IP Address
+	//
+	// The IP address of the endpoint, in either IPv4 or IPv6 format.
+	IP string `json:"ip,omitempty" parquet:"ip,optional"`
+
+	// Port
+	//
+	// The port used for communication within the network connection.
+	Port int `json:"port,omitempty" parquet:"port,optional"`
+
+	// Hostname
+	//
+	// The fully qualified name of the endpoint.
+	Hostname string `json:"hostname,omitempty" parquet:"hostname,optional"`
+}
+
 // OS is the OCSF Operating System (OS) object.
 //
 // The Operating System (OS) object describes characteristics of an OS, such as
@@ -1212,6 +1526,67 @@ type OS struct {
 	//
 	// The operating system build number.
 	Build string `json:"build,omitempty" parquet:"build,optional"`
+}
+
+// Process is the OCSF Process object.
+//
+// The Process object describes a running instance of a launched program.
+// Defined by D3FEND d3f:Process.
+type Process struct {
+	// Unique ID
+	//
+	// A unique identifier for this process assigned by the producer (tool).
+	// Facilitates correlation of a process event with other events for that
+	// process.
+	UID string `json:"uid,omitempty" parquet:"uid,optional"`
+
+	// Process ID
+	//
+	// The process identifier, as reported by the operating system. Process ID
+	// (PID) is a number used by the operating system to uniquely identify an
+	// active process.
+	Pid int `json:"pid,omitempty" parquet:"pid,optional"`
+
+	// Name
+	//
+	// The friendly name of the process, for example: Notepad++.
+	Name string `json:"name,omitempty" parquet:"name,optional"`
+
+	// Command Line
+	//
+	// The full command line used to launch an application, service, process,
+	// or job. For example: ssh user@10.0.0.10. If the command line is
+	// unavailable or missing, the empty string '' is to be used.
+	CmdLine string `json:"cmd_line,omitempty" parquet:"cmd_line,optional"`
+
+	// File
+	//
+	// The process file object.
+	File *File `json:"file,omitempty" parquet:"file,optional"`
+
+	// User
+	//
+	// The user under which this process is running.
+	User *User `json:"user,omitempty" parquet:"user,optional"`
+
+	// Created Time
+	//
+	// The time when the process was created/started.
+	CreatedTime int64 `json:"created_time,omitempty" parquet:"created_time,optional"`
+
+	// Lineage
+	//
+	// The lineage of the process, represented by a list of paths for each
+	// ancestor process. For example: ['/usr/sbin/sshd', '/usr/bin/bash',
+	// '/usr/bin/whoami'].
+	Lineage []string `json:"lineage,omitempty" parquet:"lineage,list"`
+
+	// Parent Process
+	//
+	// The parent process of this process object. It is recommended to only
+	// populate this field for the first process object, to prevent deep
+	// nesting.
+	ParentProcess *ParentProcess `json:"parent_process,omitempty" parquet:"parent_process,optional"`
 }
 
 // Product is the OCSF Product object.
@@ -1305,6 +1680,88 @@ type ResourceDetails struct {
 	Version string `json:"version,omitempty" parquet:"version,optional"`
 }
 
+// SubTechnique is the OCSF MITRE ATT&CK® Sub Technique object.
+//
+// The MITRE ATT&CK® Sub Technique object describes the sub technique ID
+// and/or name associated to an attack, as defined by ATT&CK® Matrix.
+type SubTechnique struct {
+	// Unique ID
+	//
+	// The unique identifier of the attack sub technique, as defined by
+	// ATT&CK® Matrix. For example: T1595.001.
+	UID string `json:"uid,omitempty" parquet:"uid,optional"`
+
+	// Name
+	//
+	// The name of the attack sub technique, as defined by ATT&CK® Matrix. For
+	// example: Scanning IP Blocks.
+	Name string `json:"name,omitempty" parquet:"name,optional"`
+}
+
+// Tactic is the OCSF MITRE ATT&CK® Tactic object.
+//
+// The MITRE ATT&CK® Tactic object describes the tactic ID and/or name that is
+// associated to an attack, as defined by ATT&CK® Matrix.
+type Tactic struct {
+	// Unique ID
+	//
+	// The tactic ID that is associated with the attack technique, as defined
+	// by ATT&CK® Matrix. For example: TA0043.
+	UID string `json:"uid,omitempty" parquet:"uid,optional"`
+
+	// Name
+	//
+	// The tactic name that is associated with the attack technique, as defined
+	// by ATT&CK® Matrix. For example: Reconnaissance.
+	Name string `json:"name,omitempty" parquet:"name,optional"`
+}
+
+// Technique is the OCSF MITRE ATT&CK® Technique object.
+//
+// The MITRE ATT&CK® Technique object describes the technique ID and/or name
+// associated to an attack, as defined by ATT&CK® Matrix.
+type Technique struct {
+	// Unique ID
+	//
+	// The unique identifier of the attack technique, as defined by ATT&CK®
+	// Matrix. For example: T1595.
+	UID string `json:"uid,omitempty" parquet:"uid,optional"`
+
+	// Name
+	//
+	// The name of the attack technique, as defined by ATT&CK® Matrix. For
+	// example: Active Scanning.
+	Name string `json:"name,omitempty" parquet:"name,optional"`
+}
+
+// User is the OCSF User object.
+//
+// The User object describes the characteristics of a user/person or a security
+// principal. Defined by D3FEND d3f:UserAccount.
+type User struct {
+	// Unique ID
+	//
+	// The unique user identifier. For example, the Windows user SID,
+	// ActiveDirectory DN or AWS user ARN.
+	UID string `json:"uid,omitempty" parquet:"uid,optional"`
+
+	// Name
+	//
+	// The username. For example, janedoe1.
+	Name string `json:"name,omitempty" parquet:"name,optional"`
+
+	// Type ID
+	//
+	// The account type identifier.
+	TypeID int `json:"type_id" parquet:"type_id,optional"`
+
+	// Domain
+	//
+	// The domain where the user is defined. For example: the LDAP or Active
+	// Directory domain.
+	Domain string `json:"domain,omitempty" parquet:"domain,optional"`
+}
+
 // Vulnerability is the OCSF Vulnerability Details object.
 //
 // The vulnerability is an unintended characteristic of a computing component
@@ -1377,4 +1834,51 @@ type Vulnerability struct {
 	// The remediation recommendations on how to mitigate the identified
 	// vulnerability.
 	Remediation *Remediation `json:"remediation,omitempty" parquet:"remediation,optional"`
+}
+
+// ParentProcess is the OCSF Process object as parent_process, reduced to the attributes below so the type graph stays finite.
+//
+// The Process object describes a running instance of a launched program.
+// Defined by D3FEND d3f:Process.
+type ParentProcess struct {
+	// Unique ID
+	//
+	// A unique identifier for this process assigned by the producer (tool).
+	// Facilitates correlation of a process event with other events for that
+	// process.
+	UID string `json:"uid,omitempty" parquet:"uid,optional"`
+
+	// Process ID
+	//
+	// The process identifier, as reported by the operating system. Process ID
+	// (PID) is a number used by the operating system to uniquely identify an
+	// active process.
+	Pid int `json:"pid,omitempty" parquet:"pid,optional"`
+
+	// Name
+	//
+	// The friendly name of the process, for example: Notepad++.
+	Name string `json:"name,omitempty" parquet:"name,optional"`
+
+	// Command Line
+	//
+	// The full command line used to launch an application, service, process,
+	// or job. For example: ssh user@10.0.0.10. If the command line is
+	// unavailable or missing, the empty string '' is to be used.
+	CmdLine string `json:"cmd_line,omitempty" parquet:"cmd_line,optional"`
+
+	// File
+	//
+	// The process file object.
+	File *File `json:"file,omitempty" parquet:"file,optional"`
+
+	// User
+	//
+	// The user under which this process is running.
+	User *User `json:"user,omitempty" parquet:"user,optional"`
+
+	// Created Time
+	//
+	// The time when the process was created/started.
+	CreatedTime int64 `json:"created_time,omitempty" parquet:"created_time,optional"`
 }
