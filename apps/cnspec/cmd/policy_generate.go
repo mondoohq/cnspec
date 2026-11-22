@@ -350,6 +350,15 @@ func generateForFile(ctx context.Context, gen *generate.Generator, file string, 
 					fmt.Fprintf(os.Stderr, "    %s: added asset filter %s\n", bundle.SanitizeText(r.UID), f)
 				}
 			}
+			// The policies holding the check get the require entry and tags
+			// lint asks for, derived from what the check targets. Values the
+			// author set are kept.
+			filters := strings.Join(bundle.QueryFilterStrings(targets[i]), " ")
+			for _, p := range bundle.PoliciesWithCheck(raw, targets[i].Uid) {
+				for _, added := range bundle.CompletePolicy(p, r.Provider, filters) {
+					fmt.Fprintf(os.Stderr, "    policy %s: added %s\n", bundle.SanitizeText(p.Uid), added)
+				}
+			}
 		case generate.ActionFailed:
 			failed++
 		}

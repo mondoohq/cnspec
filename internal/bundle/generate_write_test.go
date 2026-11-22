@@ -78,3 +78,56 @@ func TestAddCheckRequiresProvider(t *testing.T) {
 		t.Errorf("require was not written:\n%s", out)
 	}
 }
+
+// TestCompletePolicy: a policy gets the require entry and both tags lint asks
+// for, and keeps every value its author set. Tag values are the ones content/
+// uses for each provider.
+func TestCompletePolicy(t *testing.T) {
+	p := &Policy{Uid: "demo"}
+	added := CompletePolicy(p, "aws", `asset.platform == "aws"`)
+	if len(added) != 3 {
+		t.Fatalf("added = %v, want require + two tags", added)
+	}
+	if p.Tags[CategoryTag] != "security" || p.Tags[PlatformTag] != "aws,cloud" {
+		t.Errorf("tags = %v", p.Tags)
+	}
+	if again := CompletePolicy(p, "aws", ""); len(again) != 0 {
+		t.Errorf("a second call added %v", again)
+	}
+
+	// an author's tags win; a second provider is required but does not
+	// rewrite the platform tag
+	authored := &Policy{Tags: map[string]string{CategoryTag: "best-practices", PlatformTag: "linux"}}
+	CompletePolicy(authored, "aws", "")
+	if authored.Tags[CategoryTag] != "best-practices" || authored.Tags[PlatformTag] != "linux" {
+		t.Errorf("an authored tag was overwritten: %v", authored.Tags)
+	}
+	if !requiresProvider(authored, "aws") {
+		t.Error("the check's provider was not required")
+	}
+
+	// unknown provider: category only
+	bare := &Policy{}
+	CompletePolicy(bare, "", "")
+	if _, ok := bare.Tags[PlatformTag]; ok || bare.Tags[CategoryTag] != "security" || len(bare.Require) != 0 {
+		t.Errorf("unknown provider: tags=%v require=%v", bare.Tags, bare.Require)
+	}
+}
+
+func TestPlatformTagFor(t *testing.T) {
+	cases := []struct{ provider, filter, want string }{
+		{"os", `asset.family.contains("linux")`, "linux"},
+		{"os", `asset.family.contains("windows")`, "windows"},
+		{"os", `asset.platform == "macos"`, "macos"},
+		{"os", "", "linux"},
+		{"k8s", "", "kubernetes"},
+		{"ms365", "", "microsoft365,saas"},
+		{"github", "", "github"},
+		{"", "", ""},
+	}
+	for _, c := range cases {
+		if got := PlatformTagFor(c.provider, c.filter); got != c.want {
+			t.Errorf("PlatformTagFor(%q, %q) = %q, want %q", c.provider, c.filter, got, c.want)
+		}
+	}
+}

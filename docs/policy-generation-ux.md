@@ -57,7 +57,9 @@ Each check reports as it goes (`… generating`, `↻ attempt 2/3, previous answ
 rejected: …`, `✓ generated`), so a long run never sits silent. A check with no
 asset filter of its own, in a group with none, gets its provider's default
 filter, and the run says so (`added asset filter asset.family.contains("linux")`):
-without one, the check would run against every asset a scan reaches. When a
+without one, the check would run against every asset a scan reaches. The
+policy holding a generated check gets the same `require:` entry and tags as
+in the guided flow below, each reported as it is added. When a
 check fails, its last candidate is printed, never written, so you can fix a
 near-miss by hand. A failure several checks share (a provider that is not
 installed, say) is spelled out once and referenced after that.
@@ -106,6 +108,9 @@ policies:
   - uid: aws-s3
     name: Aws S3
     version: 1.0.0
+    tags:
+      mondoo.com/category: security
+      mondoo.com/platform: aws,cloud
     require:
       - provider: aws
     groups:
@@ -127,8 +132,13 @@ the check joins it (in a group of its own, so it does not inherit a group filter
 that was written for other checks).
 
 The policy also gets `require: [{provider: aws}]`, which is what lets
-`cnspec scan --policy-bundle` install the provider the check needs, and what
-lint's `policy-missing-require` rule asks for.
+`cnspec scan --policy-bundle` install the provider the check needs, and the
+`mondoo.com/category` and `mondoo.com/platform` tags lint requires on every
+policy. The category is `security`; the platform follows the provider the way
+the shipped policies tag it (`aws,cloud`, `kubernetes`, and for the os provider
+the operating system the asset filter selects, such as `linux`). A tag or
+requirement the author already set is never changed. With those, the written
+bundle lints without warnings.
 
 Then: `cnspec policy lint aws-s3.mql.yaml` → `cnspec scan aws --policy-bundle
 aws-s3.mql.yaml` → commit.

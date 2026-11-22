@@ -94,23 +94,139 @@ func AddCheck(b *Bundle, policyUID, uid, title, desc, filter, mql, provider stri
 	policy := targetPolicy(b, policyUID)
 	group := generatedGroup(policy)
 	group.Checks = append(group.Checks, q)
-	requireProvider(policy, provider)
+	CompletePolicy(policy, provider, filter)
 	return nil
 }
 
-// requireProvider adds a provider to a policy's require list unless it is
-// already there.
-func requireProvider(p *Policy, provider string) {
-	provider = strings.TrimSpace(provider)
-	if p == nil || provider == "" {
-		return
+// Policy tags lint requires on every policy (policy-required-tags-missing).
+const (
+	CategoryTag = "mondoo.com/category"
+	PlatformTag = "mondoo.com/platform"
+)
+
+// defaultCategory is what 74 of the 81 policies in content/ declare; the rest
+// are best-practices. A generated check is written from a requirement someone
+// wants enforced, which is the security case.
+const defaultCategory = "security"
+
+// CompletePolicy fills in the policy metadata a check implies and lint asks for:
+// the check's provider in `require:` (policy-missing-require, and what lets a
+// scan install the provider), and the mondoo.com/category and
+// mondoo.com/platform tags (policy-required-tags-missing). A value the author
+// set is never changed, so a policy covering several platforms keeps the
+// platform tag it already has. It returns one line per addition, for the
+// caller to report.
+func CompletePolicy(p *Policy, provider, filter string) []string {
+	if p == nil {
+		return nil
 	}
-	for _, r := range p.Require {
-		if r != nil && r.Provider == provider {
-			return
+	var added []string
+	provider = strings.TrimSpace(provider)
+	if provider != "" && !requiresProvider(p, provider) {
+		p.Require = append(p.Require, &Requirement{Provider: provider})
+		added = append(added, "require provider "+provider)
+	}
+	if p.Tags == nil {
+		p.Tags = map[string]string{}
+	}
+	if _, ok := p.Tags[CategoryTag]; !ok {
+		p.Tags[CategoryTag] = defaultCategory
+		added = append(added, "tag "+CategoryTag+": "+defaultCategory)
+	}
+	if _, ok := p.Tags[PlatformTag]; !ok {
+		if platform := PlatformTagFor(provider, filter); platform != "" {
+			p.Tags[PlatformTag] = platform
+			added = append(added, "tag "+PlatformTag+": "+platform)
 		}
 	}
-	p.Require = append(p.Require, &Requirement{Provider: provider})
+	return added
+}
+
+func requiresProvider(p *Policy, provider string) bool {
+	for _, r := range p.Require {
+		if r != nil && r.Provider == provider {
+			return true
+		}
+	}
+	return false
+}
+
+// platformTags maps a provider to the mondoo.com/platform value the policies
+// in content/ use for it. Cloud and SaaS providers carry a class after the
+// platform ("aws,cloud", "okta-org,saas"), which is how the catalog groups
+// them. A provider not listed is tagged with its own name.
+var platformTags = map[string]string{
+	"aws": "aws,cloud", "gcp": "gcp,cloud", "azure": "azure,cloud",
+	"oci": "oci,cloud", "alicloud": "alicloud,cloud", "digitalocean": "digitalocean,cloud",
+	"hetzner": "hetzner,cloud", "openstack": "openstack,cloud", "stackit": "stackit,cloud",
+	"k8s":              "kubernetes",
+	"ms365":            "microsoft365,saas",
+	"okta":             "okta-org,saas",
+	"slack":            "slack-team,saas",
+	"google-workspace": "google-workspace,saas",
+	"cloudflare":       "cloudflare,saas", "snowflake": "snowflake,saas", "databricks": "databricks,saas",
+	"mongodbatlas": "mongodbatlas,saas", "grafana": "grafana,saas", "tailscale": "tailscale,saas",
+	"vercel": "vercel,saas", "shodan": "shodan,saas",
+	"atlassian": "atlassian-admin,atlassian-jira,atlassian-confluence,saas",
+	"vsphere":   "vmware,vmware-vsphere",
+	"arista":    "arista-eos,networkdevice",
+	"network":   "host",
+}
+
+// PlatformTagFor returns the mondoo.com/platform value for a check's provider.
+// The os provider covers several operating systems, so its value comes from
+// the check's asset filter, the same signal a scan selects assets by; an os
+// check filtered to nothing in particular is tagged linux, the family
+// DefaultFilter proposes for it. An unknown provider gives "".
+func PlatformTagFor(provider, filter string) string {
+	provider = strings.TrimSpace(provider)
+	if provider == "" {
+		return ""
+	}
+	if provider == "os" {
+		f := strings.ToLower(filter)
+		var platforms []string
+		for _, name := range []string{"windows", "macos", "linux"} {
+			if strings.Contains(f, `"`+name+`"`) || (name == "macos" && strings.Contains(f, `"darwin"`)) {
+				platforms = append(platforms, name)
+			}
+		}
+		if len(platforms) == 0 {
+			return "linux"
+		}
+		return strings.Join(platforms, ",")
+	}
+	if tag, ok := platformTags[provider]; ok {
+		return tag
+	}
+	return provider
+}
+
+// PoliciesWithCheck returns the policies whose groups list a check with this
+// uid.
+func PoliciesWithCheck(b *Bundle, uid string) []*Policy {
+	if b == nil || uid == "" {
+		return nil
+	}
+	var out []*Policy
+	for _, p := range b.Policies {
+		if p == nil {
+			continue
+		}
+	groups:
+		for _, g := range p.Groups {
+			if g == nil {
+				continue
+			}
+			for _, c := range g.Checks {
+				if c != nil && c.Uid == uid {
+					out = append(out, p)
+					break groups
+				}
+			}
+		}
+	}
+	return out
 }
 
 // targetPolicy returns the policy new checks join: the bundle's first policy
