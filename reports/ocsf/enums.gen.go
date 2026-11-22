@@ -207,6 +207,35 @@ func ComplianceStatusName(id int) string {
 	return ""
 }
 
+// Confidence values of confidence_id, from the OCSF schema.
+const (
+	// The normalized confidence is unknown.
+	ConfidenceUnknown = 0
+	ConfidenceLow     = 1
+	ConfidenceMedium  = 2
+	ConfidenceHigh    = 3
+	// The confidence is not mapped to the defined enum values. See the confidence attribute, which contains a data source specific value.
+	ConfidenceOther = 99
+)
+
+// ConfidenceName is the OCSF caption of a confidence_id value. It is what the
+// string sibling of the identifier has to carry.
+func ConfidenceName(id int) string {
+	switch id {
+	case 0:
+		return "Unknown"
+	case 1:
+		return "Low"
+	case 2:
+		return "Medium"
+	case 3:
+		return "High"
+	case 99:
+		return "Other"
+	}
+	return ""
+}
+
 // DetectionFindingActivity values of DetectionFinding.activity_id, from the OCSF schema.
 const (
 	// The event activity is unknown.
@@ -349,6 +378,95 @@ func DeviceTypeName(id int) string {
 	return ""
 }
 
+// FileType values of File.type_id, from the OCSF schema.
+const (
+	// The type is unknown.
+	FileTypeUnknown         = 0
+	FileTypeRegularFile     = 1
+	FileTypeFolder          = 2
+	FileTypeCharacterDevice = 3
+	FileTypeBlockDevice     = 4
+	FileTypeLocalSocket     = 5
+	FileTypeNamedPipe       = 6
+	FileTypeSymbolicLink    = 7
+	// The type is not mapped. See the type attribute, which contains a data source specific value.
+	FileTypeOther = 99
+)
+
+// FileTypeName is the OCSF caption of a File.type_id value. It is what the
+// string sibling of the identifier has to carry.
+func FileTypeName(id int) string {
+	switch id {
+	case 0:
+		return "Unknown"
+	case 1:
+		return "Regular File"
+	case 2:
+		return "Folder"
+	case 3:
+		return "Character Device"
+	case 4:
+		return "Block Device"
+	case 5:
+		return "Local Socket"
+	case 6:
+		return "Named Pipe"
+	case 7:
+		return "Symbolic Link"
+	case 99:
+		return "Other"
+	}
+	return ""
+}
+
+// FingerprintAlgorithm values of Fingerprint.algorithm_id, from the OCSF schema.
+const (
+	// The algorithm is unknown.
+	FingerprintAlgorithmUnknown = 0
+	// MD5 message-digest algorithm producing a 128-bit (16-byte) hash value.
+	FingerprintAlgorithmMD5 = 1
+	// Secure Hash Algorithm 1 producing a 160-bit (20-byte) hash value.
+	FingerprintAlgorithmSHA1 = 2
+	// Secure Hash Algorithm 2 producing a 256-bit (32-byte) hash value.
+	FingerprintAlgorithmSHA256 = 3
+	// Secure Hash Algorithm 2 producing a 512-bit (64-byte) hash value.
+	FingerprintAlgorithmSHA512 = 4
+	// The ssdeep generated fuzzy checksum. Also known as Context Triggered Piecewise Hash (CTPH).
+	FingerprintAlgorithmCTPH = 5
+	// The TLSH fuzzy hashing algorithm.
+	FingerprintAlgorithmTLSH = 6
+	// Microsoft simple non-cryptographic hash algorithm that works by XORing the bytes in a circular-shifting fashion.
+	FingerprintAlgorithmQuickXorHash = 7
+	// The algorithm is not mapped. See the algorithm attribute, which contains a data source specific value.
+	FingerprintAlgorithmOther = 99
+)
+
+// FingerprintAlgorithmName is the OCSF caption of a Fingerprint.algorithm_id value. It is what the
+// string sibling of the identifier has to carry.
+func FingerprintAlgorithmName(id int) string {
+	switch id {
+	case 0:
+		return "Unknown"
+	case 1:
+		return "MD5"
+	case 2:
+		return "SHA-1"
+	case 3:
+		return "SHA-256"
+	case 4:
+		return "SHA-512"
+	case 5:
+		return "CTPH"
+	case 6:
+		return "TLSH"
+	case 7:
+		return "quickXorHash"
+	case 99:
+		return "Other"
+	}
+	return ""
+}
+
 // Impact values of impact_id, from the OCSF schema.
 const (
 	// The normalized impact is unknown.
@@ -431,6 +549,38 @@ func InventoryInfoTypeUIDName(id int) string {
 		return "Device Inventory Info: Collect"
 	case 500199:
 		return "Device Inventory Info: Other"
+	}
+	return ""
+}
+
+// NetworkConnectionInfoDirection values of NetworkConnectionInfo.direction_id, from the OCSF schema.
+const (
+	// The connection direction is unknown.
+	NetworkConnectionInfoDirectionUnknown = 0
+	// Inbound network connection. The connection was originated from the Internet or outside network, destined for services on the inside network.
+	NetworkConnectionInfoDirectionInbound = 1
+	// Outbound network connection. The connection was originated from inside the network, destined for services on the Internet or outside network.
+	NetworkConnectionInfoDirectionOutbound = 2
+	// Lateral network connection. The connection was originated from inside the network, destined for services on the inside network.
+	NetworkConnectionInfoDirectionLateral = 3
+	// The direction is not mapped. See the direction attribute, which contains a data source specific value.
+	NetworkConnectionInfoDirectionOther = 99
+)
+
+// NetworkConnectionInfoDirectionName is the OCSF caption of a NetworkConnectionInfo.direction_id value. It is what the
+// string sibling of the identifier has to carry.
+func NetworkConnectionInfoDirectionName(id int) string {
+	switch id {
+	case 0:
+		return "Unknown"
+	case 1:
+		return "Inbound"
+	case 2:
+		return "Outbound"
+	case 3:
+		return "Lateral"
+	case 99:
+		return "Other"
 	}
 	return ""
 }
@@ -590,6 +740,38 @@ func StatusName(id int) string {
 		return "Suppressed"
 	case 4:
 		return "Resolved"
+	case 99:
+		return "Other"
+	}
+	return ""
+}
+
+// UserType values of User.type_id, from the OCSF schema.
+const (
+	// The type is unknown.
+	UserTypeUnknown = 0
+	// Regular user account.
+	UserTypeUser = 1
+	// Admin/root user account.
+	UserTypeAdmin = 2
+	// System account. For example, Windows computer accounts with a trailing dollar sign ($).
+	UserTypeSystem = 3
+	// The type is not mapped. See the type attribute, which contains a data source specific value.
+	UserTypeOther = 99
+)
+
+// UserTypeName is the OCSF caption of a User.type_id value. It is what the
+// string sibling of the identifier has to carry.
+func UserTypeName(id int) string {
+	switch id {
+	case 0:
+		return "Unknown"
+	case 1:
+		return "User"
+	case 2:
+		return "Admin"
+	case 3:
+		return "System"
 	case 99:
 		return "Other"
 	}

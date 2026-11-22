@@ -32,9 +32,27 @@ import (
 )
 
 type spec struct {
-	Classes   map[string]classSpec `json:"classes"`
-	Objects   map[string][]string  `json:"objects"`
-	Overrides map[string]string    `json:"overrides"`
+	Classes   map[string]classSpec   `json:"classes"`
+	Objects   map[string][]string    `json:"objects"`
+	Variants  map[string]variantSpec `json:"variants"`
+	Overrides map[string]string      `json:"overrides"`
+	// OmitUnknown lists optional enum attributes whose zero value, Unknown,
+	// means the producer had nothing to say. They take omitempty like any other
+	// optional attribute, so an unset value is left out of the JSON instead of
+	// written as 0.
+	OmitUnknown []string `json:"omit_unknown"`
+}
+
+// variantSpec types one attribute with a reduced copy of its object, under a Go
+// name of its own. It is how a self-referencing attribute is cut: OCSF's
+// process.parent_process is a process, so generating it as Process makes the
+// type graph recursive, and deriving a Parquet schema from a recursive graph
+// does not terminate. A variant is that object with the listed attributes only,
+// and it may not list itself, so the graph ends one level down.
+type variantSpec struct {
+	Go         string   `json:"go"`
+	Object     string   `json:"object"`
+	Attributes []string `json:"attributes"`
 }
 
 type classSpec struct {
@@ -87,7 +105,10 @@ type field struct {
 	// IsEnum marks a scalar whose value is an OCSF enum identifier. Zero is a
 	// meaningful value for most of them, so they never take omitempty; see
 	// writeFields.
-	IsEnum   bool
+	IsEnum bool
+	// OmitZero marks an enum listed in omit_unknown: it takes omitempty after
+	// all.
+	OmitZero bool
 	Doc      string
 	Desc     string
 	InAll    bool
@@ -394,6 +415,44 @@ func (g *generator) types() ([]byte, error) {
 		b.WriteString("}\n\n")
 	}
 
+	// Variants: an attribute typed with a reduced copy of its object.
+	for _, name := range sortedKeys(g.spec.Variants) {
+		vs := g.spec.Variants[name]
+		if vs.Go == "" || vs.Object == "" {
+			return nil, fmt.Errorf("variant %q needs go and object", name)
+		}
+		if _, ok := g.spec.Objects[vs.Object]; !ok {
+			return nil, fmt.Errorf("variant %q: object %q is not listed in gen.yaml", name, vs.Object)
+		}
+		object, in := g.entityIn("object", vs.Object)
+		if len(in) == 0 {
+			return nil, fmt.Errorf("variant %q: object %q is in no supported schema version", name, vs.Object)
+		}
+
+		fields := make([]field, 0, len(vs.Attributes))
+		for _, attribute := range vs.Attributes {
+			if attribute == name {
+				return nil, fmt.Errorf("variant %q lists itself, which makes the type recursive", name)
+			}
+			a, versions := g.lookupObject(vs.Object, attribute)
+			if len(versions) == 0 {
+				return nil, fmt.Errorf("variant %q: object %q has no attribute %q in any supported version", name, vs.Object, attribute)
+			}
+			f, err := g.field(attribute, a, versions)
+			if err != nil {
+				return nil, fmt.Errorf("variant %s.%s: %w", name, attribute, err)
+			}
+			fields = append(fields, f)
+		}
+
+		summary := vs.Go + " is the OCSF " + object.Caption + " object as " + name +
+			", reduced to the attributes below so the type graph stays finite."
+		writeDoc(b, summary, object.Description, in, versionList(g))
+		b.WriteString("type " + vs.Go + " struct {\n")
+		writeFields(b, fields)
+		b.WriteString("}\n\n")
+	}
+
 	return []byte(b.String()), nil
 }
 
@@ -415,6 +474,16 @@ func (g *generator) field(name string, a attr, in []string) (field, error) {
 	}
 	if len(a.Profiles) > 0 {
 		f.Doc += " (OCSF " + strings.Join(a.Profiles, ", ") + " profile)"
+	}
+
+	if slices.Contains(g.spec.OmitUnknown, name) {
+		if !f.IsEnum || !f.Optional {
+			return f, fmt.Errorf("omit_unknown lists %q, which is not an optional enum", name)
+		}
+		if a.Enum["0"].Caption != "Unknown" {
+			return f, fmt.Errorf("omit_unknown lists %q, whose zero value is not Unknown", name)
+		}
+		f.OmitZero = true
 	}
 
 	if override, ok := g.spec.Overrides[name]; ok {
@@ -443,6 +512,9 @@ func (g *generator) field(name string, a attr, in []string) (field, error) {
 			return f, fmt.Errorf("object type %q is not listed in gen.yaml", a.ObjectType)
 		}
 		f.GoType = goName(a.ObjectType)
+		if vs, ok := g.spec.Variants[name]; ok && vs.Object == a.ObjectType {
+			f.GoType = vs.Go
+		}
 		if !a.IsArray && f.Optional {
 			// An optional nested object is a pointer, so an absent one is null
 			// rather than an empty object. A required one is always written.
@@ -523,7 +595,9 @@ func writeFields(b *strings.Builder, fields []field) {
 		// cannot tell apart -- and it made JSON and Parquet disagree about the same
 		// event, since the Parquet writer has no such rule and writes the 0.
 		jsonTag := f.OCSFName
-		if (f.Optional && !f.IsEnum) || f.IsArray || f.IsMap {
+		// An enum listed in omit_unknown is the exception: there zero is Unknown,
+		// the same as not saying, so it is left out.
+		if (f.Optional && (!f.IsEnum || f.OmitZero)) || f.IsArray || f.IsMap {
 			jsonTag += ",omitempty"
 		}
 

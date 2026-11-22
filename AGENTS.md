@@ -13,7 +13,7 @@ cnspec is built on mql (`go.mondoo.com/mql`). mql gives us the MQL query engine,
 - `content/` — the shipped security policies (`*.mql.yaml`). `querypacks/` holds data-collection bundles that don't score, with their own rules in `content/querypacks/AGENTS.md`. Authoring rules: `content/AGENTS.md`. User-facing catalog: `content/README.md`.
 - `content/validation/` — every test and validator that runs against those policies, plus fixtures. Reference: `content/validation/README.md`.
 - `cli/` — terminal components, plus the output formats still coupled to the CLI (compact, SARIF, JUnit, JSON, CSV). `cli/reporter` also owns `PrintConfig`, the format registry, and every format's output handler.
-- `reports/` — report standards, none terminal-facing. `reports/ocsf` is the OCSF schema and imports no cnspec package on purpose, so it stays extractable as `go.mondoo.com/ocsf` (`docs/adr/0005-ocsf-type-generation.md`); the cnspec mapping onto it is in `reports/ocsf/convert`. `reports/hdf` is OHDF. `reports/reportdoc` is where every format reads a check's docs and outcome.
+- `reports/` — report standards, none terminal-facing. `reports/ocsf` is the OCSF schema and imports no cnspec package on purpose, so it stays extractable as `go.mondoo.com/ocsf` (`docs/adr/0005-ocsf-type-generation.md`); the cnspec mapping onto it is in `reports/ocsf/convert`, and `reports/ocsf/tofex` maps OCSF findings onto fex (it imports `reports/ocsf` and no other cnspec package). `reports/hdf` is OHDF. `reports/reportdoc` is where every format reads a check's docs and outcome.
 - `internal/bundle/`, `internal/datalakes/`, `internal/lsp/` — bundle loading, storage, LSP.
 - `examples/`, `test/`, `docs/`.
 

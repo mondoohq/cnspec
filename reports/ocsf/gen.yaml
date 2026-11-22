@@ -67,6 +67,9 @@ classes:
       - metadata
       - unmapped
       - finding_info
+      - confidence_id
+      - confidence
+      - evidences
       - risk_score
       - risk_level_id
       - risk_level
@@ -128,8 +131,8 @@ objects:
   metadata: [version, product, log_name, log_provider, logged_time, profiles, event_code, labels]
   product: [name, vendor_name, version, url_string]
   finding_info:
-    [uid, title, desc, created_time, first_seen_time, modified_time, product_uid, src_url, types,
-     data_sources, analytic]
+    [uid, title, desc, created_time, first_seen_time, last_seen_time, modified_time, product_uid,
+     src_url, types, data_sources, analytic, attacks]
   analytic: [type_id, type, name, uid, desc, category, version]
   compliance:
     [standards, control, requirements, status, status_id, status_code, status_detail, status_details, category, desc]
@@ -149,8 +152,43 @@ objects:
   cvss: [version, base_score, severity, vector_string]
   affected_package: [name, version, architecture, purl, fixed_in_version, package_manager]
 
+  # MITRE ATT&CK on a detection, under finding_info.attacks.
+  attack: [tactic, technique, sub_technique]
+  tactic: [uid, name]
+  technique: [uid, name]
+  sub_technique: [uid, name]
+
+  # The evidence artifacts of a detection: what was observed when it fired.
+  evidences: [actor, process, file, user, src_endpoint, dst_endpoint, connection_info, query, container]
+  actor: [process, user]
+  process: [uid, pid, name, cmd_line, file, user, created_time, lineage, parent_process]
+  file: [path, name, type_id, size, hashes]
+  fingerprint: [algorithm_id, algorithm, value]
+  user: [uid, name, type_id, domain]
+  network_endpoint: [ip, port, hostname]
+  network_connection_info: [protocol_num, protocol_name, direction_id]
+  dns_query: [hostname, type]
+  container: [uid, name, image, hash]
+  image: [uid, name, tag]
+
+# Attributes typed with a reduced copy of their object. parent_process is a
+# process, and a process with a parent of its own makes the type graph recursive,
+# which the Parquet schema derivation cannot follow. One level of ancestry is
+# kept as an object; process.lineage carries the rest as paths.
+variants:
+  parent_process:
+    go: ParentProcess
+    object: process
+    attributes: [uid, pid, name, cmd_line, file, user, created_time]
+
 # Go types that differ from what the schema type implies.
 overrides:
   # OCSF types unmapped as a free-form object. A map keeps it queryable in
   # Athena and Parquet, where a JSON blob would not be.
   unmapped: map[string]string
+
+# Optional enum attributes whose zero value, Unknown, means the producer had
+# nothing to say. They are left out of the JSON when unset, rather than written
+# as 0. Every other enum id is always written, because its zero carries meaning.
+omit_unknown:
+  - confidence_id
