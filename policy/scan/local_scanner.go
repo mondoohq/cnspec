@@ -1116,15 +1116,16 @@ func syncBatchWithUpstream(
 	return nil
 }
 
-// dropRejectedAnnotations warns about each annotation the platform refused to
-// store and removes it from the asset, so the scan and its report carry only
-// the annotations the platform accepted. An annotation whose value changed
-// since the sync stays.
+// dropRejectedAnnotations removes each annotation the platform refused to
+// store from the asset, and warns about it, so the scan and its report carry
+// only the annotations the platform accepted. An annotation the asset no
+// longer has with the refused value stays, without a warning.
 func dropRejectedAnnotations(asset *inventory.Asset, rejected []*policy.RejectedAnnotation) {
 	for _, r := range rejected {
-		if v, ok := asset.Annotations[r.Key]; ok && v == r.Value {
-			delete(asset.Annotations, r.Key)
+		if v, ok := asset.Annotations[r.Key]; !ok || v != r.Value {
+			continue
 		}
+		delete(asset.Annotations, r.Key)
 		reason := r.Reason
 		if reason == "" {
 			reason = "the space does not allow it"
