@@ -79,7 +79,7 @@ func (s *LocalScannerSuite) TestRunIncognito_UserConfigExceptions() {
 		{Checks: []string{"expired-check"}, Action: "false-positive", Justification: "was wrong", ValidUntil: past},
 	}
 
-	scanner := NewLocalScanner(DisableProgressBar(), WithExceptions(user, "~/.config/mondoo/mondoo.yml", false))
+	scanner := NewLocalScanner(DisableProgressBar(), WithExceptions(user, "~/.config/mondoo/mondoo.yml", ExceptionsNotSubmitted))
 	res, err := scanner.RunIncognito(context.Background(), s.job)
 	s.Require().NoError(err)
 	full := res.GetFull()

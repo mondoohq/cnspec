@@ -342,6 +342,9 @@ accepted. That last part has two forms:
 one. This is the case a user most needs to see: they wrote an exception, committed it,
 and the check is still failing. Silence here would look like the file was never read.
 
+**Exceptions applied without being recorded** are printed as in effect, with the
+upstream's reason, for example that they apply to this scan only.
+
 An upstream that requires approval may also report an exception as awaiting a decision
 rather than accepted or rejected. cnspec surfaces that as its own outcome — the exception
 is not in effect yet, which is different from having been refused.
@@ -352,9 +355,12 @@ Sending every exception on every scan is wasteful, and against an upstream whose
 exception API only creates would actively accumulate duplicates. Three measures, in
 order of how much they buy:
 
-**Only authoritative runs sync.** A scan of a feature branch reports exceptions but does
-not submit them. Only a run cnspec considers authoritative — CI, on the default branch —
-submits. `execruntime.RuntimeEnv.OnDefaultBranch` decides that, per platform:
+**Only authoritative runs register.** Only a run cnspec considers authoritative — CI, on
+the default branch — submits exceptions to be recorded upstream. A CI run anywhere else,
+such as one for a pull request, submits the exceptions of the scanned root's config in
+*apply-only* mode (below): they take effect for the assets that run scans and nothing is
+recorded. A run outside CI submits nothing. `execruntime.RuntimeEnv.OnDefaultBranch`
+decides which CI runs are authoritative, per platform:
 
 | Platform | Default branch from | Never counts |
 |---|---|---|
@@ -376,8 +382,43 @@ by Tim Smith ([@tas50](https://github.com/tas50)) in
 developer's local experiment from becoming a shared exception.
 
 Disconnected, a non-authoritative run applies its exceptions as in §6. Connected, it
-cannot: resolution belongs to the upstream, and the upstream has not seen them. Those
-exceptions are reported as not submitted and are not in effect.
+cannot apply them itself: resolution belongs to the upstream.
+
+**Apply-only submissions.** A pull request that adds an exception should be scanned with
+that exception, or the pipeline fails on the very check the change proposes to except,
+and nobody can see the effect of the change before it merges. Registering it from the
+pull request would be wrong: it is not agreed yet. So `SubmitExceptionsReq` carries a
+`mode`:
+
+| `--exceptions-submit` | Run | Mode sent |
+|---|---|---|
+| `auto` (default) | CI, default branch | `REGISTER` |
+| `auto` | CI, any other ref, or a platform that cannot tell the default branch | `APPLY_ONLY`, context scope only |
+| `auto` | not CI | nothing is sent |
+| `always` | any | `REGISTER` |
+| `never` | any | nothing is sent |
+
+In `APPLY_ONLY` mode the upstream puts the entries in effect for the asset in
+`scope_mrn` and records no exception: nothing to review, nothing listed, whatever the
+upstream's approval setting. The entries replace the set a previous apply-only
+submission left on that asset, and a `REGISTER` submission for the asset clears it. The
+upstream answers each entry with the `APPLIED` outcome and a reason, which cnspec prints
+as the exception's status. An unset mode means `REGISTER`, which is what clients that
+predate the field send.
+
+Apply-only is limited to context-scope exceptions, which name one asset. User-scope
+exceptions govern a whole space; on a non-authoritative run they are still reported as
+not submitted and are not in effect.
+
+Two consequences to know about:
+
+- Some assets are shared by scans of every branch, because their identity does not
+  include the ref. On such an asset the last run wins, for exceptions as for findings:
+  an exception applied by a pull request scan stays until the next scan of that asset
+  submits again. cnspec only submits when at least one exception matches the asset, so a
+  scan with no matching exception does not clear the set by itself.
+- The upstream trusts the mode cnspec sends. Apply-only is the less privileged of the
+  two, since it records nothing, so a client cannot gain anything by claiming it.
 
 **Batch, don't drip.** One submission per scope carrying the whole exception set, not one
 call per entry.

@@ -48,19 +48,23 @@ func (r *stubResolver) SubmitExceptions(_ context.Context, req *policy.SubmitExc
 	}
 	resp := &policy.SubmitExceptionsResp{}
 	for _, e := range req.Entries {
-		outcome := policy.ExceptionOutcome_EXCEPTION_OUTCOME_AUTO_ACCEPTED
-		if e.CheckUid == "pending-check" {
+		outcome, reason := policy.ExceptionOutcome_EXCEPTION_OUTCOME_AUTO_ACCEPTED, ""
+		switch {
+		case req.Mode == policy.ExceptionSubmitMode_EXCEPTION_SUBMIT_MODE_APPLY_ONLY:
+			outcome, reason = policy.ExceptionOutcome_EXCEPTION_OUTCOME_APPLIED, "applied for this scan only"
+		case e.CheckUid == "pending-check":
 			outcome = policy.ExceptionOutcome_EXCEPTION_OUTCOME_PENDING
 		}
 		resp.Decisions = append(resp.Decisions, &policy.ExceptionDecision{
 			Entry:   &policy.ExceptionEntry{Key: e.Key, Source: e.Source},
 			Outcome: outcome,
+			Reason:  reason,
 		})
 	}
 	return resp, nil
 }
 
-func upstreamScanner(t *testing.T, resolver *stubResolver, submit bool) *localAssetScanner {
+func upstreamScanner(t *testing.T, resolver *stubResolver, submit ExceptionsSubmit) *localAssetScanner {
 	t.Helper()
 	_, services, err := inmemory.NewServices(testutils.Local())
 	require.NoError(t, err)
@@ -111,7 +115,7 @@ func byCheck(d *policy.ExceptionDecisions) map[string]*policy.ExceptionDecision 
 func TestApplyExceptionsWithUpstream(t *testing.T) {
 	t.Run("authoritative run submits before resolution", func(t *testing.T) {
 		resolver := &stubResolver{}
-		s := upstreamScanner(t, resolver, true)
+		s := upstreamScanner(t, resolver, ExceptionsRegister)
 
 		decisions := byCheck(s.applyExceptions())
 		assert.Nil(t, s.services.AssetExceptions, "an upstream-resolved policy is never adjusted locally")
@@ -126,6 +130,7 @@ func TestApplyExceptionsWithUpstream(t *testing.T) {
 		require.Len(t, resolver.reqs, 2)
 		ctxReq := resolver.reqs[0]
 		assert.Equal(t, "//assets.api.mondoo.app/spaces/s/assets/a", ctxReq.ScopeMrn)
+		assert.Equal(t, policy.ExceptionSubmitMode_EXCEPTION_SUBMIT_MODE_REGISTER, ctxReq.Mode)
 		require.Len(t, ctxReq.Entries, 2, "the unknown check is not sent")
 		assert.Equal(t, upstreamQueries+"accepted-check", ctxReq.Entries[0].CheckMrn)
 		require.Len(t, ctxReq.Sources, 1)
@@ -134,19 +139,41 @@ func TestApplyExceptionsWithUpstream(t *testing.T) {
 
 		userReq := resolver.reqs[1]
 		assert.Equal(t, "//captain.api.mondoo.app/spaces/s", userReq.ScopeMrn)
+		assert.Equal(t, policy.ExceptionSubmitMode_EXCEPTION_SUBMIT_MODE_REGISTER, userReq.Mode)
 		assert.Len(t, userReq.Entries, 2, "user-scope entries go to the space in full")
 		assert.Equal(t, "user", userReq.Sources[0].Source.Scope)
 
 		// a second asset in the same run does not submit the user scope again
-		s2 := upstreamScanner(t, resolver, true)
+		s2 := upstreamScanner(t, resolver, ExceptionsRegister)
 		s2.exceptions = s.exceptions
 		s2.applyExceptions()
 		assert.Len(t, resolver.reqs, 3)
 	})
 
+	t.Run("a CI run off the default branch only applies the context exceptions", func(t *testing.T) {
+		resolver := &stubResolver{}
+		s := upstreamScanner(t, resolver, ExceptionsApplyOnly)
+
+		decisions := byCheck(s.applyExceptions())
+		assert.Nil(t, s.services.AssetExceptions, "the upstream applies them, not cnspec")
+
+		require.Len(t, resolver.reqs, 1, "the user scope is not submitted")
+		req := resolver.reqs[0]
+		assert.Equal(t, "//assets.api.mondoo.app/spaces/s/assets/a", req.ScopeMrn)
+		assert.Equal(t, policy.ExceptionSubmitMode_EXCEPTION_SUBMIT_MODE_APPLY_ONLY, req.Mode)
+		assert.Len(t, req.Entries, 2)
+
+		assert.Equal(t, policy.ExceptionOutcome_EXCEPTION_OUTCOME_APPLIED, decisions["accepted-check"].Outcome)
+		assert.Equal(t, "applied for this scan only", decisions["accepted-check"].Reason)
+		assert.Equal(t, policy.ExceptionOutcome_EXCEPTION_OUTCOME_APPLIED, decisions["pending-check"].Outcome, "nothing awaits approval")
+		assert.Equal(t, policy.ExceptionOutcome_EXCEPTION_OUTCOME_UNKNOWN_CHECK, decisions["unknown-check"].Outcome)
+		assert.Equal(t, policy.ExceptionOutcome_EXCEPTION_OUTCOME_NOT_SUBMITTED, decisions["user-check"].Outcome)
+		assert.Contains(t, decisions["user-check"].Reason, "client config")
+	})
+
 	t.Run("other runs do not submit", func(t *testing.T) {
 		resolver := &stubResolver{}
-		decisions := byCheck(upstreamScanner(t, resolver, false).applyExceptions())
+		decisions := byCheck(upstreamScanner(t, resolver, ExceptionsNotSubmitted).applyExceptions())
 		assert.Empty(t, resolver.reqs)
 		assert.Equal(t, policy.ExceptionOutcome_EXCEPTION_OUTCOME_NOT_SUBMITTED, decisions["accepted-check"].Outcome)
 		assert.Contains(t, decisions["accepted-check"].Reason, "default branch")
@@ -154,7 +181,7 @@ func TestApplyExceptionsWithUpstream(t *testing.T) {
 
 	t.Run("an upstream without the RPC", func(t *testing.T) {
 		resolver := &stubResolver{err: status.Error(codes.NotFound, "unknown method")}
-		decisions := byCheck(upstreamScanner(t, resolver, true).applyExceptions())
+		decisions := byCheck(upstreamScanner(t, resolver, ExceptionsRegister).applyExceptions())
 		assert.Equal(t, policy.ExceptionOutcome_EXCEPTION_OUTCOME_NOT_SUBMITTED, decisions["accepted-check"].Outcome)
 		assert.Equal(t, "not submitted: the upstream does not take exceptions", decisions["accepted-check"].Reason)
 	})

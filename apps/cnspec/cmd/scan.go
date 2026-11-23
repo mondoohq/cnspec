@@ -90,7 +90,7 @@ func init() {
 	_ = scanCmd.Flags().MarkHidden("output-scan-db")
 	_ = scanCmd.Flags().Bool("collect-support-bundle", false, "Collect a support bundle (debug logs, asset bundle, inventory, resolved policy, report, provider versions) for sharing with Mondoo support. By default writes to a timestamped directory in the current working dir; override with --support-bundle-dir.")
 	_ = scanCmd.Flags().String("support-bundle-dir", "", "Directory to write the support bundle into. Only used when --collect-support-bundle is set. Defaults to ./cnspec-support-bundle-<timestamp>/.")
-	_ = scanCmd.Flags().String("exceptions-submit", "auto", "Preview: When to submit exceptions from mondoo.yml files to Mondoo Platform: auto (a CI run on the default branch; set MONDOO_DEFAULT_BRANCH on Jenkins, Azure Pipelines or CircleCI if they cannot tell it), always, or never")
+	_ = scanCmd.Flags().String("exceptions-submit", "auto", "Preview: When to register exceptions from mondoo.yml files in Mondoo Platform: auto (a CI run on the default branch registers them, any other CI run only applies them to the assets it scans; set MONDOO_DEFAULT_BRANCH on Jenkins, Azure Pipelines or CircleCI if they cannot tell the default branch), always, or never")
 }
 
 var scanCmd = &cobra.Command{
@@ -350,8 +350,8 @@ type scanConfig struct {
 	// ExceptionsConfigPath (ADR-0006).
 	Exceptions           []config.Exception
 	ExceptionsConfigPath string
-	// SubmitExceptions says whether this run submits exceptions upstream.
-	SubmitExceptions bool
+	// SubmitExceptions is what this run does with exceptions upstream.
+	SubmitExceptions scan.ExceptionsSubmit
 }
 
 func getCobraScanConfig(cmd *cobra.Command, runtime *providers.Runtime, cliRes *plugin.ParseCLIRes) (*scanConfig, error) {
@@ -680,20 +680,29 @@ func (c *scanConfig) loadPolicies(ctx context.Context) error {
 	return nil
 }
 
-// submitExceptions decides whether a run submits exceptions from config files
-// upstream. Only an authoritative run does by default, a CI run on the default
-// branch: a scan of a feature branch applies and reports exceptions, but never
-// turns a developer's experiment into a shared exception (ADR-0006).
-func submitExceptions(mode string, env *execruntime.RuntimeEnv) (bool, error) {
+// submitExceptions decides what a run does upstream with the exceptions from
+// config files. By default only an authoritative run registers them, a CI run
+// on the default branch. Any other CI run, such as one for a pull request, has
+// the exceptions of the scanned root applied to the assets it scans without
+// registering them, so it never turns a developer's experiment into a shared
+// exception (ADR-0006). A run outside CI submits nothing.
+func submitExceptions(mode string, env *execruntime.RuntimeEnv) (scan.ExceptionsSubmit, error) {
 	switch mode {
 	case "", "auto":
-		return env.IsAutomatedEnv() && env.OnDefaultBranch(), nil
+		switch {
+		case !env.IsAutomatedEnv():
+			return scan.ExceptionsNotSubmitted, nil
+		case env.OnDefaultBranch():
+			return scan.ExceptionsRegister, nil
+		default:
+			return scan.ExceptionsApplyOnly, nil
+		}
 	case "always":
-		return true, nil
+		return scan.ExceptionsRegister, nil
 	case "never":
-		return false, nil
+		return scan.ExceptionsNotSubmitted, nil
 	}
-	return false, fmt.Errorf("invalid --exceptions-submit %q, use auto, always or never", mode)
+	return scan.ExceptionsNotSubmitted, fmt.Errorf("invalid --exceptions-submit %q, use auto, always or never", mode)
 }
 
 // interactiveActivityTrigger says how a CLI scan came to be. A terminal on
