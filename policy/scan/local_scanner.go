@@ -1086,6 +1086,7 @@ func syncBatchWithUpstream(
 							asset.Annotations[k] = v
 						}
 					}
+					dropRejectedAnnotations(asset, details.RejectedAnnotations)
 
 					err = tracked.Runtime.SetRecording(rec)
 					if err != nil {
@@ -1113,6 +1114,27 @@ func syncBatchWithUpstream(
 		}
 	}
 	return nil
+}
+
+// dropRejectedAnnotations removes each annotation the platform refused to
+// store from the asset, and warns about it, so the scan and its report carry
+// only the annotations the platform accepted. An annotation the asset no
+// longer has with the refused value stays, without a warning.
+func dropRejectedAnnotations(asset *inventory.Asset, rejected []*policy.RejectedAnnotation) {
+	for _, r := range rejected {
+		if v, ok := asset.Annotations[r.Key]; !ok || v != r.Value {
+			continue
+		}
+		delete(asset.Annotations, r.Key)
+		reason := r.Reason
+		if reason == "" {
+			reason = "the space does not allow it"
+		}
+		log.Warn().
+			Str("asset", asset.Name).
+			Str("annotation", r.Key+"="+r.Value).
+			Msg("Mondoo Platform did not store an annotation: " + reason)
+	}
 }
 
 func (s *LocalScanner) upstreamServices(ctx context.Context, conf *upstream.UpstreamConfig) *policy.Services {
