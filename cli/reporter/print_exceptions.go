@@ -115,6 +115,10 @@ func exceptionSourceLabel(e *policy.ExceptionEntry) string {
 func decisionStatus(d *policy.ExceptionDecision) string {
 	switch d.Outcome {
 	case policy.ExceptionOutcome_EXCEPTION_OUTCOME_APPLIED:
+		// an upstream that applied it without registering it says so
+		if d.Reason != "" {
+			return d.Reason
+		}
 		return "applied locally, no upstream to approve it"
 	case policy.ExceptionOutcome_EXCEPTION_OUTCOME_ACCEPTED:
 		var names []string

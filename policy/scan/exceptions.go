@@ -21,10 +21,8 @@ import (
 type exceptionsConfig struct {
 	// user are the entries of the client config, which govern every asset.
 	user []*exceptions.Entry
-	// submit says whether this run may submit exceptions upstream. Only an
-	// authoritative run does, so that a scan of a feature branch never turns
-	// a developer's experiment into a shared exception.
-	submit bool
+	// submit is what this run does with exceptions when it has an upstream.
+	submit ExceptionsSubmit
 
 	// userOnce submits the user-scope entries once per run, against the space;
 	// they apply to every asset in it, not to one.
@@ -32,9 +30,28 @@ type exceptionsConfig struct {
 	userDecisions map[string]*policy.ExceptionDecision
 }
 
+// ExceptionsSubmit is what a run with an upstream does with the exceptions of
+// config files.
+type ExceptionsSubmit int
+
+const (
+	// ExceptionsNotSubmitted sends nothing: the exceptions are reported and
+	// are not in effect.
+	ExceptionsNotSubmitted ExceptionsSubmit = iota
+	// ExceptionsRegister records the exceptions upstream. Only an
+	// authoritative run does, so that a scan of a feature branch never turns
+	// a developer's experiment into a shared exception.
+	ExceptionsRegister
+	// ExceptionsApplyOnly puts the exceptions of the scanned root's config in
+	// effect for the scanned asset without recording them: a pull request is
+	// scanned with the exceptions it proposes. User-scope exceptions govern a
+	// whole space, so they are never applied this way.
+	ExceptionsApplyOnly
+)
+
 // WithExceptions sets the user-scope exceptions, read from the client config
-// at configPath, and whether this run submits exceptions upstream.
-func WithExceptions(user []config.Exception, configPath string, submit bool) ScannerOption {
+// at configPath, and what this run does with exceptions upstream.
+func WithExceptions(user []config.Exception, configPath string, submit ExceptionsSubmit) ScannerOption {
 	return func(s *LocalScanner) {
 		src := &policy.ExceptionSource{Scope: exceptions.ScopeUser, Path: configPath}
 		entries, issues := exceptions.Parse(src, user, time.Now())
@@ -127,7 +144,8 @@ func checkResolver(queries []*policy.Mquery) exceptions.CheckResolver {
 // applyExceptions decides what becomes of each exception that governs the
 // asset, before its policy is resolved. Without an upstream cnspec applies them
 // itself; with one it submits them and the upstream decides, and the resolved
-// policy it returns reflects what it accepted. Either way every exception is
+// policy it returns reflects what it accepted or, for a run that only applies
+// them, what it put in effect for this asset. Either way every exception is
 // accounted for in the returned decisions.
 func (s *localAssetScanner) applyExceptions() *policy.ExceptionDecisions {
 	now := time.Now()
@@ -241,7 +259,10 @@ func notSubmitted(entries []*policy.ExceptionEntry, reason string) []*policy.Exc
 	return res
 }
 
-const notAuthoritative = "not submitted: only a CI run on the default branch submits exceptions"
+const (
+	notAuthoritative     = "not submitted: only a CI run on the default branch submits exceptions"
+	userNotAuthoritative = "not submitted: only a CI run on the default branch submits exceptions of the client config"
+)
 
 // declarations declares every source the matches came from with its complete
 // key list, so that completeness is never inferred from one asset's subset.
@@ -270,10 +291,22 @@ func (s *localAssetScanner) submitContext(ms []matchedException, entries []*poli
 		return nil
 	}
 	send, decided := submittable(entries, now)
-	if s.exceptions == nil || !s.exceptions.submit {
+	mode := policy.ExceptionSubmitMode_EXCEPTION_SUBMIT_MODE_REGISTER
+	switch s.exceptionsSubmit() {
+	case ExceptionsRegister:
+	case ExceptionsApplyOnly:
+		mode = policy.ExceptionSubmitMode_EXCEPTION_SUBMIT_MODE_APPLY_ONLY
+	default:
 		return append(decided, notSubmitted(send, notAuthoritative)...)
 	}
-	return append(decided, s.submit(s.job.Asset.Mrn, send, declarations(ms))...)
+	return append(decided, s.submit(s.job.Asset.Mrn, mode, send, declarations(ms))...)
+}
+
+func (s *localAssetScanner) exceptionsSubmit() ExceptionsSubmit {
+	if s.exceptions == nil {
+		return ExceptionsNotSubmitted
+	}
+	return s.exceptions.submit
 }
 
 // submitUser sends the user-scope exceptions once per run, against the space:
@@ -285,7 +318,11 @@ func (s *localAssetScanner) submitUser(entries []*policy.ExceptionEntry, resolve
 		return nil
 	}
 	send, decided := submittable(entries, now)
-	if s.exceptions == nil || !s.exceptions.submit {
+	switch s.exceptionsSubmit() {
+	case ExceptionsRegister:
+	case ExceptionsApplyOnly:
+		return append(decided, notSubmitted(send, userNotAuthoritative)...)
+	default:
 		return append(decided, notSubmitted(send, notAuthoritative)...)
 	}
 
@@ -302,7 +339,7 @@ func (s *localAssetScanner) submitUser(entries []*policy.ExceptionEntry, resolve
 			Checksum: exceptions.SetChecksum(cfg.user),
 		}}
 		cfg.userDecisions = map[string]*policy.ExceptionDecision{}
-		for _, d := range s.submit(s.job.UpstreamConfig.GetSpaceMrn(), sendAll, decl) {
+		for _, d := range s.submit(s.job.UpstreamConfig.GetSpaceMrn(), policy.ExceptionSubmitMode_EXCEPTION_SUBMIT_MODE_REGISTER, sendAll, decl) {
 			cfg.userDecisions[d.GetEntry().GetKey()] = d
 		}
 	})
@@ -323,7 +360,7 @@ func (s *localAssetScanner) submitUser(entries []*policy.ExceptionEntry, resolve
 
 // submit sends entries upstream and pairs every one with the upstream's
 // decision. An upstream that does not take exceptions leaves none in effect.
-func (s *localAssetScanner) submit(scopeMrn string, entries []*policy.ExceptionEntry, sources []*policy.ExceptionSourceDeclaration) []*policy.ExceptionDecision {
+func (s *localAssetScanner) submit(scopeMrn string, mode policy.ExceptionSubmitMode, entries []*policy.ExceptionEntry, sources []*policy.ExceptionSourceDeclaration) []*policy.ExceptionDecision {
 	if len(entries) == 0 && len(sources) == 0 {
 		return nil
 	}
@@ -331,6 +368,7 @@ func (s *localAssetScanner) submit(scopeMrn string, entries []*policy.ExceptionE
 		ScopeMrn: scopeMrn,
 		Entries:  entries,
 		Sources:  sources,
+		Mode:     mode,
 	})
 	if err != nil {
 		reason := "not submitted: " + err.Error()
