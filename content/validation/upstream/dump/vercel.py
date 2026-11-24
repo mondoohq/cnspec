@@ -53,7 +53,7 @@ POLICY_FILE = CONTENT_DIR / "mondoo-vercel-security.mql.yaml"
 
 # Pin the CLI version the grammar was generated from. `vercel` is installed
 # from npm; regenerate after `npm i -g vercel@<new>` and bump this.
-VERCEL_VERSION = "65.2.0"
+VERCEL_VERSION = "66.6.0"
 
 # A command entry in a `Commands:` section: leading indent, a lowercase
 # command name, an optional `short | long` alias pair, then whitespace
@@ -61,8 +61,13 @@ VERCEL_VERSION = "65.2.0"
 # top-level help ("Basic", "Advanced") are Capitalized, so the lowercase
 # anchor excludes them.
 _COMMAND_LINE_RE = re.compile(
-    r"^(\s+)([a-z][a-z0-9-]*)\s*(?:\|\s*([a-z][a-z0-9-]*))?\s{2,}\S"
+    r"^(\s+)([a-z][a-z0-9-]*)\s*(?:\|\s*([a-z][a-z0-9-]*))?(?:\s{2,}\S|\s+[<\[])"
 )
+
+# Sections that never list commands. From vercel 66 on, the top-level help
+# groups commands under category headers ("Deploy and Develop:",
+# "Domains and Traffic:", …) instead of one `Commands:` section.
+_NON_COMMAND_SECTION_RE = re.compile(r"options|examples", re.IGNORECASE)
 
 # A section header line like "Commands:", "Options:", "Global Options:".
 _SECTION_HEADER_RE = re.compile(r"^\s*[A-Z][A-Za-z ]*:\s*$")
@@ -82,23 +87,24 @@ def run_help(path: str) -> str:
 
 
 def parse_commands_section(text: str) -> list[tuple[str, str | None]]:
-    """Return (name, alias) pairs from the `Commands:` section, or []."""
-    lines = text.splitlines()
-    start = None
-    for i, line in enumerate(lines):
-        if re.match(r"^\s*Commands:\s*$", line):
-            start = i + 1
-            break
-    if start is None:
-        return []
-
-    # The section runs to the next header (Options:, Global Options:,
-    # Examples:, …) or EOF.
-    block = []
-    for line in lines[start:]:
+    """Return (name, alias) pairs from the `Commands:` section, or, when
+    there is none, from every section that is not options or examples."""
+    # Split the help into sections; each runs to the next header or EOF.
+    sections: list[tuple[str, list[str]]] = []
+    for line in text.splitlines():
         if _SECTION_HEADER_RE.match(line):
-            break
-        block.append(line)
+            sections.append((line.strip().rstrip(":"), []))
+        elif sections:
+            sections[-1][1].append(line)
+
+    block = [line for name, body in sections if name == "Commands" for line in body]
+    if not block:
+        block = [
+            line
+            for name, body in sections
+            if not _NON_COMMAND_SECTION_RE.search(name)
+            for line in body
+        ]
 
     candidates = [
         (m.group(1), m.group(2), m.group(3))
@@ -204,6 +210,13 @@ def walk(roots: list[str]) -> tuple[dict[str, dict], dict[str, str]]:
                         next_queue.append(child)
             queue = next_queue
 
+    # From vercel 66 on, subcommand help prints `Global Options: See
+    # vercel --help` instead of listing them. Global flags are valid on
+    # every command, so merge the root's into each node.
+    global_flags = set(commands[""]["flags"])
+    for node in commands.values():
+        node["flags"] = sorted(global_flags | set(node["flags"]))
+
     return commands, aliases
 
 
@@ -233,6 +246,16 @@ def main():
     print(f"Scanning {len(roots)} command groups used by the policy: "
           f"{', '.join(roots)}", file=sys.stderr)
     commands, aliases = walk(roots)
+
+    # A help layout the parser does not recognize yields an empty tree, not
+    # an error; refuse to write a grammar with no top-level commands.
+    if not commands[""]["subcommands"]:
+        print(
+            "Error: parsed no commands from `vercel --help`; "
+            "the help layout may have changed.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     result = {
         "_meta": {
