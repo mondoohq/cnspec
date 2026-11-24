@@ -10,3 +10,14 @@ resource "google_compute_backend_service" "pass" {
     default_ttl                  = 3600
   }
 }
+
+resource "google_compute_backend_service_signed_url_key" "pass" {
+  name            = "signing-key"
+  key_value       = var.signing_key_value
+  backend_service = google_compute_backend_service.pass.name
+}
+
+variable "signing_key_value" {
+  type      = string
+  sensitive = true
+}
