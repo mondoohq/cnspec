@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-oci-security
     name: Mondoo Oracle Cloud Infrastructure (OCI) Security
-    version: 5.0.0
+    version: 5.1.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -67,6 +67,7 @@ policies:
           - uid: mondoo-oci-security-object-storage-buckets-not-publicly-accessible
           - uid: mondoo-oci-security-object-storage-buckets-versioning-enabled
           - uid: mondoo-oci-security-object-storage-buckets-event-logging-enabled
+          - uid: mondoo-oci-security-object-storage-buckets-write-logging-enabled
           - uid: mondoo-oci-security-object-storage-buckets-customer-managed-encryption
           - uid: mondoo-oci-security-object-storage-buckets-replication-enabled
           - uid: mondoo-oci-security-object-storage-archive-buckets-versioning
@@ -118,11 +119,13 @@ policies:
           - uid: mondoo-oci-security-loadbalancer-tls-minimum-1-2
           - uid: mondoo-oci-security-loadbalancer-no-weak-cipher-suites
           - uid: mondoo-oci-security-loadbalancer-http-listener-has-https
+          - uid: mondoo-oci-security-loadbalancer-access-logging-enabled
           - uid: mondoo-oci-security-network-loadbalancer-public-restricted-by-nsg
           - uid: mondoo-oci-security-network-loadbalancer-not-internet-reachable
       - title: Oracle Kubernetes Engine
         checks:
           - uid: mondoo-oci-security-oke-public-endpoint-disabled
+          - uid: mondoo-oci-security-oke-api-endpoint-not-internet-reachable
           - uid: mondoo-oci-security-oke-supported-kubernetes-version
           - uid: mondoo-oci-security-oke-image-policy-enabled
           - uid: mondoo-oci-security-oke-node-pool-private-subnets
@@ -155,6 +158,7 @@ policies:
           - uid: mondoo-oci-security-redis-cluster-private-subnet
           - uid: mondoo-oci-security-redis-cluster-nsg-attached
           - uid: mondoo-oci-security-redis-cluster-supported-version
+          - uid: mondoo-oci-security-redis-cluster-users-no-nopass
       - title: Cloud Guard
         checks:
           - uid: mondoo-oci-security-cloudguard-security-zones-configured
@@ -171,6 +175,7 @@ policies:
           - uid: mondoo-oci-security-apigateway-deployment-authentication-configured
           - uid: mondoo-oci-security-apigateway-deployment-mtls-verified
           - uid: mondoo-oci-security-apigateway-deployment-no-wildcard-cors
+          - uid: mondoo-oci-security-apigateway-deployment-access-logging-enabled
           - uid: mondoo-oci-security-apigateway-gateway-public-restricted-by-nsg
       - title: Certificates
         checks:
@@ -1081,6 +1086,127 @@ queries:
       terraform.state.resources.where(type == "oci_objectstorage_bucket").all(
         values.object_events_enabled == true
       )
+  # No Terraform variants: the write log is a separate `oci_logging_log` resource whose
+  # `configuration.source.resource` names the bucket. Correlating each bucket with a log
+  # declared elsewhere needs cross-resource reference resolution that Terraform assets do
+  # not support reliably, the same limitation as mondoo-oci-security-vcn-flow-logs-enabled.
+  - uid: mondoo-oci-security-object-storage-buckets-write-logging-enabled
+    title: Ensure write-level access logging is enabled for Object Storage buckets
+    impact: 60
+    filters: asset.platform == "oci-objectstorage-bucket"
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-log-08
+      compliance/dora: dora-art-10
+      compliance/hipaa: hipaa-security-ss164-312-b-audit-controls
+      compliance/iso-27001-2022: iso-27001-2022-a-8-15
+      compliance/nis-2: nis-2-21-2-b
+      compliance/nist-csf-1: nist-csf-1-pr-pt-1
+      compliance/nist-csf-2: nist-csf-2-pr-ps-04
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-au-12
+      compliance/nist-sp-800-171: nist-sp-800-171--3-3-1
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a09
+      compliance/pci-dss-4: pcidss-requirement-10-2-1
+      compliance/soc2-2017: soc2-control-cc7-2-1
+      compliance/vda-isa-5: vda-isa-5-5-2-4
+    mql: |
+      oci.objectStorage.bucket.logs.any(isEnabled == true && category == "write")
+    docs:
+      desc: |
+        This check verifies that every Object Storage bucket records who writes to it, through an enabled write access log in OCI Logging.
+
+        Object Storage emits two service log categories per bucket. The write category records every request that creates, overwrites, or deletes an object, with the request action, the object name, the requesting principal, and the source address. The read category records downloads and listings. Neither is on by default. Enable the write log under Observability & Management > Logging > Logs with **Enable service log**, choosing **Object Storage** as the service, the bucket as the resource, and **Write Access Events** as the log category. The CIS Oracle Cloud Infrastructure Foundations Benchmark asks for write level logging on every bucket.
+
+        **Why this matters**
+
+        The Audit service records control-plane calls such as creating a bucket or changing its policy, not the object operations inside it. Without a write log, an attacker holding a stolen API key or a leaked pre-authenticated request can plant, replace, or delete objects and leave no record of which objects changed, when, or from where.
+
+        That record decides how an incident is scoped. Ransomware that overwrites backups, a tampered build artifact, and a bulk delete all show up as write events, and the write log is what tells responders which objects to restore and which identity to revoke.
+
+        Object event emission, which publishes object changes to the Events service, does not substitute for the write log. Events feed automation and are not retained as a searchable access record. Send write logs to a log group whose retention meets your investigation and compliance needs, and enable read logs as well on buckets holding sensitive data.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the OCI Console and navigate to **Observability & Management > Logging > Logs**.
+        2. Filter the list by **Service: Object Storage**.
+        3. For each bucket, look for a log whose resource is the bucket and whose category is **Write Access Events**, and confirm its status is active.
+
+        A passing bucket has an enabled write access log. A failing bucket has none, or only a read access log.
+
+        ### Audit via CLI
+
+        1. List the log groups in the compartment:
+
+        ```bash
+        oci logging log-group list --compartment-id <compartment-ocid>
+        ```
+
+        2. In each log group, list the Object Storage logs for the bucket:
+
+        ```bash
+        oci logging log list --log-group-id <log-group-ocid> --source-service objectstorage --source-resource <bucket-name> \
+          --query 'data[*].{name:"display-name", enabled:"is-enabled", category:configuration.source.category}'
+        ```
+
+        A passing bucket returns a log with `category` set to `write` and `enabled` set to `true`. A failing bucket returns no such log in any log group.
+      remediation:
+        - id: console
+          desc: |
+            To enable write access logging for a bucket using the OCI Console:
+
+            1. Navigate to **Observability & Management > Logging > Log Groups** and create or select a log group.
+            2. Select **Logs**, then **Enable service log**.
+            3. For **Service**, choose **Object Storage**, and for **Resource**, select the bucket.
+            4. For **Log Category**, choose **Write Access Events**.
+            5. Set a log name and select **Enable Log**.
+        - id: cli
+          desc: |
+            To enable write access logging for a bucket using the OCI CLI, create a service log whose source is the bucket name and whose category is `write`:
+
+            ```bash
+            oci logging log create --log-group-id <log-group-ocid> \
+              --display-name "<bucket-name>-write" \
+              --log-type SERVICE \
+              --is-enabled true \
+              --configuration '{"source": {"sourceType": "OCISERVICE", "service": "objectstorage", "resource": "<bucket-name>", "category": "write"}, "compartmentId": "<compartment-ocid>"}'
+            ```
+        - id: terraform
+          desc: |
+            To enable write access logging for a bucket in Terraform, declare an `oci_logging_log` whose source is the bucket name and whose category is `write`:
+
+            ```hcl
+            resource "oci_logging_log_group" "object_storage" {
+              compartment_id = var.compartment_ocid
+              display_name   = "object-storage-logs"
+            }
+
+            resource "oci_objectstorage_bucket" "example" {
+              compartment_id = var.compartment_ocid
+              namespace      = var.namespace
+              name           = "example-bucket"
+            }
+
+            resource "oci_logging_log" "example_write" {
+              display_name = "example-bucket-write"
+              log_group_id = oci_logging_log_group.object_storage.id
+              log_type     = "SERVICE"
+              is_enabled   = true
+
+              configuration {
+                compartment_id = var.compartment_ocid
+
+                source {
+                  category    = "write"
+                  resource    = oci_objectstorage_bucket.example.name
+                  service     = "objectstorage"
+                  source_type = "OCISERVICE"
+                }
+              }
+            }
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/Logging/Reference/details_for_object_storage.htm
+        title: Details for Object Storage
   - uid: mondoo-oci-security-object-storage-buckets-customer-managed-encryption
     title: Ensure Object Storage buckets use customer-managed encryption keys
     impact: 70
@@ -3347,24 +3473,36 @@ queries:
       # called. parsedStatements makes the grant readable, so a group named for a team can
       # no longer hold `manage all-resources in tenancy` unnoticed. The name patterns stay
       # for groups that are called administrative but hold their access some other way.
+      #
+      # A statement names a group by bare name, by OCID (`group id ocid1.group...`), or in
+      # a tenancy with identity domains as 'Default'/'Name'. Subjects qualified by another
+      # domain name a different group and are dropped; the rest are reduced to the name or
+      # OCID and compared with both. Matching per statement, rather than through
+      # oci.identity.group.policies, keeps a policy that grants admin to one group and
+      # anything to another from marking the second group administrative.
       oci.identity.groups.where(
         name.downcase == /^admins?$|^administrators?$|^tenancy[-_]?admins?$|^root[-_]?admins?$|^super[-_]?users?$/ ||
-        name.downcase.in(
-          oci.identity.policies.map(parsedStatements).flat
-            .where(
-              effect == "allow" &&
-              verb == "manage" &&
-              resourceType == "all-resources" &&
-              scopeType == "tenancy"
-            )
-            .map(subjectNames).flat.map(_.downcase)
+        [name.downcase, id.downcase].any(
+          _.in(
+            oci.identity.policies.map(parsedStatements).flat
+              .where(
+                effect == "allow" &&
+                subjectType == "group" &&
+                verb == "manage" &&
+                resourceType == "all-resources" &&
+                scopeType == "tenancy"
+              )
+              .map(subjectNames).flat
+              .where(_ == /^(['"]?default['"]?\/)?[^\/]+$/i)
+              .map(_.split("/").last.trim("'\" ").downcase)
+          )
         )
       ).all(members.length <= 5)
     docs:
       desc: |
         This check verifies that tenancy-wide administrative privilege is held by a small, deliberate set of accounts, by requiring any group with that privilege to have no more than five members.
 
-        A group counts as administrative here on the strength of what it can do, not what it is named. Any group named as the subject of a statement granting `manage all-resources in tenancy` qualifies, and so do groups whose names follow the conventional administrative patterns such as `Administrators`, `tenancy-admins`, or `superusers`, which catches groups reaching the same power by another route. Membership is managed under Identity & Security > Domains > Groups and listed with `oci iam group list-users`.
+        A group counts as administrative here on the strength of what it can do, not what it is named. Any group named as the subject of a statement granting `manage all-resources in tenancy` qualifies, whether the statement names it by name, by OCID, or by its name in the Default identity domain, and so do groups whose names follow the conventional administrative patterns such as `Administrators`, `tenancy-admins`, or `superusers`, which catches groups reaching the same power by another route. Membership is managed under Identity & Security > Domains > Groups and listed with `oci iam group list-users`.
 
         **Why this matters**
 
@@ -4590,6 +4728,121 @@ queries:
     refs:
       - url: https://docs.oracle.com/en-us/iaas/Content/Balance/Tasks/managinglisteners.htm
         title: OCI - Managing Listeners
+  # No Terraform variants: the access log is a separate `oci_logging_log` resource whose
+  # `configuration.source.resource` holds the load balancer OCID. Correlating each load
+  # balancer with a log declared elsewhere needs cross-resource reference resolution that
+  # Terraform assets do not support reliably, the same limitation as
+  # mondoo-oci-security-vcn-flow-logs-enabled.
+  - uid: mondoo-oci-security-loadbalancer-access-logging-enabled
+    title: Ensure load balancers have access logging enabled
+    impact: 60
+    filters: asset.platform == "oci-loadbalancer"
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-log-08
+      compliance/dora: dora-art-10
+      compliance/hipaa: hipaa-security-ss164-312-b-audit-controls
+      compliance/iso-27001-2022: iso-27001-2022-a-8-15
+      compliance/nis-2: nis-2-21-2-b
+      compliance/nist-csf-1: nist-csf-1-pr-pt-1
+      compliance/nist-csf-2: nist-csf-2-pr-ps-04
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-au-12
+      compliance/nist-sp-800-171: nist-sp-800-171--3-3-1
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a09
+      compliance/pci-dss-4: pcidss-requirement-10-2-1
+      compliance/soc2-2017: soc2-control-cc7-2-1
+      compliance/vda-isa-5: vda-isa-5-5-2-4
+    mql: |
+      oci.loadBalancer.loadBalancer.logs.any(isEnabled == true && category == "access")
+    docs:
+      desc: |
+        This check verifies that every OCI load balancer records the requests it serves, through an enabled access log in OCI Logging.
+
+        A load balancer emits two service log categories. The access log records each request the load balancer handles, with the client address, the listener, the backend it was forwarded to, the response status, and the timing. The error log records failures inside the load balancer itself. Neither is on by default. Enable the access log on the load balancer's **Logs** page in the Console, or under Observability & Management > Logging > Logs with **Enable service log**, choosing **Load Balancers** as the service and **Access Logs** as the category.
+
+        **Why this matters**
+
+        The load balancer is the front door for the applications behind it, and the access log is often the only record of traffic that reached them. Credential stuffing, path probing, and exploitation attempts against a backend appear here first, with the source address an investigation needs to block or attribute.
+
+        Backend application logs do not replace it. Backends see the load balancer's address rather than the client's unless they parse forwarded headers, they miss requests the load balancer rejected or could not route, and a compromised backend can stop writing its own logs.
+
+        Send access logs to a log group whose retention meets your investigation and compliance needs, and alert on spikes in error responses or requests from unexpected sources.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the OCI Console and navigate to **Networking > Load balancers > Load balancer**.
+        2. Open each load balancer and select **Logs** under **Resources**.
+        3. Review the status of the **Access Logs** category.
+
+        A passing load balancer shows access logs enabled. A failing load balancer shows access logs not enabled.
+
+        ### Audit via CLI
+
+        1. List the log groups in the compartment:
+
+        ```bash
+        oci logging log-group list --compartment-id <compartment-ocid>
+        ```
+
+        2. In each log group, list the logs for the load balancer:
+
+        ```bash
+        oci logging log list --log-group-id <log-group-ocid> --source-service loadbalancer --source-resource <load-balancer-ocid> \
+          --query 'data[*].{name:"display-name", enabled:"is-enabled", category:configuration.source.category}'
+        ```
+
+        A passing load balancer returns a log with `category` set to `access` and `enabled` set to `true`. A failing load balancer returns no such log in any log group.
+      remediation:
+        - id: console
+          desc: |
+            To enable access logging for a load balancer using the OCI Console:
+
+            1. Navigate to **Networking > Load balancers > Load balancer** and open the load balancer.
+            2. Select **Logs** under **Resources**.
+            3. For **Access Logs**, turn on logging.
+            4. Choose the compartment and log group, set a log name, and select **Enable Log**.
+        - id: cli
+          desc: |
+            To enable access logging for a load balancer using the OCI CLI, create a service log whose source is the load balancer and whose category is `access`:
+
+            ```bash
+            oci logging log create --log-group-id <log-group-ocid> \
+              --display-name "<load-balancer-name>-access" \
+              --log-type SERVICE \
+              --is-enabled true \
+              --configuration '{"source": {"sourceType": "OCISERVICE", "service": "loadbalancer", "resource": "<load-balancer-ocid>", "category": "access"}, "compartmentId": "<compartment-ocid>"}'
+            ```
+        - id: terraform
+          desc: |
+            To enable access logging for a load balancer in Terraform, declare an `oci_logging_log` whose source is the load balancer and whose category is `access`:
+
+            ```hcl
+            resource "oci_logging_log_group" "load_balancer" {
+              compartment_id = var.compartment_ocid
+              display_name   = "load-balancer-logs"
+            }
+
+            resource "oci_logging_log" "lb_access" {
+              display_name = "app-lb-access"
+              log_group_id = oci_logging_log_group.load_balancer.id
+              log_type     = "SERVICE"
+              is_enabled   = true
+
+              configuration {
+                compartment_id = var.compartment_ocid
+
+                source {
+                  category    = "access"
+                  resource    = oci_load_balancer_load_balancer.app.id
+                  service     = "loadbalancer"
+                  source_type = "OCISERVICE"
+                }
+              }
+            }
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/Logging/Reference/details_for_load_balancer_logs.htm
+        title: Details for Load Balancer Logs
   - uid: mondoo-oci-security-oke-public-endpoint-disabled
     title: Ensure OKE cluster Kubernetes API endpoints are not exposed to the internet
     impact: 90
@@ -4737,6 +4990,116 @@ queries:
           _['is_public_ip_enabled'] == false
         )
       )
+  # No Terraform variants: internetReachable is computed by the provider from the endpoint's
+  # public IP, the endpoint subnet's route to an enabled internet gateway, and the ingress its
+  # network security groups and security lists admit. No Terraform resource carries that
+  # verdict, and asserting is_public_ip_enabled alone is what
+  # mondoo-oci-security-oke-public-endpoint-disabled already covers.
+  - uid: mondoo-oci-security-oke-api-endpoint-not-internet-reachable
+    title: Ensure OKE Kubernetes API endpoints are not reachable from the internet
+    impact: 90
+    filters: asset.platform == "oci-oke-cluster"
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-20
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-5
+      compliance/nist-csf-2: nist-csf-2-pr-ir-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-7
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-1
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-1-4-2
+      compliance/soc2-2017: soc2-control-cc6-6-4
+      compliance/vda-isa-5: vda-isa-5-5-2-7
+    mql: |
+      # A cluster without an endpoint subnet predates VCN-native endpoints, so no subnet
+      # gate exists to evaluate and internetReachable reads false. When such a cluster
+      # publishes a public endpoint, the first line fails it instead.
+      oci.oke.cluster.isPublicEndpointEnabled == false || oci.oke.cluster.endpointSubnet != empty
+      oci.oke.cluster.exposure.internetReachable == false
+    docs:
+      desc: |
+        This check verifies that no Oracle Kubernetes Engine (OKE) cluster's Kubernetes API endpoint has a working network path from the internet, judging reachability as a whole rather than treating a public address as the answer.
+
+        Reachability requires three conditions at once. The endpoint has a public IP address, the endpoint subnet's route table sends a default route to an enabled internet gateway, and a network security group on the endpoint or the subnet's security list admits traffic from any source address. Break any one of the three and the endpoint is not on the internet. A cluster created before VCN-native endpoints has no endpoint subnet to evaluate, so it fails whenever it publishes a public endpoint. When the subnet or a security group cannot be read, the check reports an error rather than a pass.
+
+        A public endpoint with no open path passes this check and still fails the check that requires the public IP to be disabled. Use this check to find the clusters exposed today, and that one to keep the public IP off altogether.
+
+        **Why this matters**
+
+        Whoever reaches `kube-apiserver` with a valid credential or an exploitable bug controls the cluster: every secret, every workload, and the nodes beneath them. A reachable endpoint turns each Kubernetes authentication or authorization flaw into an internet-wide attack, and kubeconfig files leaked from laptops and CI logs are replayed against reachable endpoints by automated tooling.
+
+        The three conditions sit with different owners. The public IP is chosen when the cluster is created, the route table belongs to whoever manages the virtual cloud network, and the ingress rules belong to whoever owns the security groups, so no single review sees the combination that produces the exposure.
+
+        Where a public address is genuinely required, break the path elsewhere: narrow the ingress rules so none admits an arbitrary source, or reach the endpoint through OCI Bastion, a VPN, or a peered VCN and remove the public IP.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the OCI Console and navigate to **Developer Services > Kubernetes Clusters (OKE)**.
+        2. Open each cluster and note whether the **Kubernetes API public endpoint** has an address.
+        3. For each with one, open the **Kubernetes API endpoint subnet**, review its route table for a `0.0.0.0/0` rule targeting an enabled internet gateway, and review the ingress rules of its security lists and of the network security groups attached to the endpoint.
+
+        A passing cluster has no public endpoint, no default route to an internet gateway on the endpoint subnet, or no ingress rule admitting `0.0.0.0/0`. A failing cluster has all three.
+
+        ### Audit via CLI
+
+        1. Read the cluster's endpoint configuration and endpoints:
+
+        ```bash
+        oci ce cluster get --cluster-id <cluster-ocid> \
+          --query 'data.{public:endpoints."public-endpoint", subnet:"endpoint-config"."subnet-id", nsgs:"endpoint-config"."nsg-ids"}'
+        ```
+
+        2. For a cluster with a public endpoint, review the subnet's route table and security lists, and the endpoint's network security groups:
+
+        ```bash
+        oci network subnet get --subnet-id <subnet-ocid>
+        oci network route-table get --rt-id <route-table-ocid>
+        oci network security-list get --security-list-id <security-list-ocid>
+        oci network nsg rules list --nsg-id <nsg-ocid> --direction INGRESS
+        ```
+
+        A passing cluster breaks the chain at one of those steps. A failing cluster completes all three.
+      remediation:
+        - id: console
+          desc: |
+            To remove the internet path to the Kubernetes API endpoint using the OCI Console:
+
+            1. Navigate to **Developer Services > Kubernetes Clusters (OKE)** and open the cluster.
+            2. If administrators can reach the cluster through OCI Bastion, a VPN, or a peered VCN, select **Edit** and turn off **Assign a public IP address to the API endpoint**.
+            3. Otherwise, open the endpoint's network security groups and the endpoint subnet's security lists, and narrow every ingress rule whose source is `0.0.0.0/0` to the address ranges administrators connect from.
+        - id: cli
+          desc: |
+            To remove the internet path to the Kubernetes API endpoint using the OCI CLI:
+
+            1. If the endpoint does not need a public address, disable it on a VCN-native cluster:
+
+            ```bash
+            oci ce cluster update-endpoint-config --cluster-id <cluster-ocid> --is-public-ip-enabled false
+            ```
+
+            2. Otherwise, list the ingress rules on the endpoint's network security group and note the `id` of each rule whose source is `0.0.0.0/0`:
+
+            ```bash
+            oci network nsg rules list --nsg-id <nsg-ocid> --direction INGRESS
+            ```
+
+            3. Update each of those rules by `id`, replacing the any-address source with the range administrators connect from. `203.0.113.0/24` is an example to replace with your own range, and 6443 is the Kubernetes API port:
+
+            ```bash
+            oci network nsg rules update --nsg-id <nsg-ocid> \
+              --security-rules '[{"id":"<rule-id>","direction":"INGRESS","protocol":"6","source":"203.0.113.0/24","sourceType":"CIDR_BLOCK","tcpOptions":{"destinationPortRange":{"min":6443,"max":6443}}}]'
+            ```
+        # No Terraform remediation: the fix is to change whichever of the three inputs makes
+        # the endpoint reachable, and which one applies depends on the deployment. The
+        # Terraform remediation for the public IP is documented on
+        # mondoo-oci-security-oke-public-endpoint-disabled.
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/ContEng/Concepts/contengnetworkconfig.htm
+        title: Network Resource Configuration for Cluster Creation and Deployment
   # No Terraform variants: whether a version is supported is decided by the versions OKE offers at scan time; a manifest only names a version, and nothing in it says whether OKE still supports it.
   - uid: mondoo-oci-security-oke-supported-kubernetes-version
     title: Ensure OKE clusters run a supported Kubernetes version
@@ -8993,6 +9356,121 @@ queries:
           )
         )
       )
+  # No Terraform variants: the access log is a separate `oci_logging_log` resource whose
+  # `configuration.source.resource` holds the deployment OCID. Correlating each deployment
+  # with a log declared elsewhere needs cross-resource reference resolution that Terraform
+  # assets do not support reliably, the same limitation as
+  # mondoo-oci-security-vcn-flow-logs-enabled.
+  - uid: mondoo-oci-security-apigateway-deployment-access-logging-enabled
+    title: Ensure API Gateway deployments have access logging enabled
+    impact: 60
+    filters: asset.platform == "oci-apigateway-deployment"
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-log-08
+      compliance/dora: dora-art-10
+      compliance/hipaa: hipaa-security-ss164-312-b-audit-controls
+      compliance/iso-27001-2022: iso-27001-2022-a-8-15
+      compliance/nis-2: nis-2-21-2-b
+      compliance/nist-csf-1: nist-csf-1-pr-pt-1
+      compliance/nist-csf-2: nist-csf-2-pr-ps-04
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-au-12
+      compliance/nist-sp-800-171: nist-sp-800-171--3-3-1
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a09
+      compliance/pci-dss-4: pcidss-requirement-10-2-1
+      compliance/soc2-2017: soc2-control-cc7-2-1
+      compliance/vda-isa-5: vda-isa-5-5-2-4
+    mql: |
+      oci.apigateway.deployment.logs.any(isEnabled == true && category == "access")
+    docs:
+      desc: |
+        This check verifies that every API Gateway deployment records the requests it receives, through an enabled access log in OCI Logging.
+
+        An API deployment emits two service log categories. The access log records each request that reaches the deployment, with the client address, the method and path, the response status, and the latency. The execution log records how the gateway processed the request, at a configurable level of detail, and is meant for troubleshooting. Neither is on by default. Enable the access log on the deployment's **Logs** page in the Console, or under Observability & Management > Logging > Logs with **Enable service log**, choosing **API Gateway** as the service and **Access Logs** as the category.
+
+        **Why this matters**
+
+        An API deployment is an internet-facing entry point to backend services, and the access log is the record of who called it. Enumeration of routes, abuse of an endpoint whose authorizer is misconfigured, and replay of a leaked token all appear here, with the source address and timing needed to scope and block them.
+
+        Backend logs cannot stand in for it. The gateway rejects unauthenticated and rate-limited requests before they reach a backend, so probing that fails at the gateway leaves its only trace in the access log, and that probing is the warning sign worth alerting on.
+
+        Send access logs to a log group whose retention meets your investigation and compliance needs, and alert on bursts of authentication failures or requests to routes that should see no traffic.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the OCI Console and navigate to **Developer Services > API Management > Gateways**.
+        2. Open each gateway, select **Deployments**, and open each deployment.
+        3. Select **Logs** under **Resources** and review the status of the **Access Logs** category.
+
+        A passing deployment shows access logs enabled. A failing deployment shows access logs not enabled.
+
+        ### Audit via CLI
+
+        1. List the log groups in the compartment:
+
+        ```bash
+        oci logging log-group list --compartment-id <compartment-ocid>
+        ```
+
+        2. In each log group, list the logs for the deployment:
+
+        ```bash
+        oci logging log list --log-group-id <log-group-ocid> --source-service apigateway --source-resource <deployment-ocid> \
+          --query 'data[*].{name:"display-name", enabled:"is-enabled", category:configuration.source.category}'
+        ```
+
+        A passing deployment returns a log with `category` set to `access` and `enabled` set to `true`. A failing deployment returns no such log in any log group.
+      remediation:
+        - id: console
+          desc: |
+            To enable access logging for an API deployment using the OCI Console:
+
+            1. Navigate to **Developer Services > API Management > Gateways**, open the gateway, and open the deployment.
+            2. Select **Logs** under **Resources**.
+            3. For **Access Logs**, turn on logging.
+            4. Choose the compartment and log group, set a log name, and select **Enable Log**.
+        - id: cli
+          desc: |
+            To enable access logging for an API deployment using the OCI CLI, create a service log whose source is the deployment and whose category is `access`:
+
+            ```bash
+            oci logging log create --log-group-id <log-group-ocid> \
+              --display-name "<deployment-name>-access" \
+              --log-type SERVICE \
+              --is-enabled true \
+              --configuration '{"source": {"sourceType": "OCISERVICE", "service": "apigateway", "resource": "<deployment-ocid>", "category": "access"}, "compartmentId": "<compartment-ocid>"}'
+            ```
+        - id: terraform
+          desc: |
+            To enable access logging for an API deployment in Terraform, declare an `oci_logging_log` whose source is the deployment and whose category is `access`:
+
+            ```hcl
+            resource "oci_logging_log_group" "api" {
+              compartment_id = var.compartment_ocid
+              display_name   = "api-gateway-logs"
+            }
+
+            resource "oci_logging_log" "api_access" {
+              display_name = "orders-api-access"
+              log_group_id = oci_logging_log_group.api.id
+              log_type     = "SERVICE"
+              is_enabled   = true
+
+              configuration {
+                compartment_id = var.compartment_ocid
+
+                source {
+                  category    = "access"
+                  resource    = oci_apigateway_deployment.orders.id
+                  service     = "apigateway"
+                  source_type = "OCISERVICE"
+                }
+              }
+            }
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/Logging/Reference/details_for_api_gateway.htm
+        title: Details for API Gateway
   # No Terraform variants: certificate validity is dynamic operational telemetry derived from the issuance time and validity duration of the current cert version. The Terraform resource declares the validity duration but cannot predict scan-time expiry, so a static check would either be vacuous or require time-of-scan logic that lives outside HCL/plan/state.
   # No Terraform remediation: same reason — there is no HCL change that "fixes" an expired cert; the fix is to issue a new version through the OCI Certificates Management service.
   - uid: mondoo-oci-security-certificates-not-expired
@@ -9693,6 +10171,152 @@ queries:
       # MAINTAIN-TOGETHER: keep this version list in sync with the other three variants of mondoo-oci-security-redis-cluster-supported-version
       terraform.state.resources.where(type == 'oci_redis_redis_cluster').all(
         values['software_version'].in(["VALKEY_7_2", "VALKEY_8_1"])
+      )
+  # The runtime check reads the ACL string as the provider returns it, which keeps every rule
+  # before the first password rule (`>`, `<`, `#`, `!`) and masks everything after it. A
+  # `nopass` written after a password rule is therefore not visible at runtime; the
+  # Terraform versions read the full `acl_string`.
+  - uid: mondoo-oci-security-redis-cluster-users-no-nopass
+    title: Ensure OCI Cache users do not use the nopass ACL rule
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-14
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-d-person-or-entity-authentication
+      compliance/iso-27001-2022: iso-27001-2022-a-8-5
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-7
+      compliance/nist-csf-2: nist-csf-2-pr-aa-03
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-2
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-1
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a07
+      compliance/pci-dss-4: pcidss-requirement-8-3-1
+      compliance/soc2-2017: soc2-control-cc6-1-4
+      compliance/vda-isa-5: vda-isa-5-4-1-2
+    variants:
+      - uid: mondoo-oci-security-redis-cluster-users-no-nopass-oci
+        tags:
+          mondoo.com/filter-title: OCI
+          mondoo.com/filter-icon: oci
+      - uid: mondoo-oci-security-redis-cluster-users-no-nopass-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-redis-cluster-users-no-nopass-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-oci-security-redis-cluster-users-no-nopass-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check verifies that no OCI Cache user attached to a cluster can authenticate without a credential.
+
+        Each OCI Cache user carries an access string in Redis ACL syntax that sets which commands, keys, and channels the user may use and how it authenticates. The `nopass` rule removes every password from the user and marks it as requiring none, so any password a client presents is accepted, including an empty one. The access string is set when the cache user is created under Databases > OCI Cache > Cache users, or with the `--acl-string` option of the OCI CLI. The check fails a cluster when any attached user's access string contains `nopass`.
+
+        **Why this matters**
+
+        A `nopass` user turns the cache into an unauthenticated data store for that user's permissions. Any workload that can reach the cluster's private endpoint, including one an attacker has compromised elsewhere in the VCN, can read session tokens and cached personal data or overwrite feature flags and rate-limit counters, with no credential to steal first.
+
+        Network placement does not make up for it. Subnets and security groups decide which hosts can open a connection, not which of those hosts are trusted, and a cache user exists precisely so that the second question has an answer. With `nopass`, the network is the only control left.
+
+        Give every cache user a password or IAM authentication and the narrowest access string its application needs. Where a user has been configured with `nopass` for testing, apply `resetpass` together with a new password, or switch the user to IAM authentication.
+      audit: |
+        ### Audit via Console
+
+        1. Sign in to the OCI Console and navigate to **Databases > OCI Cache > Clusters**.
+        2. Open each cluster and select **Attached users** to list the cache users attached to it.
+        3. Open each user and review its **Access string**.
+
+        A passing cluster has no attached user whose access string contains `nopass`. A failing cluster has at least one.
+
+        ### Audit via CLI
+
+        1. List the cache users attached to a cluster:
+
+        ```bash
+        oci redis redis-cluster attached-oci-cache-user list --redis-cluster-id <cluster-ocid>
+        ```
+
+        2. Read each user's access string:
+
+        ```bash
+        oci redis oci-cache-user oci-cache-user get --oci-cache-user-id <cache-user-ocid> --query 'data."acl-string"'
+        ```
+
+        A passing user's access string does not contain `nopass`. A failing user's access string contains it.
+      remediation:
+        - id: console
+          desc: |
+            To remove `nopass` from a cache user using the OCI Console:
+
+            1. Navigate to **Databases > OCI Cache > Cache users** and open the user.
+            2. Select **Edit**.
+            3. Remove `nopass` from the **Access string**, keeping the command, key, and channel rules the application needs.
+            4. Set **Authentication mode** to **Password** with a strong password, or to **IAM**.
+            5. Save the change and update the application's connection settings with the new credential.
+        - id: cli
+          desc: |
+            To remove `nopass` from a cache user using the OCI CLI:
+
+            1. Replace the user's access string with one that omits `nopass`, and switch the user to IAM authentication so it needs an IAM token to connect. `~app:* +@read +@write` is an example to replace with the rules the application needs:
+
+            ```bash
+            oci redis oci-cache-user oci-cache-user update-oci-cache-user-iam-authentication-mode \
+              --oci-cache-user-id <cache-user-ocid> --acl-string '~app:* +@read +@write'
+            ```
+
+            2. To use passwords instead, run `update-oci-cache-user-password-authentication-mode` with the same access string and pass the SHA-256 hash of each password in `--authentication-mode-hashed-passwords`.
+            3. Update the application's connection settings with the new credential.
+        - id: terraform
+          desc: |
+            To keep `nopass` out of a cache user in Terraform, set an `acl_string` without it and give the user a credential in `authentication_mode`:
+
+            ```hcl
+            resource "oci_redis_oci_cache_user" "app" {
+              compartment_id = var.compartment_ocid
+              name           = "app"
+              description    = "Application cache user"
+              acl_string     = "~app:* +@read +@write"
+              status         = "ON"
+
+              authentication_mode {
+                authentication_type = "IAM"
+              }
+            }
+            ```
+    refs:
+      - url: https://docs.oracle.com/en-us/iaas/Content/ocicache/acl-strings.htm
+        title: OCI Cache User ACL Strings
+      - url: https://redis.io/docs/latest/operate/oss_and_stack/management/security/acl/
+        title: ACL
+  - uid: mondoo-oci-security-redis-cluster-users-no-nopass-oci
+    filters: asset.platform == "oci-redis-cluster"
+    mql: |
+      oci.redis.cluster.users.none(aclString == /(^|\s)nopass(\s|$)/i)
+  - uid: mondoo-oci-security-redis-cluster-users-no-nopass-terraform-hcl
+    filters: |
+      asset.platform == 'terraform-hcl' && terraform.resources.contains(nameLabel == 'oci_redis_oci_cache_user')
+    mql: |
+      terraform.resources('oci_redis_oci_cache_user').none(
+        arguments['acl_string'] == /(^|\s)nopass(\s|$)/i
+      )
+  - uid: mondoo-oci-security-redis-cluster-users-no-nopass-terraform-plan
+    filters: |
+      asset.platform == 'terraform-plan' && terraform.plan.resourceChanges.contains(type == 'oci_redis_oci_cache_user')
+    mql: |
+      terraform.plan.resourceChanges.where(type == 'oci_redis_oci_cache_user').none(
+        change.after['acl_string'] == /(^|\s)nopass(\s|$)/i
+      )
+  - uid: mondoo-oci-security-redis-cluster-users-no-nopass-terraform-state
+    filters: |
+      asset.platform == 'terraform-state' && terraform.state.resources.contains(type == 'oci_redis_oci_cache_user')
+    mql: |
+      terraform.state.resources.where(type == 'oci_redis_oci_cache_user').none(
+        values['acl_string'] == /(^|\s)nopass(\s|$)/i
       )
   # No Terraform variants: this is a tenancy-level posture check ("at least one zone exists somewhere in the tenancy"). The Terraform-asset equivalent would have to either fire on every Terraform asset (flagging every config that doesn't manage Cloud Guard, even unrelated ones) or gate on the resource type (which then can't detect absence). Same scoping limitation as `mondoo-oci-security-iam-mfa-enabled-for-active-users`.
   - uid: mondoo-oci-security-cloudguard-security-zones-configured
