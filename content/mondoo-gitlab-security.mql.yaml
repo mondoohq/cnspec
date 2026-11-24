@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-gitlab-security
     name: Mondoo GitLab Security
-    version: 1.9.3
+    version: 1.10.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -41,6 +41,8 @@ policies:
       - title: Project
         checks:
           - uid: mondoo-gitlab-security-private-project
+          - uid: mondoo-gitlab-security-uploads-require-authentication
+          - uid: mondoo-gitlab-security-pages-force-https
       - title: Merge Request Security
         checks:
           - uid: mondoo-gitlab-security-approvals-required
@@ -50,6 +52,9 @@ policies:
           - uid: mondoo-gitlab-security-pipeline-must-succeed
           - uid: mondoo-gitlab-security-no-merge-on-skipped-pipeline
           - uid: mondoo-gitlab-security-discussions-resolved
+          - uid: mondoo-gitlab-security-external-status-checks-must-pass
+          - uid: mondoo-gitlab-security-external-status-checks-hmac
+          - uid: mondoo-gitlab-security-reauthentication-to-approve
       - title: Branch Protection
         checks:
           - uid: mondoo-gitlab-security-no-force-push-default-branch
@@ -66,6 +71,11 @@ policies:
           - uid: mondoo-gitlab-security-job-token-scope-enabled
           - uid: mondoo-gitlab-security-webhook-ssl-verification
           - uid: mondoo-gitlab-security-no-public-jobs
+          - uid: mondoo-gitlab-security-pipeline-variables-restricted
+          - uid: mondoo-gitlab-security-job-token-push-disabled
+          - uid: mondoo-gitlab-security-separate-protected-branch-caches
+          - uid: mondoo-gitlab-security-no-deployment-self-approval
+          - uid: mondoo-gitlab-security-webhook-payloads-authenticated
       - title: Token and Key Security
         checks:
           - uid: mondoo-gitlab-security-project-access-tokens-have-expiry
@@ -1134,15 +1144,15 @@ queries:
     impact: 90
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ccc-04
       compliance/dora: dora-art-9
       compliance/hipaa: hipaa-security-ss164-312-c-1-integrity
-      compliance/iso-27001-2022: iso-27001-2022-a-8-9
+      compliance/iso-27001-2022: iso-27001-2022-a-8-4
       compliance/nis-2: nis-2-21-2-e
       compliance/nist-csf-1: nist-csf-1-pr-ip-2
       compliance/nist-csf-2: nist-csf-2-pr-ps-06
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-7
-      compliance/nist-sp-800-171: nist-sp-800-171--3-14-1
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-5
+      compliance/nist-sp-800-171: nist-sp-800-171--3-4-5
       compliance/owasp-top-10-2025: owasp-top-10-2025-a08
       compliance/pci-dss-4: false
       compliance/soc2-2017: soc2-control-cc6-8-2
@@ -1168,7 +1178,7 @@ queries:
       desc: |
         This check verifies that force pushing is not allowed on the default branch.
 
-        Force push permission is a property of a protected branch, set under Project settings, Repository, Protected branches. The check reads the protection covering the default branch and requires that force push is not allowed.
+        Force push permission is a property of a protected branch, set under Project settings, Repository, Protected branches. The check requires that the default branch is protected, and that a protection rule naming the default branch does not allow force push. An unprotected branch accepts a force push from anyone who can push to it, so a default branch with no protection at all fails.
 
         **Why this matters**
 
@@ -1187,17 +1197,18 @@ queries:
         3. Expand the **Protected branches** section.
         4. For the default branch, check the **Allowed to force push** column.
 
-        A passing project has **Allowed to force push** disabled for the default branch. A failing project has it enabled.
+        A passing project lists the default branch under **Protected branches** with **Allowed to force push** disabled. A failing project has it enabled, or does not protect the default branch at all.
 
         ### Audit via CLI
 
-        Query the force-push setting for the default protected branch with the `glab` CLI. Replace BRANCH_NAME with the name of the project's default branch, because not every project uses `main` and querying the wrong name returns a misleading 404:
+        Confirm that the default branch is protected, then query its force-push setting with the `glab` CLI. Replace BRANCH_NAME with the name of the project's default branch, because not every project uses `main` and querying the wrong name returns a misleading 404:
 
         ```bash
+        glab api projects/PROJECT_ID/repository/branches/BRANCH_NAME | jq '.protected'
         glab api projects/PROJECT_ID/protected_branches/BRANCH_NAME | jq '.allow_force_push'
         ```
 
-        A passing project returns `false`. A failing project returns `true`.
+        A passing project returns `true` from the first command and `false` from the second. A failing project returns `false` from the first command, or `true` from the second.
       remediation:
         - id: gitlab
           desc: |
@@ -1251,9 +1262,15 @@ queries:
         title: GitLab Project Settings
       - url: https://docs.gitlab.com/administration/settings/visibility_and_access_controls/
         title: GitLab Visibility and Access Controls
+  # The first line fails a default branch that no protection rule covers; on its own, the
+  # protectedBranches line passes vacuously when nothing protects the default branch. An empty
+  # repository has no branches, so the first line passes it: there is no history to rewrite until
+  # the first push. protectedBranches only marks a rule as defaultBranch when its name equals the
+  # default branch, so the force-push setting of a wildcard rule covering it is not read.
   - uid: mondoo-gitlab-security-no-force-push-default-branch-gitlab
     filters: asset.platform == "gitlab-project"
     mql: |
+      gitlab.project.branches.where(default == true).all(protected == true)
       gitlab.project.protectedBranches.where(defaultBranch == true).all(allowForcePush == false)
   - uid: mondoo-gitlab-security-no-force-push-default-branch-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "gitlab_branch_protection")
@@ -3572,3 +3589,1211 @@ queries:
     filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "gitlab_project")
     mql: |
       terraform.state.resources.where(type == "gitlab_project").all(values.public_jobs == false)
+  - uid: mondoo-gitlab-security-pipeline-variables-restricted
+    title: Ensure only maintainers or owners can run pipelines with pipeline variables
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-4
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-5
+      compliance/nist-sp-800-171: nist-sp-800-171--3-4-5
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-7-2-2
+      compliance/soc2-2017: soc2-control-cc6-3-3
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    variants:
+      - uid: mondoo-gitlab-security-pipeline-variables-restricted-gitlab
+        tags:
+          mondoo.com/filter-title: GitLab Project
+          mondoo.com/filter-icon: gitlab
+      - uid: mondoo-gitlab-security-pipeline-variables-restricted-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gitlab-security-pipeline-variables-restricted-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gitlab-security-pipeline-variables-restricted-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check verifies that only users with the Maintainer or Owner role can run a pipeline with pipeline variables, or that pipeline variables are turned off.
+
+        Pipeline variables are values a user supplies when running a pipeline manually, through the API, or with a trigger, and they override variables defined in the project and in `.gitlab-ci.yml`. GitLab calls the setting **Minimum role to use pipeline variables**, under Project settings, CI/CD, Variables. It offers No one allowed, Owner, Maintainer, and Developer. The check passes No one allowed, Owner, and Maintainer.
+
+        **Why this matters**
+
+        A pipeline variable changes what a job does without changing any reviewed file. Jobs commonly read variables that select a deployment target, an image tag, a script path, or extra command-line arguments, and a variable such as `CI_DEBUG_TRACE` makes the job print every command and its expanded values to the log.
+
+        With the role set to Developer, every developer who may run a pipeline on a branch can override those values, including through a pipeline trigger token they own. On a protected branch, the pipeline runs with that branch's protected variables and protected runners, so the override executes with production credentials while the merge request review and the code owners never see the change.
+
+        GitLab.com sets new projects in new namespaces to No one allowed. Projects created earlier and GitLab Self-Managed instances often still allow Developer. Where a workflow needs inputs at run time, declare them as pipeline inputs with `spec:inputs`, which constrain type and allowed values, and keep pipeline variables restricted.
+      audit: |
+        ### Audit via Console
+
+        1. In GitLab, navigate to your project.
+        2. Go to **Settings** > **CI/CD**.
+        3. Expand the **Variables** section.
+        4. Check the value of **Minimum role to use pipeline variables**.
+
+        A passing project shows **No one allowed**, **Owner**, or **Maintainer**. A failing project shows **Developer**.
+
+        ### Audit via CLI
+
+        Query the setting with the `glab` CLI. The attribute is only returned to project Owners and administrators:
+
+        ```bash
+        glab api projects/PROJECT_ID | jq '.ci_pipeline_variables_minimum_override_role'
+        ```
+
+        A passing project returns `"no_one_allowed"`, `"owner"`, or `"maintainer"`. A failing project returns `"developer"`.
+      remediation:
+        - id: gitlab
+          desc: |
+            To restrict pipeline variables using the GitLab web UI:
+
+            1. Navigate to your project in GitLab.
+            2. Go to **Settings** > **CI/CD**.
+            3. Expand the **Variables** section.
+            4. Set **Minimum role to use pipeline variables** to **No one allowed**, or to **Maintainer** if maintainers need to run pipelines with variables.
+            5. Click **Save changes**.
+
+            For more details, see [Restrict pipeline variables](https://docs.gitlab.com/ci/variables/#restrict-pipeline-variables).
+        - id: cli
+          desc: |
+            To restrict pipeline variables using the `glab` CLI:
+
+            ```bash
+            glab api --method PUT projects/PROJECT_ID \
+              -f ci_pipeline_variables_minimum_override_role=no_one_allowed
+            ```
+
+            For more details, see the [Projects API](https://docs.gitlab.com/api/projects/#update-a-project).
+        - id: terraform
+          desc: |
+            To restrict pipeline variables using Terraform:
+
+            ```hcl
+            resource "gitlab_project" "example" {
+              name                                        = "example"
+              ci_pipeline_variables_minimum_override_role = "no_one_allowed"
+            }
+            ```
+
+            For more details, see the Terraform [GitLab Provider](https://registry.terraform.io/providers/gitlabhq/gitlab/latest/docs/resources/project).
+    refs:
+      - url: https://docs.gitlab.com/ci/variables/
+        title: GitLab CI/CD Variables
+      - url: https://docs.gitlab.com/ci/inputs/
+        title: GitLab CI/CD Inputs
+  - uid: mondoo-gitlab-security-pipeline-variables-restricted-gitlab
+    filters: asset.platform == "gitlab-project"
+    mql: |
+      gitlab.project.ciPipelineVariablesMinimumOverrideRole.in(["no_one_allowed", "maintainer", "owner"])
+  # The default for an omitted attribute depends on the deployment and on when the namespace was
+  # created (no_one_allowed for new GitLab.com namespaces, developer for many existing projects),
+  # so only an explicit restricted value passes.
+  - uid: mondoo-gitlab-security-pipeline-variables-restricted-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "gitlab_project")
+    mql: |
+      terraform.resources("gitlab_project").all(
+        arguments["ci_pipeline_variables_minimum_override_role"].in(["no_one_allowed", "maintainer", "owner"])
+      )
+  - uid: mondoo-gitlab-security-pipeline-variables-restricted-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "gitlab_project")
+    mql: |
+      terraform.plan.resourceChanges
+        .where(type == "gitlab_project")
+        .all(change.after.ci_pipeline_variables_minimum_override_role.in(["no_one_allowed", "maintainer", "owner"]))
+  - uid: mondoo-gitlab-security-pipeline-variables-restricted-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "gitlab_project")
+    mql: |
+      terraform.state.resources
+        .where(type == "gitlab_project")
+        .all(values.ci_pipeline_variables_minimum_override_role.in(["no_one_allowed", "maintainer", "owner"]))
+  - uid: mondoo-gitlab-security-job-token-push-disabled
+    title: Ensure CI/CD job tokens cannot push to the repository
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-4
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-7-2-5
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    variants:
+      - uid: mondoo-gitlab-security-job-token-push-disabled-gitlab
+        tags:
+          mondoo.com/filter-title: GitLab Project
+          mondoo.com/filter-icon: gitlab
+      - uid: mondoo-gitlab-security-job-token-push-disabled-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gitlab-security-job-token-push-disabled-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gitlab-security-job-token-push-disabled-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check verifies that CI/CD jobs cannot push commits to the project repository with their job token.
+
+        Every job receives a short-lived job token, `CI_JOB_TOKEN`, that acts with the permissions of the user who started the pipeline. GitLab calls the setting **Allow Git push requests to the repository**, under Project settings, CI/CD, Job token permissions. The check requires it to be cleared.
+
+        **Why this matters**
+
+        A job runs whatever the pipeline configuration and its dependencies tell it to run. A compromised dependency, a malicious change to a CI template, or a script injected through an untrusted input executes with the job token in its environment.
+
+        When the token can push, that code can write to the repository it was built from: add a commit to a branch, move a tag, or alter the pipeline configuration so the next run does more. The push is attributed to the user who started the pipeline, so the change looks like their work.
+
+        The setting is off by default. Where a job genuinely has to push, such as a release job that commits a version bump, give it a project access token or deploy key scoped to that purpose and stored as a protected, masked variable, so the write access is limited to protected branches and to that one job.
+      audit: |
+        ### Audit via Console
+
+        1. In GitLab, navigate to your project.
+        2. Go to **Settings** > **CI/CD**.
+        3. Expand the **Job token permissions** section.
+        4. Under **Permissions**, check the state of **Allow Git push requests to the repository**.
+
+        A passing project has the checkbox cleared. A failing project has it selected.
+
+        ### Audit via CLI
+
+        Query the setting with the `glab` CLI:
+
+        ```bash
+        glab api projects/PROJECT_ID | jq '.ci_push_repository_for_job_token_allowed'
+        ```
+
+        A passing project returns `false`. A failing project returns `true`.
+      remediation:
+        - id: gitlab
+          desc: |
+            To stop job tokens from pushing to the repository using the GitLab web UI:
+
+            1. Navigate to your project in GitLab.
+            2. Go to **Settings** > **CI/CD**.
+            3. Expand the **Job token permissions** section.
+            4. Under **Permissions**, clear **Allow Git push requests to the repository**.
+            5. Click **Save changes**.
+
+            For more details, see [Allow Git push requests to your project repository](https://docs.gitlab.com/ci/jobs/ci_job_token/#allow-git-push-requests-to-your-project-repository).
+        - id: cli
+          desc: |
+            To stop job tokens from pushing to the repository using the `glab` CLI:
+
+            ```bash
+            glab api --method PUT projects/PROJECT_ID \
+              -f ci_push_repository_for_job_token_allowed=false
+            ```
+
+            For more details, see the [Projects API](https://docs.gitlab.com/api/projects/#update-a-project).
+        - id: terraform
+          desc: |
+            To stop job tokens from pushing to the repository using Terraform:
+
+            ```hcl
+            resource "gitlab_project" "example" {
+              name                                     = "example"
+              ci_push_repository_for_job_token_allowed = false
+            }
+            ```
+
+            For more details, see the Terraform [GitLab Provider](https://registry.terraform.io/providers/gitlabhq/gitlab/latest/docs/resources/project).
+    refs:
+      - url: https://docs.gitlab.com/ci/jobs/ci_job_token/
+        title: GitLab CI/CD Job Token
+  - uid: mondoo-gitlab-security-job-token-push-disabled-gitlab
+    filters: asset.platform == "gitlab-project"
+    mql: |
+      gitlab.project.ciPushRepositoryForJobTokenAllowed == false
+  # GitLab defaults ci_push_repository_for_job_token_allowed to false, so an omitted attribute
+  # passes and only an explicit true fails.
+  - uid: mondoo-gitlab-security-job-token-push-disabled-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "gitlab_project")
+    mql: |
+      terraform.resources("gitlab_project").all(arguments["ci_push_repository_for_job_token_allowed"] != true)
+  - uid: mondoo-gitlab-security-job-token-push-disabled-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "gitlab_project")
+    mql: |
+      terraform.plan.resourceChanges
+        .where(type == "gitlab_project")
+        .all(change.after.ci_push_repository_for_job_token_allowed != true)
+  - uid: mondoo-gitlab-security-job-token-push-disabled-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "gitlab_project")
+    mql: |
+      terraform.state.resources
+        .where(type == "gitlab_project")
+        .all(values.ci_push_repository_for_job_token_allowed != true)
+  - uid: mondoo-gitlab-security-separate-protected-branch-caches
+    title: Ensure protected branches use separate CI/CD caches
+    impact: 75
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ccc-04
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-31
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ds-7
+      compliance/nist-csf-2: nist-csf-2-pr-ps-06
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-4
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-4
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a08
+      compliance/pci-dss-4: pcidss-requirement-6-5-3
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: vda-isa-5-5-2-2
+    variants:
+      - uid: mondoo-gitlab-security-separate-protected-branch-caches-gitlab
+        tags:
+          mondoo.com/filter-title: GitLab Project
+          mondoo.com/filter-icon: gitlab
+      - uid: mondoo-gitlab-security-separate-protected-branch-caches-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gitlab-security-separate-protected-branch-caches-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gitlab-security-separate-protected-branch-caches-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check verifies that pipelines on protected branches never restore a cache written by a pipeline on an unprotected branch.
+
+        GitLab calls the setting **Use separate caches for protected branches**, under Project settings, CI/CD, General pipelines. When it is selected, GitLab appends a suffix to every cache key so protected and unprotected branches read and write different caches. The check requires it to be selected.
+
+        **Why this matters**
+
+        A cache holds files a job restores before it runs: installed dependencies, compiled objects, tool binaries. Jobs trust them the same way they trust the source, and usually without verifying a checksum.
+
+        Anyone with the Developer role can push an unprotected branch and run a pipeline on it. With a shared cache, that pipeline can write a cache entry containing a modified dependency or build tool under the same key the default branch uses. The next pipeline on the protected branch restores it and runs it with protected variables and protected runners, so code that was never reviewed reaches the release build and its credentials.
+
+        Separation is on by default and GitLab describes it as a security feature. Turn it off only where every user with the Developer role is trusted with the protected branch's credentials.
+      audit: |
+        ### Audit via Console
+
+        1. In GitLab, navigate to your project.
+        2. Go to **Settings** > **CI/CD**.
+        3. Expand the **General pipelines** section.
+        4. Check the state of **Use separate caches for protected branches**.
+
+        A passing project has the checkbox selected. A failing project has it cleared.
+
+        ### Audit via CLI
+
+        Query the setting with the `glab` CLI. The attribute is only returned to project Owners and administrators:
+
+        ```bash
+        glab api projects/PROJECT_ID | jq '.ci_separated_caches'
+        ```
+
+        A passing project returns `true`. A failing project returns `false`.
+      remediation:
+        - id: gitlab
+          desc: |
+            To separate the caches of protected branches using the GitLab web UI:
+
+            1. Navigate to your project in GitLab.
+            2. Go to **Settings** > **CI/CD**.
+            3. Expand the **General pipelines** section.
+            4. Select **Use separate caches for protected branches**.
+            5. Click **Save changes**.
+
+            For more details, see [Cache key names](https://docs.gitlab.com/ci/caching/#cache-key-names).
+        - id: cli
+          desc: |
+            To separate the caches of protected branches using the `glab` CLI:
+
+            ```bash
+            glab api --method PUT projects/PROJECT_ID \
+              -f ci_separated_caches=true
+            ```
+
+            For more details, see the [Projects API](https://docs.gitlab.com/api/projects/#update-a-project).
+        - id: terraform
+          desc: |
+            To separate the caches of protected branches using Terraform:
+
+            ```hcl
+            resource "gitlab_project" "example" {
+              name                = "example"
+              ci_separated_caches = true
+            }
+            ```
+
+            For more details, see the Terraform [GitLab Provider](https://registry.terraform.io/providers/gitlabhq/gitlab/latest/docs/resources/project).
+    refs:
+      - url: https://docs.gitlab.com/ci/caching/
+        title: Caching in GitLab CI/CD
+  - uid: mondoo-gitlab-security-separate-protected-branch-caches-gitlab
+    filters: asset.platform == "gitlab-project"
+    mql: |
+      gitlab.project.ciSeparatedCaches == true
+  # GitLab defaults ci_separated_caches to true, so an omitted attribute passes and only an
+  # explicit false fails.
+  - uid: mondoo-gitlab-security-separate-protected-branch-caches-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "gitlab_project")
+    mql: |
+      terraform.resources("gitlab_project").all(arguments["ci_separated_caches"] != false)
+  - uid: mondoo-gitlab-security-separate-protected-branch-caches-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "gitlab_project")
+    mql: |
+      terraform.plan.resourceChanges
+        .where(type == "gitlab_project")
+        .all(change.after.ci_separated_caches != false)
+  - uid: mondoo-gitlab-security-separate-protected-branch-caches-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "gitlab_project")
+    mql: |
+      terraform.state.resources
+        .where(type == "gitlab_project")
+        .all(values.ci_separated_caches != false)
+  - uid: mondoo-gitlab-security-no-deployment-self-approval
+    title: Ensure the user who triggers a deployment cannot approve it
+    impact: 75
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-04
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-5-3
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-5
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-4
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-6-5-4
+      compliance/soc2-2017: soc2-control-cc6-3-3
+      compliance/vda-isa-5: vda-isa-5-5-2-1
+    variants:
+      - uid: mondoo-gitlab-security-no-deployment-self-approval-gitlab
+        tags:
+          mondoo.com/filter-title: GitLab Project
+          mondoo.com/filter-icon: gitlab
+      - uid: mondoo-gitlab-security-no-deployment-self-approval-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gitlab-security-no-deployment-self-approval-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gitlab-security-no-deployment-self-approval-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check verifies that the user who triggers a deployment pipeline cannot also approve its deployment to a protected environment.
+
+        Deployment approvals require named users or roles to approve a job before it deploys to a protected environment. GitLab calls the exception **Allow pipeline triggerer to approve deployment**, under Project settings, CI/CD, Protected environments, Approval options. The check requires it to be cleared. Deployment approvals are available in GitLab Premium and Ultimate, so the check applies only to projects in paid namespaces.
+
+        **Why this matters**
+
+        An approval gate exists so that a second person looks at what is about to reach production. When the person who started the pipeline may approve it, a single eligible approver can deploy alone, and the gate records an approval that no one else gave.
+
+        That is exactly the case the gate is meant to stop: a compromised account belonging to an approver, or an insider who is an approver, can push a change, run the pipeline, and approve the deployment without involving anyone.
+
+        Self-approval is off by default. Where a team is too small for a second approver, reduce the number of required approvals for that environment openly rather than letting every approver approve their own deployments.
+      audit: |
+        ### Audit via Console
+
+        1. In GitLab, navigate to your project.
+        2. Go to **Settings** > **CI/CD**.
+        3. Expand the **Protected environments** section.
+        4. Under **Approval options**, check the state of **Allow pipeline triggerer to approve deployment**.
+
+        A passing project has the checkbox cleared. A failing project has it selected.
+
+        ### Audit via CLI
+
+        Query the setting with the `glab` CLI:
+
+        ```bash
+        glab api projects/PROJECT_ID | jq '.allow_pipeline_trigger_approve_deployment'
+        ```
+
+        A passing project returns `false`. A failing project returns `true`.
+      remediation:
+        - id: gitlab
+          desc: |
+            To stop the user who triggers a deployment from approving it using the GitLab web UI:
+
+            1. Navigate to your project in GitLab.
+            2. Go to **Settings** > **CI/CD**.
+            3. Expand the **Protected environments** section.
+            4. Under **Approval options**, clear **Allow pipeline triggerer to approve deployment**.
+
+            For more details, see [Allow self-approval](https://docs.gitlab.com/ci/environments/deployment_approvals/#allow-self-approval).
+        - id: cli
+          desc: |
+            To stop the user who triggers a deployment from approving it using the `glab` CLI:
+
+            ```bash
+            glab api --method PUT projects/PROJECT_ID \
+              -f allow_pipeline_trigger_approve_deployment=false
+            ```
+
+            For more details, see the [Projects API](https://docs.gitlab.com/api/projects/#update-a-project).
+        - id: terraform
+          desc: |
+            To stop the user who triggers a deployment from approving it using Terraform:
+
+            ```hcl
+            resource "gitlab_project" "example" {
+              name                                      = "example"
+              allow_pipeline_trigger_approve_deployment = false
+            }
+            ```
+
+            For more details, see the Terraform [GitLab Provider](https://registry.terraform.io/providers/gitlabhq/gitlab/latest/docs/resources/project).
+    refs:
+      - url: https://docs.gitlab.com/ci/environments/deployment_approvals/
+        title: GitLab Deployment Approvals
+  - uid: mondoo-gitlab-security-no-deployment-self-approval-gitlab
+    filters: asset.platform == "gitlab-project" && gitlab.namespace.plan != "free"
+    mql: |
+      gitlab.project.allowPipelineTriggerApproveDeployment == false
+  # GitLab defaults allow_pipeline_trigger_approve_deployment to false, so an omitted attribute
+  # passes and only an explicit true fails. The Terraform versions need no tier filter for that
+  # reason: a Free namespace cannot set the attribute to true.
+  - uid: mondoo-gitlab-security-no-deployment-self-approval-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "gitlab_project")
+    mql: |
+      terraform.resources("gitlab_project").all(arguments["allow_pipeline_trigger_approve_deployment"] != true)
+  - uid: mondoo-gitlab-security-no-deployment-self-approval-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "gitlab_project")
+    mql: |
+      terraform.plan.resourceChanges
+        .where(type == "gitlab_project")
+        .all(change.after.allow_pipeline_trigger_approve_deployment != true)
+  - uid: mondoo-gitlab-security-no-deployment-self-approval-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "gitlab_project")
+    mql: |
+      terraform.state.resources
+        .where(type == "gitlab_project")
+        .all(values.allow_pipeline_trigger_approve_deployment != true)
+  - uid: mondoo-gitlab-security-webhook-payloads-authenticated
+    title: Ensure project webhooks authenticate their payloads with a token
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-2-i-transmission-security-integrity-controls
+      compliance/iso-27001-2022: iso-27001-2022-a-5-14
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-7
+      compliance/nist-csf-2: nist-csf-2-pr-aa-03
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-9
+      compliance/nist-sp-800-171: false
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a08
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: soc2-control-cc6-1-4
+      compliance/vda-isa-5: vda-isa-5-5-1-2
+    variants:
+      - uid: mondoo-gitlab-security-webhook-payloads-authenticated-gitlab
+        tags:
+          mondoo.com/filter-title: GitLab Project
+          mondoo.com/filter-icon: gitlab
+      - uid: mondoo-gitlab-security-webhook-payloads-authenticated-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gitlab-security-webhook-payloads-authenticated-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gitlab-security-webhook-payloads-authenticated-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check verifies that every project webhook carries a credential its receiver can use to confirm that a payload came from GitLab.
+
+        A webhook is configured under Project settings, Webhooks, with two kinds of credential. A signing token makes GitLab sign each payload with HMAC-SHA256 and send the signature in the `webhook-signature` header. A secret token is sent unchanged in the `X-Gitlab-Token` header. The check passes a webhook that has either one and fails a webhook that has neither.
+
+        **Why this matters**
+
+        A webhook receiver acts on what it is sent: it starts a build, deploys a release, posts to a chat channel, or opens a ticket. Without a credential, the receiver has no way to tell a payload from GitLab apart from one anybody else composed, so knowing the URL is enough to drive it. Webhook URLs end up in logs, proxy configurations, and screenshots, so treating the URL as the secret does not hold.
+
+        Prefer the signing token. The secret token travels with every request, so anyone who can read one request can forge the next, and it says nothing about whether the body was altered. A signature covers the body and a timestamp, so the receiver can reject a modified payload or a replayed one, and the token itself never leaves GitLab. Signing tokens are available from GitLab 19.0; on earlier versions the secret token is the only option, which is why the check accepts it.
+
+        A credential only helps if the receiver checks it. Confirm that the receiving service rejects a request with a missing or invalid signature or token.
+      audit: |
+        ### Audit via Console
+
+        1. In GitLab, navigate to your project.
+        2. Go to **Settings** > **Webhooks**.
+        3. Edit each webhook and check whether a signing token or a secret token is configured.
+
+        A passing project has a signing token or a secret token on every webhook. A failing project has at least one webhook with neither.
+
+        ### Audit via CLI
+
+        List the token state of every project webhook with the `glab` CLI. The token values are never returned:
+
+        ```bash
+        glab api "projects/PROJECT_ID/hooks" | jq '.[] | {url: .url, signing_token_present: .signing_token_present, token_present: .token_present}'
+        ```
+
+        A passing project returns `true` for `signing_token_present` or `token_present` on every webhook. A failing project has a webhook where neither is `true`.
+      remediation:
+        - id: gitlab
+          desc: |
+            To add a signing token to a webhook using the GitLab web UI:
+
+            1. Navigate to your project in GitLab.
+            2. Go to **Settings** > **Webhooks**.
+            3. For each webhook without a token, click **Edit**.
+            4. Under request authentication, select **Generate signing token**.
+            5. Copy the token and store it with the receiving service, because GitLab shows it only once.
+            6. Click **Save changes**.
+            7. Configure the receiving service to verify the `webhook-signature` header and reject requests that fail verification.
+
+            On GitLab versions earlier than 19.0, enter a value in **Secret token** instead, and configure the receiving service to compare it with the `X-Gitlab-Token` header.
+
+            For more details, see [Signing tokens](https://docs.gitlab.com/user/project/integrations/webhooks/#signing-tokens).
+        - id: cli
+          desc: |
+            To add a secret token to a webhook using the `glab` CLI:
+
+            ```bash
+            glab api --method PUT projects/PROJECT_ID/hooks/HOOK_ID \
+              -f token="$WEBHOOK_SECRET_TOKEN"
+            ```
+
+            Generate signing tokens in the GitLab web UI or with Terraform, which shows the token so it can be given to the receiving service.
+
+            For more details, see the [Project webhooks API](https://docs.gitlab.com/api/project_webhooks/#update-a-project-webhook).
+        - id: terraform
+          desc: |
+            To sign the payloads of a webhook using Terraform:
+
+            ```hcl
+            variable "webhook_signing_token" {
+              type      = string
+              sensitive = true
+            }
+
+            resource "gitlab_project_hook" "example" {
+              project                 = gitlab_project.example.id
+              url                     = "https://example.com/hook"
+              enable_ssl_verification = true
+              signing_token           = var.webhook_signing_token
+            }
+            ```
+
+            The `signing_token` argument requires GitLab 19.0 or later. On earlier versions, set `token` instead. To keep either value out of the Terraform state, use the write-only `signing_token_wo` or `token_wo` argument with its `_version` marker.
+
+            For more details, see the Terraform [GitLab Provider](https://registry.terraform.io/providers/gitlabhq/gitlab/latest/docs/resources/project_hook).
+    refs:
+      - url: https://docs.gitlab.com/user/project/integrations/webhooks/
+        title: GitLab Webhooks
+  - uid: mondoo-gitlab-security-webhook-payloads-authenticated-gitlab
+    filters: asset.platform == "gitlab-project"
+    mql: |
+      gitlab.project.webhooks.all(signingTokenPresent == true || tokenPresent == true)
+  # Write-only signing_token_wo and token_wo never reach the plan or the state, so those versions
+  # of the check read the _version marker that accompanies them. A hook imported into the state
+  # carries no token value and fails until the token is set through Terraform.
+  - uid: mondoo-gitlab-security-webhook-payloads-authenticated-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "gitlab_project_hook")
+    mql: |
+      terraform.resources("gitlab_project_hook").all(
+        arguments["signing_token"] != empty || arguments["signing_token_wo"] != empty || arguments["token"] != empty || arguments["token_wo"] != empty
+      )
+  - uid: mondoo-gitlab-security-webhook-payloads-authenticated-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "gitlab_project_hook")
+    mql: |
+      terraform.plan.resourceChanges
+        .where(type == "gitlab_project_hook")
+        .all(change.after.signing_token != empty || change.after.signing_token_wo_version != empty || change.after.token != empty || change.after.token_wo_version != empty)
+  - uid: mondoo-gitlab-security-webhook-payloads-authenticated-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "gitlab_project_hook")
+    mql: |
+      terraform.state.resources
+        .where(type == "gitlab_project_hook")
+        .all(values.signing_token != empty || values.signing_token_wo_version != empty || values.token != empty || values.token_wo_version != empty)
+  - uid: mondoo-gitlab-security-external-status-checks-hmac
+    title: Ensure external status checks sign their requests with an HMAC secret
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ivs-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-2-i-transmission-security-integrity-controls
+      compliance/iso-27001-2022: iso-27001-2022-a-5-14
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ac-7
+      compliance/nist-csf-2: nist-csf-2-pr-aa-03
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-9
+      compliance/nist-sp-800-171: false
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a08
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: soc2-control-cc6-1-4
+      compliance/vda-isa-5: vda-isa-5-5-1-2
+    variants:
+      - uid: mondoo-gitlab-security-external-status-checks-hmac-gitlab
+        tags:
+          mondoo.com/filter-title: GitLab Project
+          mondoo.com/filter-icon: gitlab
+      - uid: mondoo-gitlab-security-external-status-checks-hmac-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gitlab-security-external-status-checks-hmac-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gitlab-security-external-status-checks-hmac-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check verifies that every external status check signs the merge request data GitLab sends to its service.
+
+        An external status check sends merge request data to an outside service, which reports back whether the merge request passes. Each check is configured under Project settings, Merge requests, Status checks, where the **HMAC shared secret** field makes GitLab sign every request with that secret. The check requires a shared secret on every status check. External status checks are a GitLab Ultimate feature, so the check applies only to projects in Ultimate namespaces.
+
+        **Why this matters**
+
+        A status check service usually does more than read the request. It looks up the commits, runs a scan or a policy evaluation, and posts a result back to GitLab with its own token. Without a signature it cannot tell a request from GitLab apart from one someone else composed, so anyone who learns its URL can make it fetch arbitrary references, spend its scanning capacity, or post results for merge requests it was never asked about.
+
+        The signature also lets the service reject a request that was altered on the way, so the data it evaluates is the data GitLab sent.
+
+        The secret cannot be added to an existing status check. Delete the check and recreate it with a secret, and configure the service to verify the signature before acting on a request.
+      audit: |
+        ### Audit via Console
+
+        1. In GitLab, navigate to your project.
+        2. Go to **Settings** > **Merge requests**.
+        3. Expand the **Status checks** section.
+        4. Edit each status check and check whether **HMAC shared secret** is set.
+
+        A passing project has an HMAC shared secret on every status check. A failing project has at least one status check without one.
+
+        ### Audit via CLI
+
+        List the HMAC state of every external status check with the `glab` CLI:
+
+        ```bash
+        glab api projects/PROJECT_ID/external_status_checks | jq '.[] | {name: .name, hmac: .hmac}'
+        ```
+
+        A passing project returns `hmac: true` for every status check. A failing project returns `false` for one or more.
+      remediation:
+        - id: gitlab
+          desc: |
+            To sign the requests of an external status check using the GitLab web UI:
+
+            1. Navigate to your project in GitLab.
+            2. Go to **Settings** > **Merge requests**.
+            3. Expand the **Status checks** section.
+            4. Note the name, URL, and target branches of each status check without an HMAC shared secret, then delete it.
+            5. Click **Add status check** and recreate it with the same values and a generated value in **HMAC shared secret**.
+            6. Configure the receiving service to verify the signature with the same secret.
+
+            For more details, see [HMAC shared secret](https://docs.gitlab.com/user/project/merge_requests/status_checks/#hmac-shared-secret).
+        - id: cli
+          desc: |
+            To recreate an external status check with an HMAC secret using the `glab` CLI:
+
+            ```bash
+            glab api --method DELETE projects/PROJECT_ID/external_status_checks/CHECK_ID
+            glab api --method POST projects/PROJECT_ID/external_status_checks \
+              -f name="Compliance check" \
+              -f external_url="https://example.com/status" \
+              -f shared_secret="$STATUS_CHECK_SECRET"
+            ```
+
+            For more details, see the [External status checks API](https://docs.gitlab.com/api/status_checks/).
+        - id: terraform
+          desc: |
+            To sign the requests of an external status check using Terraform:
+
+            ```hcl
+            variable "status_check_secret" {
+              type      = string
+              sensitive = true
+            }
+
+            resource "gitlab_project_external_status_check" "example" {
+              project_id    = gitlab_project.example.id
+              name          = "Compliance check"
+              external_url  = "https://example.com/status"
+              shared_secret = var.status_check_secret
+            }
+            ```
+
+            For more details, see the Terraform [GitLab Provider](https://registry.terraform.io/providers/gitlabhq/gitlab/latest/docs/resources/project_external_status_check).
+    refs:
+      - url: https://docs.gitlab.com/user/project/merge_requests/status_checks/
+        title: GitLab External Status Checks
+  - uid: mondoo-gitlab-security-external-status-checks-hmac-gitlab
+    filters: asset.platform == "gitlab-project" && gitlab.namespace.plan == "ultimate"
+    mql: |
+      gitlab.project.externalStatusChecks.all(hmac == true)
+  # The state records hmac as GitLab reports it. The plan does not know hmac before the status
+  # check is created, so the HCL and plan versions read the shared_secret argument instead.
+  - uid: mondoo-gitlab-security-external-status-checks-hmac-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "gitlab_project_external_status_check")
+    mql: |
+      terraform.resources("gitlab_project_external_status_check").all(arguments["shared_secret"] != empty)
+  - uid: mondoo-gitlab-security-external-status-checks-hmac-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "gitlab_project_external_status_check")
+    mql: |
+      terraform.plan.resourceChanges
+        .where(type == "gitlab_project_external_status_check")
+        .all(change.after.shared_secret != empty)
+  - uid: mondoo-gitlab-security-external-status-checks-hmac-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "gitlab_project_external_status_check")
+    mql: |
+      terraform.state.resources
+        .where(type == "gitlab_project_external_status_check")
+        .all(values.hmac == true)
+  # No Terraform variants: the gitlabhq/gitlab provider (v19.x) does not expose
+  # only_allow_merge_if_all_status_checks_passed on gitlab_project or any other resource.
+  - uid: mondoo-gitlab-security-external-status-checks-must-pass
+    title: Ensure merge requests cannot merge until external status checks pass
+    impact: 75
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ccc-02
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-32
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ip-3
+      compliance/nist-csf-2: nist-csf-2-pr-ps-06
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-4-3
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a08
+      compliance/pci-dss-4: pcidss-requirement-6-5-1
+      compliance/soc2-2017: soc2-control-cc8-1-8
+      compliance/vda-isa-5: vda-isa-5-5-2-1
+    filters: asset.platform == "gitlab-project" && gitlab.namespace.plan == "ultimate"
+    mql: |
+      gitlab.project.externalStatusChecks == empty || gitlab.project.onlyAllowMergeIfAllStatusChecksPassed == true
+    docs:
+      desc: |
+        This check verifies that a project with external status checks blocks merging until every status check has passed.
+
+        External status checks send merge request data to outside services, such as a compliance or scanning service, which report back whether the merge request passes. GitLab calls the setting that makes those results binding **Status checks must succeed**, under Project settings, Merge requests. The check requires it to be selected on every project that has at least one status check, and passes projects without status checks. External status checks are a GitLab Ultimate feature, so the check applies only to projects in Ultimate namespaces.
+
+        **Why this matters**
+
+        By default, a merge request can merge even when a status check has failed or has not reported at all. The status check then shows a red result next to the merge button and nothing else.
+
+        That turns every external control into advice. A compliance service that rejects a change, a scanner that found a vulnerable dependency, or a ticket check that found no approved change request is overruled by one click, and the merge leaves no record that anyone decided to overrule it.
+
+        It also removes the cost of an outage on the checking side. If the service is unreachable and the check never reports, merges continue as if it had passed.
+
+        If a status check is advisory on purpose, remove it from the project rather than leaving a gate that does not gate.
+      audit: |
+        ### Audit via Console
+
+        1. In GitLab, navigate to your project.
+        2. Go to **Settings** > **Merge requests**.
+        3. Expand the **Status checks** section and note whether any status checks exist.
+        4. Under **Merge checks**, check the state of **Status checks must succeed**.
+
+        A passing project has no status checks, or has **Status checks must succeed** selected. A failing project has status checks with the checkbox cleared.
+
+        ### Audit via CLI
+
+        List the status checks and query the merge setting with the `glab` CLI:
+
+        ```bash
+        glab api projects/PROJECT_ID/external_status_checks | jq 'length'
+        glab api projects/PROJECT_ID | jq '.only_allow_merge_if_all_status_checks_passed'
+        ```
+
+        A passing project returns `0` from the first command, or `true` from the second. A failing project returns a count above `0` and `false`.
+      remediation:
+        - id: gitlab
+          desc: |
+            To block merges until external status checks pass using the GitLab web UI:
+
+            1. Navigate to your project in GitLab.
+            2. Go to **Settings** > **Merge requests**.
+            3. Under **Merge checks**, select **Status checks must succeed**.
+            4. Click **Save changes**.
+
+            For more details, see [Block merges of merge requests unless all status checks have passed](https://docs.gitlab.com/user/project/merge_requests/status_checks/#block-merges-of-merge-requests-unless-all-status-checks-have-passed).
+        - id: cli
+          desc: |
+            To block merges until external status checks pass using the `glab` CLI:
+
+            ```bash
+            glab api --method PUT projects/PROJECT_ID \
+              -f only_allow_merge_if_all_status_checks_passed=true
+            ```
+
+            For more details, see the [Projects API](https://docs.gitlab.com/api/projects/#update-a-project).
+        # No Terraform remediation: the gitlabhq/gitlab provider (v19.x) does not expose only_allow_merge_if_all_status_checks_passed.
+    refs:
+      - url: https://docs.gitlab.com/user/project/merge_requests/status_checks/
+        title: GitLab External Status Checks
+  - uid: mondoo-gitlab-security-reauthentication-to-approve
+    title: Ensure approving a merge request requires reauthentication
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-14
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-d-person-or-entity-authentication
+      compliance/iso-27001-2022: iso-27001-2022-a-8-5
+      compliance/nis-2: nis-2-21-2-j
+      compliance/nist-csf-1: nist-csf-1-pr-ac-7
+      compliance/nist-csf-2: nist-csf-2-pr-aa-03
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-11
+      compliance/nist-sp-800-171: false
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a07
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: soc2-control-cc6-1-4
+      compliance/vda-isa-5: vda-isa-5-4-1-2
+    variants:
+      - uid: mondoo-gitlab-security-reauthentication-to-approve-gitlab
+        tags:
+          mondoo.com/filter-title: GitLab Project
+          mondoo.com/filter-icon: gitlab
+      - uid: mondoo-gitlab-security-reauthentication-to-approve-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gitlab-security-reauthentication-to-approve-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gitlab-security-reauthentication-to-approve-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check verifies that approving a merge request requires the approver to authenticate again.
+
+        GitLab calls the setting **Require user re-authentication (password or SAML) to approve**, under Project settings, Merge requests, Merge request approvals, Approval settings. It replaced the earlier **Require user password to approve**, and the check accepts either. Merge request approval settings are available in GitLab Premium and Ultimate, so the check applies only to projects in paid namespaces.
+
+        **Why this matters**
+
+        An approval is the record that a second person reviewed a change. Without reauthentication, anything that holds the approver's browser session can produce that record: a stolen session cookie, an unattended unlocked workstation, or malicious script running in the approver's browser.
+
+        Session theft is a common outcome of phishing kits that proxy the real login page, because they capture the session after multi-factor authentication has completed. Requiring the password or a fresh SAML login at the moment of approval means the stolen session alone is not enough to approve the attacker's own merge request.
+
+        The cost is one extra prompt per approval. On groups that sign in through SAML, the prompt is a redirect to the identity provider, which can apply its own multi-factor policy.
+      audit: |
+        ### Audit via Console
+
+        1. In GitLab, navigate to your project.
+        2. Go to **Settings** > **Merge requests**.
+        3. Expand the **Merge request approvals** section and scroll to **Approval settings**.
+        4. Check the state of **Require user re-authentication (password or SAML) to approve**.
+
+        A passing project has the checkbox selected. A failing project has it cleared.
+
+        ### Audit via CLI
+
+        Query the approval settings with the `glab` CLI:
+
+        ```bash
+        glab api projects/PROJECT_ID/merge_request_approval_setting | jq '.require_reauthentication_to_approve.value'
+        ```
+
+        A passing project returns `true`. A failing project returns `false`.
+      remediation:
+        - id: gitlab
+          desc: |
+            To require reauthentication to approve merge requests using the GitLab web UI:
+
+            1. Navigate to your project in GitLab.
+            2. Go to **Settings** > **Merge requests**.
+            3. Expand the **Merge request approvals** section and scroll to **Approval settings**.
+            4. Select **Require user re-authentication (password or SAML) to approve**.
+            5. Click **Save changes**.
+
+            If the checkbox is locked, the setting is enforced from the group or the instance. Change it there.
+
+            For more details, see [Require user re-authentication to approve](https://docs.gitlab.com/user/project/merge_requests/approvals/settings/#require-user-re-authentication-to-approve).
+        - id: cli
+          desc: |
+            To require reauthentication to approve merge requests using the `glab` CLI:
+
+            ```bash
+            glab api --method PUT projects/PROJECT_ID/merge_request_approval_setting \
+              -f require_reauthentication_to_approve=true
+            ```
+
+            For more details, see the [Merge request approval settings API](https://docs.gitlab.com/api/merge_request_approval_settings/#update-project-mr-approval-settings).
+        - id: terraform
+          desc: |
+            To require reauthentication to approve merge requests using Terraform:
+
+            ```hcl
+            resource "gitlab_project_level_mr_approvals" "example" {
+              project                             = gitlab_project.example.id
+              require_reauthentication_to_approve = true
+            }
+            ```
+
+            For more details, see the Terraform [GitLab Provider](https://registry.terraform.io/providers/gitlabhq/gitlab/latest/docs/resources/project_level_mr_approvals).
+    refs:
+      - url: https://docs.gitlab.com/user/project/merge_requests/approvals/settings/
+        title: GitLab Merge Request Approval Settings
+  # requirePasswordToApprove is the setting's earlier name; instances that predate
+  # require_reauthentication_to_approve report only that one.
+  - uid: mondoo-gitlab-security-reauthentication-to-approve-gitlab
+    filters: asset.platform == "gitlab-project" && gitlab.namespace.plan != "free"
+    mql: |
+      gitlab.project.mergeRequestApprovalSettings.requireReauthenticationToApprove.value == true || gitlab.project.mergeRequestApprovalSettings.requirePasswordToApprove.value == true
+  # Both attributes default to false, so an omitted attribute fails.
+  - uid: mondoo-gitlab-security-reauthentication-to-approve-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "gitlab_project_level_mr_approvals")
+    mql: |
+      terraform.resources("gitlab_project_level_mr_approvals").all(
+        arguments["require_reauthentication_to_approve"] == true || arguments["require_password_to_approve"] == true
+      )
+  - uid: mondoo-gitlab-security-reauthentication-to-approve-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "gitlab_project_level_mr_approvals")
+    mql: |
+      terraform.plan.resourceChanges
+        .where(type == "gitlab_project_level_mr_approvals")
+        .all(change.after.require_reauthentication_to_approve == true || change.after.require_password_to_approve == true)
+  - uid: mondoo-gitlab-security-reauthentication-to-approve-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "gitlab_project_level_mr_approvals")
+    mql: |
+      terraform.state.resources
+        .where(type == "gitlab_project_level_mr_approvals")
+        .all(values.require_reauthentication_to_approve == true || values.require_password_to_approve == true)
+  # No Terraform variants: the gitlabhq/gitlab provider (v19.x) does not expose
+  # enforce_auth_checks_on_uploads on gitlab_project or any other resource.
+  - uid: mondoo-gitlab-security-uploads-require-authentication
+    title: Ensure uploaded media files require authentication to view
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-16
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-3
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-2
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-7-2-1
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    filters: asset.platform == "gitlab-project"
+    mql: |
+      gitlab.project.visibility == "public" || gitlab.project.enforceAuthChecksOnUploads == true
+    docs:
+      desc: |
+        This check verifies that media files uploaded to a private or internal project can only be viewed by people who can view the project.
+
+        Images, videos, and audio attached to issues, merge requests, comments, and wiki pages are stored as uploads with their own URLs. GitLab calls the setting **Require authentication to view media files**, under Project settings, General, Visibility, project features, permissions. The check requires it to be selected on private and internal projects. Everything in a public project is public anyway, so the check passes public projects.
+
+        **Why this matters**
+
+        With the setting cleared, an upload URL works for anyone who has it, signed in or not. Screenshots attached to issues are where internal dashboards, customer records, stack traces with connection strings, and security findings end up, and those URLs leave the project easily: pasted into chat, forwarded in email notifications, captured in browser history, or indexed when a page that embeds them is shared.
+
+        The project's visibility gives the impression that the attachments are private too. Clearing this setting makes the files public to anyone holding the link while the project still shows as private.
+
+        The setting is on by default. Leave it on unless the uploads are meant for an audience outside the project, and publish that material somewhere designed for it.
+      audit: |
+        ### Audit via Console
+
+        1. In GitLab, navigate to your project.
+        2. Go to **Settings** > **General**.
+        3. Expand the **Visibility, project features, permissions** section.
+        4. Under **Project visibility**, check the state of **Require authentication to view media files**.
+
+        A passing project is public, or has the checkbox selected. A failing private or internal project has it cleared.
+
+        ### Audit via CLI
+
+        Query the project visibility and the setting with the `glab` CLI:
+
+        ```bash
+        glab api projects/PROJECT_ID | jq '{visibility: .visibility, enforce_auth_checks_on_uploads: .enforce_auth_checks_on_uploads}'
+        ```
+
+        A passing project returns `visibility: "public"` or `enforce_auth_checks_on_uploads: true`. A failing project returns `private` or `internal` with `false`.
+      remediation:
+        - id: gitlab
+          desc: |
+            To require authentication to view uploaded media files using the GitLab web UI:
+
+            1. Navigate to your project in GitLab.
+            2. Go to **Settings** > **General**.
+            3. Expand the **Visibility, project features, permissions** section.
+            4. Under **Project visibility**, select **Require authentication to view media files**.
+            5. Click **Save changes**.
+
+            For more details, see [User file uploads](https://docs.gitlab.com/security/user_file_uploads/).
+        - id: cli
+          desc: |
+            To require authentication to view uploaded media files using the `glab` CLI:
+
+            ```bash
+            glab api --method PUT projects/PROJECT_ID \
+              -f enforce_auth_checks_on_uploads=true
+            ```
+
+            For more details, see the [Projects API](https://docs.gitlab.com/api/projects/#update-a-project).
+        # No Terraform remediation: the gitlabhq/gitlab provider (v19.x) does not expose enforce_auth_checks_on_uploads.
+    refs:
+      - url: https://docs.gitlab.com/security/user_file_uploads/
+        title: GitLab User File Uploads
+  - uid: mondoo-gitlab-security-pages-force-https
+    title: Ensure GitLab Pages redirects HTTP requests to HTTPS
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-03
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-e-2-ii-transmission-security-encryption
+      compliance/iso-27001-2022: iso-27001-2022-a-8-24
+      compliance/nis-2: nis-2-21-2-h
+      compliance/nist-csf-1: nist-csf-1-pr-ds-2
+      compliance/nist-csf-2: nist-csf-2-pr-ds-02
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-sc-8
+      compliance/nist-sp-800-171: nist-sp-800-171--3-13-8
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a04
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: soc2-control-cc6-7-2
+      compliance/vda-isa-5: vda-isa-5-5-1-2
+    variants:
+      - uid: mondoo-gitlab-security-pages-force-https-gitlab
+        tags:
+          mondoo.com/filter-title: GitLab Project
+          mondoo.com/filter-icon: gitlab
+      - uid: mondoo-gitlab-security-pages-force-https-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gitlab-security-pages-force-https-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-gitlab-security-pages-force-https-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check verifies that the project's GitLab Pages site redirects every HTTP request to HTTPS.
+
+        GitLab calls the setting **Force HTTPS (requires valid certificates)**, under Deploy, Pages. When it is selected, GitLab Pages answers plain HTTP requests with a permanent redirect to HTTPS. The check requires it to be selected, and passes a project that GitLab reports no Pages settings for.
+
+        **Why this matters**
+
+        Without the redirect, a site served over HTTPS is still served over HTTP to anyone who types the address, follows an old `http://` link, or is sent there by a hostile network. That connection is unauthenticated, so anyone on the path, such as a public Wi-Fi operator or a compromised router, can rewrite the page in transit.
+
+        Pages sites are often documentation, download pages, and install instructions. Rewriting those swaps a download link, a checksum, or a `curl | sh` line, and the visitor runs the attacker's version while the site in the repository is untouched.
+
+        The redirect also lets browsers record that the site is HTTPS-only, which protects later visits. A custom domain needs a valid certificate before the redirect can be enabled; GitLab can issue one through Let's Encrypt.
+      audit: |
+        ### Audit via Console
+
+        1. In GitLab, navigate to your project.
+        2. Go to **Deploy** > **Pages**.
+        3. Check the state of **Force HTTPS (requires valid certificates)**.
+
+        A passing project has the checkbox selected. A failing project has it cleared.
+
+        ### Audit via CLI
+
+        Query the Pages settings with the `glab` CLI:
+
+        ```bash
+        glab api projects/PROJECT_ID/pages | jq '.force_https'
+        ```
+
+        A passing project returns `true`. A failing project returns `false`. A 404 response means GitLab reports no Pages settings for the project, which passes.
+      remediation:
+        - id: gitlab
+          desc: |
+            To redirect GitLab Pages requests to HTTPS using the GitLab web UI:
+
+            1. Navigate to your project in GitLab.
+            2. Go to **Deploy** > **Pages**.
+            3. Select **Force HTTPS (requires valid certificates)**.
+            4. Click **Save changes**.
+
+            For more details, see [Force HTTPS for GitLab Pages websites](https://docs.gitlab.com/user/project/pages/custom_domains_ssl_tls_certification/#force-https-for-gitlab-pages-websites).
+        - id: cli
+          desc: |
+            To redirect GitLab Pages requests to HTTPS using the `glab` CLI:
+
+            ```bash
+            glab api --method PATCH projects/PROJECT_ID/pages \
+              -f pages_https_only=true
+            ```
+
+            For more details, see the [Pages API](https://docs.gitlab.com/api/pages/#update-pages-settings-for-a-project).
+        - id: terraform
+          desc: |
+            To redirect GitLab Pages requests to HTTPS using Terraform:
+
+            ```hcl
+            resource "gitlab_project_pages_settings" "example" {
+              project     = gitlab_project.example.id
+              force_https = true
+            }
+            ```
+
+            For more details, see the Terraform [GitLab Provider](https://registry.terraform.io/providers/gitlabhq/gitlab/latest/docs/resources/project_pages_settings).
+    refs:
+      - url: https://docs.gitlab.com/user/project/pages/custom_domains_ssl_tls_certification/
+        title: GitLab Pages Custom Domains
+  - uid: mondoo-gitlab-security-pages-force-https-gitlab
+    filters: asset.platform == "gitlab-project"
+    mql: |
+      gitlab.project.pagesSettings == null || gitlab.project.pagesSettings.forceHttps == true
+  # GitLab Pages sites force HTTPS unless the setting is cleared, so an omitted attribute passes
+  # and only an explicit false fails.
+  - uid: mondoo-gitlab-security-pages-force-https-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "gitlab_project_pages_settings")
+    mql: |
+      terraform.resources("gitlab_project_pages_settings").all(arguments["force_https"] != false)
+  - uid: mondoo-gitlab-security-pages-force-https-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "gitlab_project_pages_settings")
+    mql: |
+      terraform.plan.resourceChanges
+        .where(type == "gitlab_project_pages_settings")
+        .all(change.after.force_https != false)
+  - uid: mondoo-gitlab-security-pages-force-https-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "gitlab_project_pages_settings")
+    mql: |
+      terraform.state.resources
+        .where(type == "gitlab_project_pages_settings")
+        .all(values.force_https != false)
