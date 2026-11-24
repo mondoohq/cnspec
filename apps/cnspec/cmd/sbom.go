@@ -50,7 +50,7 @@ func sbomFormatList() string {
 
 var sbomCmd = &cobra.Command{
 	Use:   "sbom",
-	Short: "Experimental: Generate a software bill of materials (SBOM) for a given asset",
+	Short: "Generate a software bill of materials (SBOM) for a given asset",
 	Long: `Generate a software bill of materials (SBOM) for a given asset. The SBOM
 is a representation of the asset's software components and their dependencies.
 
@@ -67,8 +67,6 @@ before the extension (sbom-0.json, sbom-1.json, ...), ordered by asset name.
 Without it, they are printed one after another. Assets that could not be
 scanned get no SBOM; they are listed and the command exits 1 after writing
 the others.
-
-Note this command is experimental and may change in the future.
 `,
 	PreRun: func(cmd *cobra.Command, args []string) {
 		bindInventoryFlags(cmd)
@@ -104,8 +102,6 @@ Note this command is experimental and may change in the future.
 }
 
 var sbomCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *plugin.ParseCLIRes) {
-	log.Info().Msg("This command is experimental. Please report any issues to https://github.com/mondoohq/cnspec.")
-
 	ctx := setupDebugDumps(context.Background(), "cnspec-sbom-debug")
 
 	pb, err := pack.QueryPack()
