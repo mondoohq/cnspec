@@ -199,7 +199,7 @@ var scanCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 
 	err = conf.loadPolicies(ctx)
 	if err != nil {
-		log.Fatal().Err(err).Msg("failed to resolve policies")
+		conf.fatal(err, "failed to resolve policies")
 	}
 	// Dump the aggregated bundle at the run level (used to fire inside
 	// policy.BundleLoader.BundleFromPaths via the mql logger; moved here so
@@ -208,7 +208,7 @@ var scanCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 
 	res, err := RunScanResult(ctx, conf, scan.WithReportType(conf.ReportType), scan.WithAutoUpdate(AutoUpdateEnabled()))
 	if err != nil {
-		log.Fatal().Err(err).Msg("failed to run scan")
+		conf.fatal(err, "failed to run scan")
 	}
 	// Only --report-type full carries a report collection to print; error and
 	// none print nothing but still decide the exit status below.
@@ -352,6 +352,18 @@ type scanConfig struct {
 	ExceptionsConfigPath string
 	// SubmitExceptions says whether this run submits exceptions upstream.
 	SubmitExceptions bool
+
+	// login is set when the scan runs with a login made by `cnspec login`.
+	login *loginSession
+}
+
+// fatal ends the command with err. When the server refused the scan's login
+// it says so and how to log in again, in place of msg.
+func (c *scanConfig) fatal(err error, msg string) {
+	if advice := c.login.refusalAdvice(err, time.Now()); advice != "" {
+		msg = advice
+	}
+	log.Fatal().Err(err).Msg(msg)
 }
 
 func getCobraScanConfig(cmd *cobra.Command, runtime *providers.Runtime, cliRes *plugin.ParseCLIRes) (*scanConfig, error) {
@@ -528,7 +540,8 @@ func getCobraScanConfig(cmd *cobra.Command, runtime *providers.Runtime, cliRes *
 		if err := verifyServiceAccount(serviceAccount, configSourceDescription()); err != nil {
 			return nil, err
 		}
-		log.Info().Msg("using service account credentials")
+		log.Info().Msg(credentialsNote(opts))
+		conf.login = loginSessionOf(opts)
 
 		spaceMrn := opts.GetParentMrn()
 		if spaceMrn == "" {
