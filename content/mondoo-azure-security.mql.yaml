@@ -317,7 +317,7 @@ policies:
       - title: Azure Storage
         docs:
           desc: |
-            Anonymous and public access, network rules and trusted services, secure transfer and TLS, shared key access, soft delete and immutability, SMB settings, logging, and customer-managed key encryption for storage accounts and encryption scopes.
+            Anonymous and public access, network rules and trusted services, secure transfer and TLS, shared key access, access key rotation, SAS expiration, soft delete and immutability, SMB settings, logging, and customer-managed key encryption for storage accounts and encryption scopes.
         checks:
           - uid: mondoo-azure-security-public-access-level-private-blob-containers
           - uid: mondoo-azure-security-trusted-microsoft-services-enabled-for-storage-account-access
@@ -338,6 +338,8 @@ policies:
           - uid: mondoo-azure-security-storage-queue-logging-enabled
           - uid: mondoo-azure-security-storage-encryption-scope-cmk
           - uid: mondoo-azure-security-storage-encryption-scope-infra-encryption
+          - uid: mondoo-azure-security-storage-account-keys-rotated
+          - uid: mondoo-azure-security-storage-account-sas-expiration-policy
       - title: Azure Key Vault
         docs:
           desc: |
@@ -56218,4 +56220,284 @@ queries:
     mql: |
       bicep.resources.where(type == "Microsoft.App/containerApps").all(
         body["identity"]["type"] != empty && body["identity"]["type"] != "None"
+      )
+  # No Terraform variants: key age reflects when the keys were last regenerated, an operation that no Terraform or Bicep argument records.
+  - uid: mondoo-azure-security-storage-account-keys-rotated
+    title: Ensure storage account access keys are rotated and expire
+    impact: 75
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-cek-12
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-5-17
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-12
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a07
+      compliance/pci-dss-4: pcidss-requirement-8-6-3
+      compliance/soc2-2017: soc2-control-cc6-1-11
+      compliance/vda-isa-5: vda-isa-5-4-1-1
+    props:
+      - uid: mondooAzureSecurityStorageKeyMaxAgeDays
+        title: Days after which a storage account access key must have been regenerated
+        mql: |
+          return 90
+    variants:
+      - uid: mondoo-azure-security-storage-account-keys-rotated-azure
+        tags:
+          mondoo.com/filter-title: Azure Storage Account
+          mondoo.com/filter-icon: azure
+    docs:
+      desc: |
+        This check verifies that the shared keys of a storage account are replaced regularly and that the account enforces a maximum key age.
+
+        Every storage account has two access keys that grant full control of its data to anyone holding one. You see when each was last regenerated under **Security + networking** > **Access keys**, and set the reminder that flags an old key with **Set rotation reminder**, which writes the account's key expiration policy. This check requires both keys to have been regenerated within the last 90 days and a key expiration period to be set. Accounts with **Allow storage account key access** turned off pass, because their keys cannot be used. The age is configurable.
+
+        **Why this matters**
+
+        A storage account key is a password with no user attached and no multifactor authentication. It ends up in connection strings in application settings, pipeline variables, scripts, and developer machines, and every copy stays valid until the key is regenerated.
+
+        Keys that are never regenerated mean every copy ever made still works, including the ones in a former employee's notes and the build log that leaked last year. An attacker who finds one reads, changes, or deletes every blob, file, queue, and table in the account, and the access appears in logs only as the key, not as a person.
+
+        Regenerate the keys on a schedule, alternating between them so clients can move to the new one, and prefer Microsoft Entra ID authentication with managed identities so most clients need no key at all. Turning off shared key access removes the risk entirely.
+      audit: |
+        ### Audit via Azure CLI
+
+        ```bash
+        az storage account show --name <account> --resource-group <resource-group> \
+          --query "{sharedKey:allowSharedKeyAccess, key1:keyCreationTime.key1, key2:keyCreationTime.key2, expirationDays:keyPolicy.keyExpirationPeriodInDays}"
+        ```
+
+        A passing account shows `sharedKey` as `false`, or both key creation times within the last 90 days and `expirationDays` set. A failing account shows an older key or no expiration period.
+
+        ### Audit via Azure Portal
+
+        1. Open the storage account and select **Security + networking** > **Access keys**.
+        2. Review **Last rotated** for both keys and whether a rotation reminder is set.
+      remediation:
+        - id: portal
+          desc: |
+            **To rotate keys and set a rotation policy using the Azure portal:**
+
+            1. Sign in to the [Azure portal](https://portal.azure.com) and open the storage account.
+            2. Select **Security + networking** > **Access keys**.
+            3. Move clients to **key2**, select **Rotate key** for **key1**, then move clients back and rotate **key2**.
+            4. Select **Set rotation reminder**, enable it, and set the reminder frequency.
+        - id: cli
+          desc: |
+            **To rotate keys and set a key expiration policy using the Azure CLI:**
+
+            ```bash
+            az storage account keys renew --account-name <account> --resource-group <resource-group> --key primary
+            az storage account keys renew --account-name <account> --resource-group <resource-group> --key secondary
+            az storage account update --name <account> --resource-group <resource-group> --key-exp-days 90
+            ```
+        - id: terraform
+          desc: |
+            **To remove the need for key rotation using Terraform:**
+
+            Terraform does not regenerate keys. Turn off shared key access so the account accepts only Microsoft Entra ID authorization, and rotate keys with the Azure CLI where shared key access must stay on:
+
+            ```hcl
+            resource "azurerm_storage_account" "data" {
+              name                      = "contosodata"
+              resource_group_name       = azurerm_resource_group.data.name
+              location                  = azurerm_resource_group.data.location
+              account_tier              = "Standard"
+              account_replication_type  = "LRS"
+              shared_access_key_enabled = false
+            }
+            ```
+        - id: bicep
+          desc: |
+            **To set a key expiration policy using Bicep:**
+
+            Set `keyPolicy`, and rotate the keys with the Azure CLI on the schedule it sets:
+
+            ```bicep
+            resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
+              name: 'contosodata'
+              location: resourceGroup().location
+              kind: 'StorageV2'
+              sku: {
+                name: 'Standard_LRS'
+              }
+              properties: {
+                keyPolicy: {
+                  keyExpirationPeriodInDays: 90
+                }
+              }
+            }
+            ```
+    refs:
+      - url: https://learn.microsoft.com/en-us/azure/storage/common/storage-account-keys-manage
+        title: Manage storage account access keys
+  - uid: mondoo-azure-security-storage-account-keys-rotated-azure
+    filters: asset.platform == "azure-storage-account"
+    mql: |
+      azure.subscription.storage.account.allowSharedKeyAccess == false ||
+      azure.subscription.storage.account.keyExpirationPeriodInDays > 0 &&
+      azure.subscription.storage.account.key1CreationTime > time.now - props.mondooAzureSecurityStorageKeyMaxAgeDays * time.day &&
+      azure.subscription.storage.account.key2CreationTime > time.now - props.mondooAzureSecurityStorageKeyMaxAgeDays * time.day
+  - uid: mondoo-azure-security-storage-account-sas-expiration-policy
+    title: Ensure storage accounts limit the lifetime of shared access signatures
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: false
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-5-17
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-12
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a07
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: vda-isa-5-4-1-1
+    variants:
+      - uid: mondoo-azure-security-storage-account-sas-expiration-policy-azure
+        tags:
+          mondoo.com/filter-title: Azure Storage Account
+          mondoo.com/filter-icon: azure
+      - uid: mondoo-azure-security-storage-account-sas-expiration-policy-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-storage-account-sas-expiration-policy-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-storage-account-sas-expiration-policy-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-azure-security-storage-account-sas-expiration-policy-bicep
+        tags:
+          mondoo.com/filter-title: Bicep
+          mondoo.com/filter-icon: bicep
+    docs:
+      desc: |
+        This check verifies that the storage account caps how long a shared access signature can stay valid.
+
+        A shared access signature is a URL token signed with one of the account's keys that grants access to the account's data until it expires. Its creator chooses the expiry, and nothing stops them choosing years. The SAS expiration policy, set under **Settings** > **Configuration** with **Allow storage account key access** on, defines a maximum interval and whether the account logs or blocks a SAS that exceeds it. This check requires the policy to be set, or shared key access to be turned off, which disables key-signed SAS altogether.
+
+        **Why this matters**
+
+        A SAS is a bearer token: anyone who holds the URL has the access. They get pasted into tickets, chat messages, configuration files, and scripts, and a long-lived one keeps working long after the task it was made for, invisible to anyone reviewing role assignments.
+
+        A SAS cannot be revoked individually. The only way to invalidate one is to regenerate the key that signed it, which breaks every other client using that key, so leaked long-lived tokens tend to stay valid.
+
+        An expiration policy turns the expiry into an enforced limit. With the action set to block, the account rejects a SAS whose validity exceeds the interval, and with logging, every such request is recorded so it can be found and fixed.
+      audit: |
+        ### Audit via Azure CLI
+
+        ```bash
+        az storage account show --name <account> --resource-group <resource-group> \
+          --query "{sharedKey:allowSharedKeyAccess, sasPolicy:sasPolicy}"
+        ```
+
+        A passing account shows `sharedKey` as `false`, or a `sasPolicy` with a `sasExpirationPeriod`. A failing account shows no `sasPolicy`.
+
+        ### Audit via Azure Portal
+
+        1. Open the storage account and select **Settings** > **Configuration**.
+        2. Review **Allow recommended upper limit for shared access signature (SAS) expiry interval**.
+      remediation:
+        - id: portal
+          desc: |
+            **To set a SAS expiration policy using the Azure portal:**
+
+            1. Sign in to the [Azure portal](https://portal.azure.com) and open the storage account.
+            2. Select **Settings** > **Configuration**.
+            3. Enable **Allow recommended upper limit for shared access signature (SAS) expiry interval** and set the interval.
+            4. Select **Save**.
+        - id: cli
+          desc: |
+            **To set a SAS expiration policy using the Azure CLI:**
+
+            ```bash
+            az storage account update --name <account> --resource-group <resource-group> \
+              --sas-expiration-period 1.00:00:00 --sas-expiration-action Block
+            ```
+        - id: terraform
+          desc: |
+            **To set a SAS expiration policy using Terraform:**
+
+            ```hcl
+            resource "azurerm_storage_account" "data" {
+              name                     = "contosodata"
+              resource_group_name      = azurerm_resource_group.data.name
+              location                 = azurerm_resource_group.data.location
+              account_tier             = "Standard"
+              account_replication_type = "LRS"
+
+              sas_policy {
+                expiration_period = "01.00:00:00"
+                expiration_action = "Block"
+              }
+            }
+            ```
+        - id: bicep
+          desc: |
+            **To set a SAS expiration policy using Bicep:**
+
+            ```bicep
+            resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
+              name: 'contosodata'
+              location: resourceGroup().location
+              kind: 'StorageV2'
+              sku: {
+                name: 'Standard_LRS'
+              }
+              properties: {
+                sasPolicy: {
+                  sasExpirationPeriod: '1.00:00:00'
+                  expirationAction: 'Block'
+                }
+              }
+            }
+            ```
+    refs:
+      - url: https://learn.microsoft.com/en-us/azure/storage/common/sas-expiration-policy
+        title: Configure an expiration policy for shared access signatures
+  - uid: mondoo-azure-security-storage-account-sas-expiration-policy-azure
+    filters: asset.platform == "azure-storage-account"
+    mql: |
+      azure.subscription.storage.account.allowSharedKeyAccess == false ||
+      azure.subscription.storage.account.sasExpirationPeriod != empty
+  - uid: mondoo-azure-security-storage-account-sas-expiration-policy-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "azurerm_storage_account")
+    mql: |
+      terraform.resources("azurerm_storage_account").all(
+        arguments['shared_access_key_enabled'] == false ||
+        blocks.where(type == "sas_policy").any(arguments['expiration_period'] != empty)
+      )
+  - uid: mondoo-azure-security-storage-account-sas-expiration-policy-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "azurerm_storage_account")
+    mql: |
+      terraform.plan.resourceChanges.where(type == "azurerm_storage_account").all(
+        change.after['shared_access_key_enabled'] == false ||
+        change.after['sas_policy'] != empty &&
+        change.after['sas_policy'].any(_['expiration_period'] != empty)
+      )
+  - uid: mondoo-azure-security-storage-account-sas-expiration-policy-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "azurerm_storage_account")
+    mql: |
+      terraform.state.resources.where(type == "azurerm_storage_account").all(
+        values['shared_access_key_enabled'] == false ||
+        values['sas_policy'] != empty &&
+        values['sas_policy'].any(_['expiration_period'] != empty)
+      )
+  - uid: mondoo-azure-security-storage-account-sas-expiration-policy-bicep
+    filters: asset.platform == "bicep" && bicep.resources.any(type == "Microsoft.Storage/storageAccounts")
+    mql: |
+      bicep.resources.where(type == "Microsoft.Storage/storageAccounts").all(
+        properties['allowSharedKeyAccess'] == false ||
+        properties['sasPolicy']['sasExpirationPeriod'] != empty
       )
