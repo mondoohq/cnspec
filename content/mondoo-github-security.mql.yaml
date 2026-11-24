@@ -3,7 +3,7 @@
 policies:
   - uid: mondoo-github-organization-security
     name: Mondoo GitHub Organization Security
-    version: 1.8.9
+    version: 1.9.0
     license: BUSL-1.1
     tags:
       mondoo.com/category: security
@@ -48,6 +48,17 @@ policies:
           - uid: mondoo-github-organization-security-dependabot-security-updates-new-repos
           - uid: mondoo-github-organization-security-secret-scanning-new-repos
           - uid: mondoo-github-organization-security-secret-scanning-push-protection-new-repos
+      - title: Secret Protection & Code Security
+        checks:
+          - uid: mondoo-github-organization-security-push-protection-provider-patterns
+          - uid: mondoo-github-organization-security-push-protection-delegated-bypass
+          - uid: mondoo-github-organization-security-code-security-configurations-enforced
+      - title: GitHub Actions & Codespaces
+        checks:
+          - uid: mondoo-github-organization-security-actions-fork-pr-approval
+          - uid: mondoo-github-organization-security-actions-fork-pr-private-repos-restricted
+          - uid: mondoo-github-organization-security-actions-self-hosted-runners-selected-repos
+          - uid: mondoo-github-organization-security-codespaces-secrets-not-all-repos
       - title: Organizational Policies
         checks:
           - uid: mondoo-github-organization-security-security-policy
@@ -2152,19 +2163,19 @@ queries:
     impact: 80
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-tvm-03
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-dsp-17
       compliance/dora: dora-art-9
       compliance/hipaa: false
-      compliance/iso-27001-2022: iso-27001-2022-a-8-8
+      compliance/iso-27001-2022: iso-27001-2022-a-5-17
       compliance/nis-2: nis-2-21-2-e
-      compliance/nist-csf-1: nist-csf-1-id-ra-1
-      compliance/nist-csf-2: nist-csf-2-id-ra-01
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-2
-      compliance/nist-sp-800-171: nist-sp-800-171--3-14-1
-      compliance/owasp-top-10-2025: owasp-top-10-2025-a04
-      compliance/pci-dss-4: pcidss-requirement-6-3-3
-      compliance/soc2-2017: soc2-control-cc7-1-2
-      compliance/vda-isa-5: vda-isa-5-5-2-1
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-12
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a07
+      compliance/pci-dss-4: pcidss-requirement-8-6-2
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: vda-isa-5-4-1-3
     variants:
       - uid: mondoo-github-organization-security-secret-scanning-new-repos-github
         tags:
@@ -2186,7 +2197,7 @@ queries:
       desc: |
         This check verifies that repositories created in the organization have secret scanning turned on from the moment they exist.
 
-        Secret scanning is one of the enablement settings an owner turns on inside a security configuration, which is built under Organization Settings by opening the Security section of the sidebar, then Advanced Security, then Configurations. The check passes only when scanning is on in the configuration GitHub applies by default to newly created repositories. That default takes effect at creation time, so turning it on does not retroactively start scanning repositories that already exist. It protects the next repository somebody creates, not the ones already in the organization. The Terraform version of this check reads `secret_scanning_enabled_for_new_repositories` on a `github_organization_settings` resource and requires the same value.
+        Secret scanning is one of the enablement settings an owner turns on inside a security configuration, which is built under Organization Settings by opening the Security section of the sidebar, then Advanced Security, then Configurations. The check passes when the configuration GitHub applies to all new repositories turns secret scanning on, or when the configurations applied to new public repositories and to new private and internal repositories both turn it on. An organization that has not moved to security configurations is assessed on the deprecated organization setting for new repositories instead. That default takes effect at creation time, so turning it on does not retroactively start scanning repositories that already exist. It protects the next repository somebody creates, not the ones already in the organization. The GitHub Terraform provider has no resource for security configurations, so the Terraform version of this check reads the deprecated `secret_scanning_enabled_for_new_repositories` on a `github_organization_settings` resource and requires it to be `true`.
 
         **Why this matters**
 
@@ -2202,17 +2213,24 @@ queries:
         2. Go to **Settings**. In the sidebar under **Security**, select **Advanced Security** > **Configurations**.
         3. Review the security configuration applied as the default for new repositories and confirm **Secret scanning** is set to **Enabled**.
 
-        If the default configuration for new repositories enables secret scanning, the check passes. If it does not, the check fails. On organizations that have not yet migrated to security configurations, this setting appears on the legacy **Settings** > **Code security and analysis** page under "Secret scanning."
+        The check passes when the default configuration for all new repositories enables secret scanning, or when the defaults for new public repositories and for new private and internal repositories both enable it. Otherwise it fails. On organizations that have not yet migrated to security configurations, this setting appears on the legacy **Settings** > **Code security and analysis** page under "Secret scanning."
 
         ### Audit via CLI
 
-        1. Query the organization's secret scanning default:
+        1. List the security configurations set as defaults for new repositories and the secret scanning setting each one applies:
+
+           ```bash
+           gh api /orgs/ORG/code-security/configurations/defaults \
+             --jq '.[] | {default_for_new_repos, name: .configuration.name, secret_scanning: .configuration.secret_scanning}'
+           ```
+
+        2. On an organization that has not moved to security configurations, query the deprecated organization setting instead:
 
            ```bash
            gh api /orgs/ORG --jq '.secret_scanning_enabled_for_new_repositories'
            ```
 
-        If the command returns `true`, the check passes. If it returns `false`, the check fails.
+        The check passes when the default whose `default_for_new_repos` is `all` reports `secret_scanning` as `enabled`, when the `public` and `private_and_internal` defaults both report it as `enabled`, or when the deprecated setting returns `true`. Otherwise it fails.
       remediation:
         - id: github
           desc: |
@@ -2243,7 +2261,29 @@ queries:
           desc: |
             **Using GitHub CLI**
 
-            GitHub has deprecated this organization-level field in favor of code security configurations, but it remains functional:
+            To turn on secret scanning for new repositories through a security configuration:
+
+            1. List the organization's configurations and note the ID of the one to use. The API rejects changes to the configurations GitHub provides, so use one the organization created:
+
+               ```bash
+               gh api /orgs/ORG/code-security/configurations --jq '.[] | {id, name, target_type}'
+               ```
+
+            2. Turn on secret scanning in that configuration:
+
+               ```bash
+               gh api --method PATCH /orgs/ORG/code-security/configurations/CONFIGURATION_ID \
+                 -f secret_scanning=enabled
+               ```
+
+            3. Make the configuration the default for all new repositories:
+
+               ```bash
+               gh api --method PUT /orgs/ORG/code-security/configurations/CONFIGURATION_ID/defaults \
+                 -f default_for_new_repos=all
+               ```
+
+            On an organization that has not moved to security configurations, set the deprecated organization field instead:
 
             ```bash
             gh api --method PATCH /orgs/ORG \
@@ -2254,7 +2294,11 @@ queries:
         title: Managing security and analysis settings for your organization
   - uid: mondoo-github-organization-security-secret-scanning-new-repos-github
     filters: asset.platform == "github-org"
-    mql: github.organization.secretScanningEnabledForNewRepos == true
+    mql: |
+      github.organization.secretScanningEnabledForNewRepos == true ||
+        github.organization.codeSecurityConfigurations.any(defaultForNewRepos == "all" && secretScanning == "enabled") ||
+        github.organization.codeSecurityConfigurations.any(defaultForNewRepos == "public" && secretScanning == "enabled") &&
+        github.organization.codeSecurityConfigurations.any(defaultForNewRepos == "private_and_internal" && secretScanning == "enabled")
   - uid: mondoo-github-organization-security-secret-scanning-new-repos-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "github_organization_settings")
     mql: |
@@ -2278,19 +2322,19 @@ queries:
     impact: 90
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-tvm-03
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-dsp-17
       compliance/dora: dora-art-9
       compliance/hipaa: false
-      compliance/iso-27001-2022: iso-27001-2022-a-8-8
+      compliance/iso-27001-2022: iso-27001-2022-a-5-17
       compliance/nis-2: nis-2-21-2-e
-      compliance/nist-csf-1: nist-csf-1-id-ra-1
-      compliance/nist-csf-2: nist-csf-2-id-ra-01
-      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-2
-      compliance/nist-sp-800-171: nist-sp-800-171--3-14-1
-      compliance/owasp-top-10-2025: owasp-top-10-2025-a04
-      compliance/pci-dss-4: pcidss-requirement-6-3-3
-      compliance/soc2-2017: soc2-control-cc7-1-2
-      compliance/vda-isa-5: vda-isa-5-5-2-1
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-12
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a07
+      compliance/pci-dss-4: pcidss-requirement-8-6-2
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: vda-isa-5-4-1-3
     variants:
       - uid: mondoo-github-organization-security-secret-scanning-push-protection-new-repos-github
         tags:
@@ -2312,7 +2356,7 @@ queries:
       desc: |
         This check verifies that repositories created in the organization reject pushes that contain a recognized credential.
 
-        Push protection is the enforcing half of secret scanning. It rejects the push itself when a recognized credential pattern appears in the incoming commits, rather than raising an alert after the commit has already landed on GitHub. The Configurations page, reached through Advanced Security in the Security section of the Organization Settings sidebar, lists Push protection as its own setting alongside secret scanning, and the check passes only when the configuration that applies by default to newly created repositories has it turned on. The Terraform version of this check reads `secret_scanning_push_protection_enabled_for_new_repositories` on a `github_organization_settings` resource and requires the same value.
+        Push protection is the enforcing half of secret scanning. It rejects the push itself when a recognized credential pattern appears in the incoming commits, rather than raising an alert after the commit has already landed on GitHub. The Configurations page, reached through Advanced Security in the Security section of the Organization Settings sidebar, lists Push protection as its own setting alongside secret scanning. The check passes when the configuration GitHub applies to all new repositories turns push protection on, or when the configurations applied to new public repositories and to new private and internal repositories both turn it on. An organization that has not moved to security configurations is assessed on the deprecated organization setting for new repositories instead. The GitHub Terraform provider has no resource for security configurations, so the Terraform version of this check reads the deprecated `secret_scanning_push_protection_enabled_for_new_repositories` on a `github_organization_settings` resource and requires it to be `true`.
 
         **Why this matters**
 
@@ -2328,17 +2372,24 @@ queries:
         2. Go to **Settings**. In the sidebar under **Security**, select **Advanced Security** > **Configurations**.
         3. Review the security configuration applied as the default for new repositories and confirm **Push protection** is set to **Enabled** under secret scanning.
 
-        If the default configuration for new repositories enables push protection, the check passes. If it does not, the check fails. On organizations that have not yet migrated to security configurations, this setting appears on the legacy **Settings** > **Code security and analysis** page under "Secret scanning."
+        The check passes when the default configuration for all new repositories enables push protection, or when the defaults for new public repositories and for new private and internal repositories both enable it. Otherwise it fails. On organizations that have not yet migrated to security configurations, this setting appears on the legacy **Settings** > **Code security and analysis** page under "Secret scanning."
 
         ### Audit via CLI
 
-        1. Query the organization's push protection default:
+        1. List the security configurations set as defaults for new repositories and the push protection setting each one applies:
+
+           ```bash
+           gh api /orgs/ORG/code-security/configurations/defaults \
+             --jq '.[] | {default_for_new_repos, name: .configuration.name, secret_scanning_push_protection: .configuration.secret_scanning_push_protection}'
+           ```
+
+        2. On an organization that has not moved to security configurations, query the deprecated organization setting instead:
 
            ```bash
            gh api /orgs/ORG --jq '.secret_scanning_push_protection_enabled_for_new_repositories'
            ```
 
-        If the command returns `true`, the check passes. If it returns `false`, the check fails.
+        The check passes when the default whose `default_for_new_repos` is `all` reports `secret_scanning_push_protection` as `enabled`, when the `public` and `private_and_internal` defaults both report it as `enabled`, or when the deprecated setting returns `true`. Otherwise it fails.
       remediation:
         - id: github
           desc: |
@@ -2369,7 +2420,30 @@ queries:
           desc: |
             **Using GitHub CLI**
 
-            GitHub has deprecated this organization-level field in favor of code security configurations, but it remains functional:
+            To turn on push protection for new repositories through a security configuration:
+
+            1. List the organization's configurations and note the ID of the one to use. The API rejects changes to the configurations GitHub provides, so use one the organization created:
+
+               ```bash
+               gh api /orgs/ORG/code-security/configurations --jq '.[] | {id, name, target_type}'
+               ```
+
+            2. Turn on push protection in that configuration:
+
+               ```bash
+               gh api --method PATCH /orgs/ORG/code-security/configurations/CONFIGURATION_ID \
+                 -f secret_scanning=enabled \
+                 -f secret_scanning_push_protection=enabled
+               ```
+
+            3. Make the configuration the default for all new repositories:
+
+               ```bash
+               gh api --method PUT /orgs/ORG/code-security/configurations/CONFIGURATION_ID/defaults \
+                 -f default_for_new_repos=all
+               ```
+
+            On an organization that has not moved to security configurations, set the deprecated organization field instead:
 
             ```bash
             gh api --method PATCH /orgs/ORG \
@@ -2380,7 +2454,11 @@ queries:
         title: Push protection
   - uid: mondoo-github-organization-security-secret-scanning-push-protection-new-repos-github
     filters: asset.platform == "github-org"
-    mql: github.organization.secretScanningPushProtectionEnabledForNewRepos == true
+    mql: |
+      github.organization.secretScanningPushProtectionEnabledForNewRepos == true ||
+        github.organization.codeSecurityConfigurations.any(defaultForNewRepos == "all" && secretScanningPushProtection == "enabled") ||
+        github.organization.codeSecurityConfigurations.any(defaultForNewRepos == "public" && secretScanningPushProtection == "enabled") &&
+        github.organization.codeSecurityConfigurations.any(defaultForNewRepos == "private_and_internal" && secretScanningPushProtection == "enabled")
   - uid: mondoo-github-organization-security-secret-scanning-push-protection-new-repos-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "github_organization_settings")
     mql: |
@@ -2404,7 +2482,7 @@ queries:
     impact: 70
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-tvm-03
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-tvm-05
       compliance/dora: dora-art-9
       compliance/hipaa: false
       compliance/iso-27001-2022: iso-27001-2022-a-8-8
@@ -2414,9 +2492,9 @@ queries:
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-si-2
       compliance/nist-sp-800-171: nist-sp-800-171--3-14-1
       compliance/owasp-top-10-2025: owasp-top-10-2025-a03
-      compliance/pci-dss-4: pcidss-requirement-6-3-3
-      compliance/soc2-2017: soc2-control-cc7-1-2
-      compliance/vda-isa-5: vda-isa-5-5-2-1
+      compliance/pci-dss-4: pcidss-requirement-6-3-1
+      compliance/soc2-2017: soc2-control-cc7-1-5
+      compliance/vda-isa-5: vda-isa-5-5-2-5
     variants:
       - uid: mondoo-github-organization-security-dependabot-alerts-new-repos-github
         tags:
@@ -2438,7 +2516,7 @@ queries:
       desc: |
         This check verifies that repositories created in the organization are told when a dependency they use has a known vulnerability.
 
-        Dependabot alerts tell a repository when a dependency it declares matches a published advisory. Organization owners manage the setting from Organization Settings, on the Configurations page that sits under Advanced Security in the Security section of the sidebar, grouped with the other dependency scanning settings. The check passes only when Dependabot alerts are on in the configuration GitHub applies by default to newly created repositories. That is a creation-time default only, and it leaves repositories that already exist untouched. The Terraform version of this check reads `dependabot_alerts_enabled_for_new_repositories` on a `github_organization_settings` resource and requires the same value.
+        Dependabot alerts tell a repository when a dependency it declares matches a published advisory. Organization owners manage the setting from Organization Settings, on the Configurations page that sits under Advanced Security in the Security section of the sidebar, grouped with the other dependency scanning settings. The check passes when the configuration GitHub applies to all new repositories turns Dependabot alerts on, or when the configurations applied to new public repositories and to new private and internal repositories both turn it on. An organization that has not moved to security configurations is assessed on the deprecated organization setting for new repositories instead. That is a creation-time default only, and it leaves repositories that already exist untouched. The GitHub Terraform provider has no resource for security configurations, so the Terraform version of this check reads the deprecated `dependabot_alerts_enabled_for_new_repositories` on a `github_organization_settings` resource and requires it to be `true`.
 
         **Why this matters**
 
@@ -2456,17 +2534,24 @@ queries:
         2. Go to **Settings**. In the sidebar under **Security**, select **Advanced Security** > **Configurations**.
         3. Review the security configuration applied as the default for new repositories and confirm **Dependabot alerts** is set to **Enabled**.
 
-        If the default configuration for new repositories enables Dependabot alerts, the check passes. If it does not, the check fails. On organizations that have not yet migrated to security configurations, this setting appears on the legacy **Settings** > **Code security and analysis** page under "Dependabot alerts."
+        The check passes when the default configuration for all new repositories enables Dependabot alerts, or when the defaults for new public repositories and for new private and internal repositories both enable it. Otherwise it fails. On organizations that have not yet migrated to security configurations, this setting appears on the legacy **Settings** > **Code security and analysis** page under "Dependabot alerts."
 
         ### Audit via CLI
 
-        1. Query the organization's Dependabot alerts default:
+        1. List the security configurations set as defaults for new repositories and the Dependabot alerts setting each one applies:
+
+           ```bash
+           gh api /orgs/ORG/code-security/configurations/defaults \
+             --jq '.[] | {default_for_new_repos, name: .configuration.name, dependabot_alerts: .configuration.dependabot_alerts}'
+           ```
+
+        2. On an organization that has not moved to security configurations, query the deprecated organization setting instead:
 
            ```bash
            gh api /orgs/ORG --jq '.dependabot_alerts_enabled_for_new_repositories'
            ```
 
-        If the command returns `true`, the check passes. If it returns `false`, the check fails.
+        The check passes when the default whose `default_for_new_repos` is `all` reports `dependabot_alerts` as `enabled`, when the `public` and `private_and_internal` defaults both report it as `enabled`, or when the deprecated setting returns `true`. Otherwise it fails.
       remediation:
         - id: github
           desc: |
@@ -2497,7 +2582,30 @@ queries:
           desc: |
             **Using GitHub CLI**
 
-            GitHub has deprecated this organization-level field in favor of code security configurations, but it remains functional:
+            To turn on Dependabot alerts for new repositories through a security configuration:
+
+            1. List the organization's configurations and note the ID of the one to use. The API rejects changes to the configurations GitHub provides, so use one the organization created:
+
+               ```bash
+               gh api /orgs/ORG/code-security/configurations --jq '.[] | {id, name, target_type}'
+               ```
+
+            2. Turn on Dependabot alerts in that configuration:
+
+               ```bash
+               gh api --method PATCH /orgs/ORG/code-security/configurations/CONFIGURATION_ID \
+                 -f dependency_graph=enabled \
+                 -f dependabot_alerts=enabled
+               ```
+
+            3. Make the configuration the default for all new repositories:
+
+               ```bash
+               gh api --method PUT /orgs/ORG/code-security/configurations/CONFIGURATION_ID/defaults \
+                 -f default_for_new_repos=all
+               ```
+
+            On an organization that has not moved to security configurations, set the deprecated organization field instead:
 
             ```bash
             gh api --method PATCH /orgs/ORG \
@@ -2508,7 +2616,11 @@ queries:
         title: Managing security and analysis settings for your organization
   - uid: mondoo-github-organization-security-dependabot-alerts-new-repos-github
     filters: asset.platform == "github-org"
-    mql: github.organization.dependabotAlertsEnabledForNewRepos == true
+    mql: |
+      github.organization.dependabotAlertsEnabledForNewRepos == true ||
+        github.organization.codeSecurityConfigurations.any(defaultForNewRepos == "all" && dependabotAlerts == "enabled") ||
+        github.organization.codeSecurityConfigurations.any(defaultForNewRepos == "public" && dependabotAlerts == "enabled") &&
+        github.organization.codeSecurityConfigurations.any(defaultForNewRepos == "private_and_internal" && dependabotAlerts == "enabled")
   - uid: mondoo-github-organization-security-dependabot-alerts-new-repos-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "github_organization_settings")
     mql: |
@@ -2532,7 +2644,7 @@ queries:
     impact: 70
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-tvm-03
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-tvm-05
       compliance/dora: dora-art-9
       compliance/hipaa: false
       compliance/iso-27001-2022: iso-27001-2022-a-8-8
@@ -2543,8 +2655,8 @@ queries:
       compliance/nist-sp-800-171: nist-sp-800-171--3-14-1
       compliance/owasp-top-10-2025: owasp-top-10-2025-a03
       compliance/pci-dss-4: pcidss-requirement-6-3-3
-      compliance/soc2-2017: soc2-control-cc7-1-2
-      compliance/vda-isa-5: vda-isa-5-5-2-1
+      compliance/soc2-2017: soc2-control-cc7-1-5
+      compliance/vda-isa-5: vda-isa-5-5-2-5
     variants:
       - uid: mondoo-github-organization-security-dependabot-security-updates-new-repos-github
         tags:
@@ -2566,7 +2678,7 @@ queries:
       desc: |
         This check verifies that repositories created in the organization automatically get pull requests that upgrade vulnerable dependencies.
 
-        Security updates go a step past alerting: GitHub opens pull requests that raise a vulnerable dependency to the minimum patched version. GitHub labels the setting Security updates and places it beside Dependabot alerts and Dependency graph in the dependency scanning group of a security configuration, under Advanced Security, Configurations in the Security section of the Organization Settings sidebar. Both of those neighbors have to be on as well before security updates can do anything. The check passes only when security updates are on in the configuration that applies by default to newly created repositories. The Terraform version of this check reads `dependabot_security_updates_enabled_for_new_repositories` on a `github_organization_settings` resource and requires the same value.
+        Security updates go a step past alerting: GitHub opens pull requests that raise a vulnerable dependency to the minimum patched version. GitHub labels the setting Security updates and places it beside Dependabot alerts and Dependency graph in the dependency scanning group of a security configuration, under Advanced Security, Configurations in the Security section of the Organization Settings sidebar. Both of those neighbors have to be on as well before security updates can do anything. The check passes when the configuration GitHub applies to all new repositories turns security updates on, or when the configurations applied to new public repositories and to new private and internal repositories both turn it on. An organization that has not moved to security configurations is assessed on the deprecated organization setting for new repositories instead. The GitHub Terraform provider has no resource for security configurations, so the Terraform version of this check reads the deprecated `dependabot_security_updates_enabled_for_new_repositories` on a `github_organization_settings` resource and requires it to be `true`.
 
         **Why this matters**
 
@@ -2584,17 +2696,24 @@ queries:
         2. Go to **Settings**. In the sidebar under **Security**, select **Advanced Security** > **Configurations**.
         3. Review the security configuration applied as the default for new repositories and confirm **Dependabot security updates** is set to **Enabled**.
 
-        If the default configuration for new repositories enables Dependabot security updates, the check passes. If it does not, the check fails. On organizations that have not yet migrated to security configurations, this setting appears on the legacy **Settings** > **Code security and analysis** page under "Dependabot security updates."
+        The check passes when the default configuration for all new repositories enables Dependabot security updates, or when the defaults for new public repositories and for new private and internal repositories both enable it. Otherwise it fails. On organizations that have not yet migrated to security configurations, this setting appears on the legacy **Settings** > **Code security and analysis** page under "Dependabot security updates."
 
         ### Audit via CLI
 
-        1. Query the organization's Dependabot security updates default:
+        1. List the security configurations set as defaults for new repositories and the Dependabot security updates setting each one applies:
+
+           ```bash
+           gh api /orgs/ORG/code-security/configurations/defaults \
+             --jq '.[] | {default_for_new_repos, name: .configuration.name, dependabot_security_updates: .configuration.dependabot_security_updates}'
+           ```
+
+        2. On an organization that has not moved to security configurations, query the deprecated organization setting instead:
 
            ```bash
            gh api /orgs/ORG --jq '.dependabot_security_updates_enabled_for_new_repositories'
            ```
 
-        If the command returns `true`, the check passes. If it returns `false`, the check fails.
+        The check passes when the default whose `default_for_new_repos` is `all` reports `dependabot_security_updates` as `enabled`, when the `public` and `private_and_internal` defaults both report it as `enabled`, or when the deprecated setting returns `true`. Otherwise it fails.
       remediation:
         - id: github
           desc: |
@@ -2625,7 +2744,31 @@ queries:
           desc: |
             **Using GitHub CLI**
 
-            GitHub has deprecated this organization-level field in favor of code security configurations, but it remains functional:
+            To turn on Dependabot security updates for new repositories through a security configuration:
+
+            1. List the organization's configurations and note the ID of the one to use. The API rejects changes to the configurations GitHub provides, so use one the organization created:
+
+               ```bash
+               gh api /orgs/ORG/code-security/configurations --jq '.[] | {id, name, target_type}'
+               ```
+
+            2. Turn on Dependabot security updates in that configuration:
+
+               ```bash
+               gh api --method PATCH /orgs/ORG/code-security/configurations/CONFIGURATION_ID \
+                 -f dependency_graph=enabled \
+                 -f dependabot_alerts=enabled \
+                 -f dependabot_security_updates=enabled
+               ```
+
+            3. Make the configuration the default for all new repositories:
+
+               ```bash
+               gh api --method PUT /orgs/ORG/code-security/configurations/CONFIGURATION_ID/defaults \
+                 -f default_for_new_repos=all
+               ```
+
+            On an organization that has not moved to security configurations, set the deprecated organization field instead:
 
             ```bash
             gh api --method PATCH /orgs/ORG \
@@ -2636,7 +2779,11 @@ queries:
         title: Configuring Dependabot security updates
   - uid: mondoo-github-organization-security-dependabot-security-updates-new-repos-github
     filters: asset.platform == "github-org"
-    mql: github.organization.dependabotSecurityUpdatesEnabledForNewRepos == true
+    mql: |
+      github.organization.dependabotSecurityUpdatesEnabledForNewRepos == true ||
+        github.organization.codeSecurityConfigurations.any(defaultForNewRepos == "all" && dependabotSecurityUpdates == "enabled") ||
+        github.organization.codeSecurityConfigurations.any(defaultForNewRepos == "public" && dependabotSecurityUpdates == "enabled") &&
+        github.organization.codeSecurityConfigurations.any(defaultForNewRepos == "private_and_internal" && dependabotSecurityUpdates == "enabled")
   - uid: mondoo-github-organization-security-dependabot-security-updates-new-repos-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "github_organization_settings")
     mql: |
@@ -3868,19 +4015,19 @@ queries:
     impact: 80
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-tvm-03
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-tvm-07
       compliance/dora: dora-art-9
       compliance/hipaa: false
       compliance/iso-27001-2022: iso-27001-2022-a-8-8
       compliance/nis-2: nis-2-21-2-e
       compliance/nist-csf-1: nist-csf-1-de-cm-8
-      compliance/nist-csf-2: nist-csf-2-de-cm-09
+      compliance/nist-csf-2: nist-csf-2-id-ra-01
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ra-5
       compliance/nist-sp-800-171: nist-sp-800-171--3-11-2
       compliance/owasp-top-10-2025: owasp-top-10-2025-a02
-      compliance/pci-dss-4: pcidss-requirement-6-3-3
-      compliance/soc2-2017: soc2-control-cc7-1-1
-      compliance/vda-isa-5: vda-isa-5-5-2-1
+      compliance/pci-dss-4: pcidss-requirement-6-3-1
+      compliance/soc2-2017: soc2-control-cc7-1-5
+      compliance/vda-isa-5: vda-isa-5-5-2-5
     variants:
       - uid: mondoo-github-organization-security-advanced-security-new-repos-github
         tags:
@@ -3902,7 +4049,7 @@ queries:
       desc: |
         This check verifies that GitHub Advanced Security is turned on automatically for repositories newly created in the organization.
 
-        GitHub Advanced Security is the bundle that adds code scanning, secret scanning with push protection, and dependency review to a repository. Turning it on for repositories that do not exist yet is a default in the organization's security settings, where each feature offers an option to enable it by default for new repositories, and the check passes only when that default is on. GitHub has since split Advanced Security into separately licensed products, so the exact wording and placement of the control depend on the plan and the licenses in place. The Terraform version of this check reads `advanced_security_enabled_for_new_repositories` on a `github_organization_settings` resource and requires the same value.
+        GitHub Advanced Security is the bundle that adds code scanning, secret scanning with push protection, and dependency review to a repository. Organizations turn it on for repositories that do not exist yet through a security configuration, built under Advanced Security, Configurations in the Security section of the Organization Settings sidebar and set as the default for new repositories. GitHub has since split Advanced Security into two separately licensed products, GitHub Code Security and GitHub Secret Protection, so a configuration counts when it turns on Advanced Security as a whole or both of those products. The check passes when the configuration GitHub applies to all new repositories turns Advanced Security on, or when the configurations applied to new public repositories and to new private and internal repositories both turn it on. An organization that has not moved to security configurations is assessed on the deprecated organization setting for new repositories instead. The GitHub Terraform provider has no resource for security configurations, so the Terraform version of this check reads the deprecated `advanced_security_enabled_for_new_repositories` on a `github_organization_settings` resource and requires it to be `true`.
 
         **Why this matters**
 
@@ -3920,17 +4067,24 @@ queries:
         2. Go to **Settings**. In the sidebar under **Security**, select **Advanced Security** > **Configurations**.
         3. Review the security configuration applied as the default for new repositories and confirm GitHub Advanced Security features are set to **Enabled**.
 
-        If the default configuration for new repositories enables GitHub Advanced Security, the check passes. If it does not, the check fails. On organizations that have not yet migrated to security configurations, this setting appears on the legacy **Settings** > **Code security and analysis** page under "GitHub Advanced Security."
+        The check passes when the default configuration for all new repositories enables GitHub Advanced Security, or when the defaults for new public repositories and for new private and internal repositories both enable it. Otherwise it fails. On organizations that have not yet migrated to security configurations, this setting appears on the legacy **Settings** > **Code security and analysis** page under "GitHub Advanced Security."
 
         ### Audit via CLI
 
-        1. Query the organization's advanced security default:
+        1. List the security configurations set as defaults for new repositories and the GitHub Advanced Security settings each one applies:
+
+           ```bash
+           gh api /orgs/ORG/code-security/configurations/defaults \
+             --jq '.[] | {default_for_new_repos, name: .configuration.name, advanced_security: .configuration.advanced_security, code_security: .configuration.code_security, secret_protection: .configuration.secret_protection}'
+           ```
+
+        2. On an organization that has not moved to security configurations, query the deprecated organization setting instead:
 
            ```bash
            gh api /orgs/ORG --jq '.advanced_security_enabled_for_new_repositories'
            ```
 
-        If the command returns `true`, the check passes. If it returns `false`, the check fails.
+        A configuration turns Advanced Security on when it reports `advanced_security` as `enabled`, or `code_security` and `secret_protection` both as `enabled`. The check passes when the default whose `default_for_new_repos` is `all` turns it on, when the `public` and `private_and_internal` defaults both turn it on, or when the deprecated setting returns `true`. Otherwise it fails.
       remediation:
         - id: github
           desc: |
@@ -3961,7 +4115,29 @@ queries:
           desc: |
             **Using GitHub CLI**
 
-            GitHub has deprecated this organization-level field in favor of code security configurations. It remains functional for organizations with legacy GitHub Advanced Security licensing; organizations on the newer unbundled Advanced Security products should use a security configuration instead:
+            To turn on GitHub Advanced Security for new repositories through a security configuration:
+
+            1. List the organization's configurations and note the ID of the one to use. The API rejects changes to the configurations GitHub provides, so use one the organization created:
+
+               ```bash
+               gh api /orgs/ORG/code-security/configurations --jq '.[] | {id, name, target_type}'
+               ```
+
+            2. Turn on GitHub Advanced Security in that configuration:
+
+               ```bash
+               gh api --method PATCH /orgs/ORG/code-security/configurations/CONFIGURATION_ID \
+                 -f advanced_security=enabled
+               ```
+
+            3. Make the configuration the default for all new repositories:
+
+               ```bash
+               gh api --method PUT /orgs/ORG/code-security/configurations/CONFIGURATION_ID/defaults \
+                 -f default_for_new_repos=all
+               ```
+
+            On an organization that has not moved to security configurations, set the deprecated organization field instead:
 
             ```bash
             gh api --method PATCH /orgs/ORG \
@@ -3975,7 +4151,10 @@ queries:
   - uid: mondoo-github-organization-security-advanced-security-new-repos-github
     filters: asset.platform == "github-org"
     mql: |
-      github.organization.advancedSecurityEnabledForNewRepos
+      github.organization.advancedSecurityEnabledForNewRepos == true ||
+        github.organization.codeSecurityConfigurations.where(defaultForNewRepos == "all").any(advancedSecurity == "enabled" || codeSecurity == "enabled" && secretProtection == "enabled") ||
+        github.organization.codeSecurityConfigurations.where(defaultForNewRepos == "public").any(advancedSecurity == "enabled" || codeSecurity == "enabled" && secretProtection == "enabled") &&
+        github.organization.codeSecurityConfigurations.where(defaultForNewRepos == "private_and_internal").any(advancedSecurity == "enabled" || codeSecurity == "enabled" && secretProtection == "enabled")
   - uid: mondoo-github-organization-security-advanced-security-new-repos-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "github_organization_settings")
     mql: |
@@ -3999,19 +4178,19 @@ queries:
     impact: 70
     tags:
       compliance/bsi-sys-1-5: false
-      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-tvm-03
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-tvm-05
       compliance/dora: dora-art-9
       compliance/hipaa: false
       compliance/iso-27001-2022: iso-27001-2022-a-8-8
       compliance/nis-2: nis-2-21-2-e
       compliance/nist-csf-1: nist-csf-1-de-cm-8
-      compliance/nist-csf-2: nist-csf-2-de-cm-09
+      compliance/nist-csf-2: nist-csf-2-id-ra-01
       compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ra-5
       compliance/nist-sp-800-171: nist-sp-800-171--3-11-2
       compliance/owasp-top-10-2025: owasp-top-10-2025-a03
-      compliance/pci-dss-4: pcidss-requirement-6-3-3
-      compliance/soc2-2017: soc2-control-cc7-1-1
-      compliance/vda-isa-5: vda-isa-5-5-2-1
+      compliance/pci-dss-4: pcidss-requirement-6-3-2
+      compliance/soc2-2017: soc2-control-cc7-1-5
+      compliance/vda-isa-5: vda-isa-5-5-2-5
     variants:
       - uid: mondoo-github-organization-security-dependency-graph-new-repos-github
         tags:
@@ -4033,7 +4212,7 @@ queries:
       desc: |
         This check verifies that the dependency graph is turned on automatically for repositories newly created in the organization.
 
-        The dependency graph parses the manifest and lock files committed to a repository and builds the inventory of what that repository depends on. Dependabot alerts, Dependabot security updates, dependency review, and SBOM export all read from it, so none of them has anything to work with until it is on. The organization sets it for repositories that do not exist yet through the option to enable it by default for new repositories, and the check passes only when that default is on. The Terraform version of this check reads `dependency_graph_enabled_for_new_repositories` on a `github_organization_settings` resource and requires the same value.
+        The dependency graph parses the manifest and lock files committed to a repository and builds the inventory of what that repository depends on. Dependabot alerts, Dependabot security updates, dependency review, and SBOM export all read from it, so none of them has anything to work with until it is on. The organization turns it on for repositories that do not exist yet through a security configuration, built under Advanced Security, Configurations in the Security section of the Organization Settings sidebar and set as the default for new repositories. The check passes when the configuration GitHub applies to all new repositories turns the dependency graph on, or when the configurations applied to new public repositories and to new private and internal repositories both turn it on. An organization that has not moved to security configurations is assessed on the deprecated organization setting for new repositories instead. The GitHub Terraform provider has no resource for security configurations, so the Terraform version of this check reads the deprecated `dependency_graph_enabled_for_new_repositories` on a `github_organization_settings` resource and requires it to be `true`.
 
         **Why this matters**
 
@@ -4051,17 +4230,24 @@ queries:
         2. Go to **Settings**. In the sidebar under **Security**, select **Advanced Security** > **Configurations**.
         3. Review the security configuration applied as the default for new repositories and confirm **Dependency graph** is set to **Enabled**.
 
-        If the default configuration for new repositories enables the dependency graph, the check passes. If it does not, the check fails. On organizations that have not yet migrated to security configurations, this setting appears on the legacy **Settings** > **Code security and analysis** page under "Dependency graph."
+        The check passes when the default configuration for all new repositories enables the dependency graph, or when the defaults for new public repositories and for new private and internal repositories both enable it. Otherwise it fails. On organizations that have not yet migrated to security configurations, this setting appears on the legacy **Settings** > **Code security and analysis** page under "Dependency graph."
 
         ### Audit via CLI
 
-        1. Query the organization's dependency graph default:
+        1. List the security configurations set as defaults for new repositories and the the dependency graph setting each one applies:
+
+           ```bash
+           gh api /orgs/ORG/code-security/configurations/defaults \
+             --jq '.[] | {default_for_new_repos, name: .configuration.name, dependency_graph: .configuration.dependency_graph}'
+           ```
+
+        2. On an organization that has not moved to security configurations, query the deprecated organization setting instead:
 
            ```bash
            gh api /orgs/ORG --jq '.dependency_graph_enabled_for_new_repositories'
            ```
 
-        If the command returns `true`, the check passes. If it returns `false`, the check fails.
+        The check passes when the default whose `default_for_new_repos` is `all` reports `dependency_graph` as `enabled`, when the `public` and `private_and_internal` defaults both report it as `enabled`, or when the deprecated setting returns `true`. Otherwise it fails.
       remediation:
         - id: github
           desc: |
@@ -4092,7 +4278,29 @@ queries:
           desc: |
             **Using GitHub CLI**
 
-            GitHub has deprecated this organization-level field in favor of code security configurations, but it remains functional:
+            To turn on the dependency graph for new repositories through a security configuration:
+
+            1. List the organization's configurations and note the ID of the one to use. The API rejects changes to the configurations GitHub provides, so use one the organization created:
+
+               ```bash
+               gh api /orgs/ORG/code-security/configurations --jq '.[] | {id, name, target_type}'
+               ```
+
+            2. Turn on the dependency graph in that configuration:
+
+               ```bash
+               gh api --method PATCH /orgs/ORG/code-security/configurations/CONFIGURATION_ID \
+                 -f dependency_graph=enabled
+               ```
+
+            3. Make the configuration the default for all new repositories:
+
+               ```bash
+               gh api --method PUT /orgs/ORG/code-security/configurations/CONFIGURATION_ID/defaults \
+                 -f default_for_new_repos=all
+               ```
+
+            On an organization that has not moved to security configurations, set the deprecated organization field instead:
 
             ```bash
             gh api --method PATCH /orgs/ORG \
@@ -4106,7 +4314,10 @@ queries:
   - uid: mondoo-github-organization-security-dependency-graph-new-repos-github
     filters: asset.platform == "github-org"
     mql: |
-      github.organization.dependencyGraphEnabledForNewRepos
+      github.organization.dependencyGraphEnabledForNewRepos == true ||
+        github.organization.codeSecurityConfigurations.any(defaultForNewRepos == "all" && dependencyGraph == "enabled") ||
+        github.organization.codeSecurityConfigurations.any(defaultForNewRepos == "public" && dependencyGraph == "enabled") &&
+        github.organization.codeSecurityConfigurations.any(defaultForNewRepos == "private_and_internal" && dependencyGraph == "enabled")
   - uid: mondoo-github-organization-security-dependency-graph-new-repos-terraform-hcl
     filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "github_organization_settings")
     mql: |
@@ -4196,3 +4407,751 @@ queries:
     refs:
       - url: https://docs.github.com/en/enterprise-cloud@latest/admin/monitoring-activity-in-your-enterprise/reviewing-audit-logs-for-your-enterprise/streaming-the-audit-log-for-your-enterprise
         title: Streaming the audit log for your enterprise
+  # No Terraform variants: the integrations/github provider (v6.13) has no argument for the
+  # fork pull request contributor approval policy on any organization resource.
+  - uid: mondoo-github-organization-security-actions-fork-pr-approval
+    filters: asset.platform == "github-org"
+    title: Ensure fork pull request workflows from outside contributors need approval
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ais-06
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-25
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ip-2
+      compliance/nist-csf-2: nist-csf-2-pr-ps-06
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-3
+      compliance/nist-sp-800-171: false
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a08
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: false
+    mql: |
+      github.organization.actionsSettings.enabledRepositories == "none" ||
+        github.organization.actionsSettings.forkPrApprovalPolicy == "first_time_contributors" ||
+        github.organization.actionsSettings.forkPrApprovalPolicy == "all_external_contributors"
+    docs:
+      desc: |
+        This check verifies that GitHub Actions workflows triggered by pull requests from outside contributors' forks wait for a maintainer to approve them before they run.
+
+        GitHub calls this setting **Approval for running fork pull request workflows from contributors**, under Organization Settings, Actions, General. It offers three levels: Require approval for first-time contributors who are new to GitHub, Require approval for first-time contributors, and Require approval for all external contributors. GitHub's default requires approval for all first-time contributors. The check passes with either of the two stricter levels and fails when approval is limited to contributors whose GitHub accounts are new. It also passes when GitHub Actions is disabled for every repository in the organization.
+
+        **Why this matters**
+
+        A pull request from a fork can change the workflow files it runs. Without an approval gate, opening that pull request is enough to run the author's code on the organization's runners. On GitHub-hosted runners that is free compute for cryptocurrency mining charged to the organization. On a self-hosted runner that is not wiped between jobs, it is code execution inside the organization's network, with access to whatever the machine can reach and to the jobs that run on it afterward.
+
+        The weakest level stops only accounts that are new to GitHub, and an account with some history is cheap to buy or build. Requiring approval for every first-time contributor closes that gap. Requiring it for all external contributors also closes the path where an attacker lands one harmless pull request, such as a typo fix, so that the next one no longer counts as a first contribution.
+
+        Approval gates workflows that fork pull requests trigger through the `pull_request` event. Workflows triggered by `pull_request_target` always run in the context of the base branch whatever this setting says, so review those separately. Organizations that run self-hosted runners for public repositories should require approval for all external contributors.
+      audit: |
+        ### Audit via Console
+
+        1. Navigate to your organization on GitHub.
+        2. Go to **Settings**. In the sidebar, select **Actions** > **General**.
+        3. Review the option selected under **Approval for running fork pull request workflows from contributors**.
+
+        The check passes when **Require approval for first-time contributors** or **Require approval for all external contributors** is selected. It fails when **Require approval for first-time contributors who are new to GitHub** is selected.
+
+        ### Audit via CLI
+
+        1. Query the organization's approval policy for fork pull request workflows:
+
+           ```bash
+           gh api /orgs/ORG/actions/permissions/fork-pr-contributor-approval --jq '.approval_policy'
+           ```
+
+        The check passes when the command returns `first_time_contributors` or `all_external_contributors`. It fails when it returns `first_time_contributors_new_to_github`.
+      remediation:
+        - id: github
+          desc: |
+            **Using the GitHub web UI**
+
+            1. Navigate to your organization on GitHub.
+            2. Go to **Settings**. In the sidebar, select **Actions** > **General**.
+            3. Under **Approval for running fork pull request workflows from contributors**, select **Require approval for all external contributors**, or **Require approval for first-time contributors** where maintainers cannot review every outside pull request.
+            4. Click **Save**.
+
+            For more details, see [Disabling or limiting GitHub Actions for your organization](https://docs.github.com/en/organizations/managing-organization-settings/disabling-or-limiting-github-actions-for-your-organization) in the GitHub documentation.
+        - id: cli
+          desc: |
+            **Using GitHub CLI**
+
+            To require approval for every outside contributor using GitHub CLI:
+
+            1. Set the organization's approval policy:
+
+               ```bash
+               gh api --method PUT /orgs/ORG/actions/permissions/fork-pr-contributor-approval \
+                 -f approval_policy=all_external_contributors
+               ```
+
+            2. Confirm the new value:
+
+               ```bash
+               gh api /orgs/ORG/actions/permissions/fork-pr-contributor-approval --jq '.approval_policy'
+               ```
+        # No Terraform remediation: the integrations/github provider (v6.13) cannot set the fork pull request contributor approval policy.
+    refs:
+      - url: https://docs.github.com/en/organizations/managing-organization-settings/disabling-or-limiting-github-actions-for-your-organization
+        title: Disabling or limiting GitHub Actions for your organization
+  # No Terraform variants: the integrations/github provider (v6.13) has no arguments for the
+  # private repository fork pull request workflow settings on any organization resource.
+  #
+  # The fork pull request settings read null where GitHub reports that they do not apply to the
+  # organization, so the query asserts `!= true` and passes those organizations.
+  - uid: mondoo-github-organization-security-actions-fork-pr-private-repos-restricted
+    filters: asset.platform == "github-org"
+    title: Ensure private repository fork pull requests get no write token or secrets
+    impact: 85
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-3
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-7-2-5
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    mql: |
+      github.organization.actionsSettings.forkPrWorkflowsEnabled != true ||
+        github.organization.actionsSettings.forkPrWriteTokens != true &&
+        github.organization.actionsSettings.forkPrSecretsAndVariables != true
+    docs:
+      desc: |
+        This check verifies that workflows triggered by pull requests from forks of the organization's private and internal repositories run without a token that can write to the repository and without access to its secrets.
+
+        GitHub groups these settings under **Fork pull request workflows** in Organization Settings, Actions, General. **Run workflows from fork pull requests** decides whether such workflows run at all, and **Send write tokens to workflows from pull requests** and **Send secrets to workflows from pull requests** decide what they receive. The check passes when fork pull request workflows do not run, or when they run with both of the other two settings turned off. Organizations for which GitHub reports the settings as not applicable also pass.
+
+        **Why this matters**
+
+        The workflow a fork pull request runs is the version in that pull request, so its author decides what the job does. With write tokens sent, the `GITHUB_TOKEN` in that run can push to the base repository, publish releases, and edit issues and pull requests. With secrets sent, every Actions secret and variable available to the repository is handed to code the pull request author wrote, and sending them to a server the author controls is one line in a workflow step.
+
+        Forking a private repository requires read access, but read access is granted far more widely than write access: to outside collaborators, to contractors, and to every member through the organization's base permissions. These two settings turn that read access into write access and into the deployment credentials stored as secrets.
+
+        Repository administrators cannot turn on a fork pull request setting that the organization has turned off, so setting these at the organization level holds for every private repository. Keep **Require approval for fork pull request workflows** on as well, so that a maintainer reviews the workflow before it runs.
+      audit: |
+        ### Audit via Console
+
+        1. Navigate to your organization on GitHub.
+        2. Go to **Settings**. In the sidebar, select **Actions** > **General**.
+        3. Review the options under **Fork pull request workflows**.
+
+        The check passes when **Run workflows from fork pull requests** is cleared, or when **Send write tokens to workflows from pull requests** and **Send secrets to workflows from pull requests** are both cleared. Otherwise it fails.
+
+        ### Audit via CLI
+
+        1. Query the organization's fork pull request workflow settings for private repositories:
+
+           ```bash
+           gh api /orgs/ORG/actions/permissions/fork-pr-workflows-private-repos
+           ```
+
+        The check passes when `run_workflows_from_fork_pull_requests` is `false`, or when `send_write_tokens_to_workflows` and `send_secrets_and_variables` are both `false`. Otherwise it fails.
+      remediation:
+        - id: github
+          desc: |
+            **Using the GitHub web UI**
+
+            1. Navigate to your organization on GitHub.
+            2. Go to **Settings**. In the sidebar, select **Actions** > **General**.
+            3. Under **Fork pull request workflows**, clear **Send write tokens to workflows from pull requests** and **Send secrets to workflows from pull requests**, and select **Require approval for fork pull request workflows**. Clear **Run workflows from fork pull requests** instead if the organization's private repositories do not accept pull requests from forks.
+            4. Click **Save**.
+
+            For more details, see [Disabling or limiting GitHub Actions for your organization](https://docs.github.com/en/organizations/managing-organization-settings/disabling-or-limiting-github-actions-for-your-organization) in the GitHub documentation.
+        - id: cli
+          desc: |
+            **Using GitHub CLI**
+
+            To withhold write tokens and secrets from fork pull request workflows using GitHub CLI:
+
+            1. Update the organization's fork pull request workflow settings for private repositories:
+
+               ```bash
+               gh api --method PUT /orgs/ORG/actions/permissions/fork-pr-workflows-private-repos \
+                 -F run_workflows_from_fork_pull_requests=true \
+                 -F send_write_tokens_to_workflows=false \
+                 -F send_secrets_and_variables=false \
+                 -F require_approval_for_fork_pr_workflows=true
+               ```
+
+            2. Confirm the new values:
+
+               ```bash
+               gh api /orgs/ORG/actions/permissions/fork-pr-workflows-private-repos
+               ```
+        # No Terraform remediation: the integrations/github provider (v6.13) cannot set the private repository fork pull request workflow settings.
+    refs:
+      - url: https://docs.github.com/en/organizations/managing-organization-settings/disabling-or-limiting-github-actions-for-your-organization
+        title: Disabling or limiting GitHub Actions for your organization
+  # No Terraform variants: the integrations/github provider (v6.13) has no argument that limits
+  # which repositories may use self-hosted runners.
+  - uid: mondoo-github-organization-security-actions-self-hosted-runners-selected-repos
+    filters: asset.platform == "github-org"
+    title: Ensure self-hosted runners are limited to selected repositories
+    impact: 75
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-3
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-7-2-5
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    mql: |
+      github.organization.actionsSettings.enabledRepositories == "none" ||
+        github.organization.actionsSettings.selfHostedRunnersEnabledRepositories == "selected" ||
+        github.organization.actionsSettings.selfHostedRunnersEnabledRepositories == "none"
+    docs:
+      desc: |
+        This check verifies that only repositories the organization has chosen can register and use their own self-hosted runners.
+
+        GitHub controls this under **Runners** in Organization Settings, Actions, General, with three options: All repositories, Selected repositories, and Disabled. The check passes with Selected repositories or Disabled, and fails with All repositories. It also passes when GitHub Actions is disabled for every repository in the organization. The setting governs runners registered on individual repositories. Runners registered on the organization or the enterprise remain available through runner groups.
+
+        **Why this matters**
+
+        A self-hosted runner is a machine the organization operates, and GitHub does not guarantee that it is a clean, ephemeral virtual machine. Code in a workflow job runs on it with the runner's own access to the network and to anything left on disk by earlier jobs. Anyone who can make a workflow run on the runner, including the author of a pull request from a fork, can compromise it and reach the secrets and the `GITHUB_TOKEN` of jobs that run there later.
+
+        With All repositories selected, any repository administrator can attach a machine to a repository as a runner, without the organization knowing the machine exists, how it is hardened, or what it can reach. A developer's workstation or a build server inside the corporate network registered on a public repository is exactly the exposure GitHub's documentation warns about, and it is created without any review.
+
+        Selecting repositories turns runner registration into a decision the organization makes per repository. Route shared runners through organization runner groups that restrict which repositories and workflows can use them, and keep self-hosted runners away from public repositories.
+      audit: |
+        ### Audit via Console
+
+        1. Navigate to your organization on GitHub.
+        2. Go to **Settings**. In the sidebar, select **Actions** > **General**.
+        3. Review the option selected under **Runners**.
+
+        The check passes when **Selected repositories** or **Disabled** is selected. It fails when **All repositories** is selected.
+
+        ### Audit via CLI
+
+        1. Query which repositories may use self-hosted runners:
+
+           ```bash
+           gh api /orgs/ORG/actions/permissions/self-hosted-runners --jq '.enabled_repositories'
+           ```
+
+        The check passes when the command returns `selected` or `none`. It fails when it returns `all`.
+      remediation:
+        - id: github
+          desc: |
+            **Using the GitHub web UI**
+
+            1. Navigate to your organization on GitHub.
+            2. Go to **Settings**. In the sidebar, select **Actions** > **General**.
+            3. Under **Runners**, select **Selected repositories**, or **Disabled** if no repository needs its own self-hosted runners.
+            4. For **Selected repositories**, open the repository selector, check the repositories that may use self-hosted runners, and click **Select repositories**.
+
+            Runners already registered on repositories that are no longer allowed show as disabled and receive no new jobs. For more details, see [Disabling or limiting GitHub Actions for your organization](https://docs.github.com/en/organizations/managing-organization-settings/disabling-or-limiting-github-actions-for-your-organization) in the GitHub documentation.
+        - id: cli
+          desc: |
+            **Using GitHub CLI**
+
+            To limit self-hosted runners to selected repositories using GitHub CLI:
+
+            1. Restrict the setting to selected repositories:
+
+               ```bash
+               gh api --method PUT /orgs/ORG/actions/permissions/self-hosted-runners \
+                 -f enabled_repositories=selected
+               ```
+
+            2. Find the ID of each repository that needs its own self-hosted runners:
+
+               ```bash
+               gh api /repos/ORG/REPO --jq '.id'
+               ```
+
+            3. Allow those repositories, replacing `123456789` with the IDs from the previous step:
+
+               ```bash
+               gh api --method PUT /orgs/ORG/actions/permissions/self-hosted-runners/repositories \
+                 -F 'selected_repository_ids[]=123456789'
+               ```
+        # No Terraform remediation: the integrations/github provider (v6.13) cannot set which repositories may use self-hosted runners.
+    refs:
+      - url: https://docs.github.com/en/organizations/managing-organization-settings/disabling-or-limiting-github-actions-for-your-organization
+        title: Disabling or limiting GitHub Actions for your organization
+  - uid: mondoo-github-organization-security-codespaces-secrets-not-all-repos
+    title: Ensure organization Codespaces secrets are not shared with every repository
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-iam-05
+      compliance/dora: dora-art-9
+      compliance/hipaa: hipaa-security-ss164-312-a-1-access-control
+      compliance/iso-27001-2022: iso-27001-2022-a-8-3
+      compliance/nis-2: nis-2-21-2-i
+      compliance/nist-csf-1: nist-csf-1-pr-ac-4
+      compliance/nist-csf-2: nist-csf-2-pr-aa-05
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ac-6
+      compliance/nist-sp-800-171: nist-sp-800-171--3-1-5
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a01
+      compliance/pci-dss-4: pcidss-requirement-7-2-5
+      compliance/soc2-2017: soc2-control-cc6-1-3
+      compliance/vda-isa-5: vda-isa-5-4-2-1
+    variants:
+      - uid: mondoo-github-organization-security-codespaces-secrets-not-all-repos-github
+        tags:
+          mondoo.com/filter-title: GitHub Organization
+          mondoo.com/filter-icon: github
+      - uid: mondoo-github-organization-security-codespaces-secrets-not-all-repos-terraform-hcl
+        tags:
+          mondoo.com/filter-title: Terraform HCL
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-github-organization-security-codespaces-secrets-not-all-repos-terraform-plan
+        tags:
+          mondoo.com/filter-title: Terraform Plan
+          mondoo.com/filter-icon: terraform
+      - uid: mondoo-github-organization-security-codespaces-secrets-not-all-repos-terraform-state
+        tags:
+          mondoo.com/filter-title: Terraform State
+          mondoo.com/filter-icon: terraform
+    docs:
+      desc: |
+        This check verifies that no organization-level Codespaces secret is handed to the codespaces of every repository in the organization.
+
+        Codespaces secrets are credentials GitHub injects as environment variables into codespaces, kept in a store separate from GitHub Actions secrets. Each organization secret carries a **Repository access** policy, set under Organization Settings, Secrets and variables, Codespaces, with three choices: All repositories, Private repositories, and Selected repositories. The check fails when any organization secret uses All repositories. Organizations where GitHub does not offer organization Codespaces secrets pass. The Terraform version of this check reads `visibility` on each `github_codespaces_organization_secret` resource and requires a value other than `all`.
+
+        **Why this matters**
+
+        Anyone who can open a codespace on a repository can read every secret delivered to it, since the secret is an ordinary environment variable inside a development environment they control. With All repositories selected, that is anyone with access to any repository in the organization, including public repositories and repositories shared with outside collaborators and contractors. A credential meant for one service's integration tests ends up readable by everyone who can create a codespace anywhere in the organization.
+
+        A secret with that reach is also hard to rotate safely, because nobody can say which projects depend on it, and a leak cannot be traced to a project either. Limiting it to the repositories that need it keeps both the exposure and the cleanup bounded.
+
+        Prefer Selected repositories. Private repositories is narrower than All repositories but still covers every private and internal repository the organization creates in the future.
+      audit: |
+        ### Audit via Console
+
+        1. Navigate to your organization on GitHub.
+        2. Go to **Settings**. In the sidebar, select **Secrets and variables** > **Codespaces**.
+        3. Review the repository access shown for each organization secret.
+
+        The check passes when no secret is available to all repositories. It fails when any secret is.
+
+        ### Audit via CLI
+
+        1. List the organization Codespaces secrets available to all repositories:
+
+           ```bash
+           gh api /orgs/ORG/codespaces/secrets --jq '.secrets[] | select(.visibility == "all") | .name'
+           ```
+
+        The check passes when the command prints nothing. It fails when it prints any secret name.
+      remediation:
+        - id: github
+          desc: |
+            **Using the GitHub web UI**
+
+            1. Navigate to your organization on GitHub.
+            2. Go to **Settings**. In the sidebar, select **Secrets and variables** > **Codespaces**.
+            3. Next to each secret available to all repositories, click **Update**.
+            4. From the **Repository access** dropdown list, choose **Selected repositories** and select the repositories that need the secret.
+            5. Click **Save changes**.
+
+            For more details, see [Managing development environment secrets for your repository or organization](https://docs.github.com/en/codespaces/managing-codespaces-for-your-organization/managing-development-environment-secrets-for-your-repository-or-organization) in the GitHub documentation.
+        - id: terraform
+          desc: |
+            **Using Terraform**
+
+            Set `visibility` to `selected` and list the repositories that need the secret:
+
+            ```hcl
+            variable "example_secret" {
+              type      = string
+              sensitive = true
+            }
+
+            resource "github_codespaces_organization_secret" "example" {
+              secret_name             = "EXAMPLE_SECRET"
+              plaintext_value         = var.example_secret
+              visibility              = "selected"
+              selected_repository_ids = [123456789]
+            }
+            ```
+        - id: cli
+          desc: |
+            **Using GitHub CLI**
+
+            To limit an organization Codespaces secret to selected repositories using GitHub CLI:
+
+            1. Set the secret again with a selected repository list. GitHub CLI prompts for the secret's value:
+
+               ```bash
+               gh secret set SECRET_NAME --org ORG --app codespaces \
+                 --visibility selected --repos REPO_1,REPO_2
+               ```
+
+            2. Confirm that no secret is still available to all repositories:
+
+               ```bash
+               gh api /orgs/ORG/codespaces/secrets --jq '.secrets[] | select(.visibility == "all") | .name'
+               ```
+    refs:
+      - url: https://docs.github.com/en/codespaces/managing-codespaces-for-your-organization/managing-development-environment-secrets-for-your-repository-or-organization
+        title: Managing development environment secrets for your repository or organization
+  - uid: mondoo-github-organization-security-codespaces-secrets-not-all-repos-github
+    filters: asset.platform == "github-org"
+    mql: |
+      github.organization.codespacesSecrets == empty ||
+        github.organization.codespacesSecrets.none(visibility == "all")
+  - uid: mondoo-github-organization-security-codespaces-secrets-not-all-repos-terraform-hcl
+    filters: asset.platform == "terraform-hcl" && terraform.resources.contains(nameLabel == "github_codespaces_organization_secret")
+    mql: |
+      terraform.resources("github_codespaces_organization_secret").all(
+        arguments["visibility"] != empty && arguments["visibility"] != "all"
+      )
+  - uid: mondoo-github-organization-security-codespaces-secrets-not-all-repos-terraform-plan
+    filters: asset.platform == "terraform-plan" && terraform.plan.resourceChanges.contains(type == "github_codespaces_organization_secret")
+    mql: |
+      terraform.plan.resourceChanges
+        .where(type == "github_codespaces_organization_secret")
+        .all(change.after.visibility != empty && change.after.visibility != "all")
+  - uid: mondoo-github-organization-security-codespaces-secrets-not-all-repos-terraform-state
+    filters: asset.platform == "terraform-state" && terraform.state.resources.contains(type == "github_codespaces_organization_secret")
+    mql: |
+      terraform.state.resources
+        .where(type == "github_codespaces_organization_secret")
+        .all(values.visibility != empty && values.visibility != "all")
+  # No Terraform variants: the integrations/github provider (v6.13) has no resource for secret
+  # scanning push protection pattern settings.
+  - uid: mondoo-github-organization-security-push-protection-provider-patterns
+    filters: asset.platform == "github-org"
+    title: Ensure push protection is not disabled for any provider pattern
+    impact: 80
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-dsp-17
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-5-17
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-12
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a07
+      compliance/pci-dss-4: pcidss-requirement-8-6-2
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: vda-isa-5-4-1-3
+    mql: |
+      github.organization.secretScanningPatternConfigurations == empty ||
+        github.organization.secretScanningPatternConfigurations.where(kind == "provider").none(setting == "disabled")
+    docs:
+      desc: |
+        This check verifies that the organization has not switched push protection off for any type of credential that GitHub detects with its provider patterns.
+
+        Provider patterns are the secret formats GitHub recognizes on behalf of the services that issue them, such as cloud access keys and package registry tokens. Each pattern has a push protection setting that an organization can override in the **Pattern configurations** list, opened from the Secret scanning section of Organization Settings, Advanced Security, Global settings. The **Organization setting** column offers Enabled, Disabled, or no override, which leaves GitHub's default in place. The check fails when any provider pattern is set to Disabled at the organization level. Organizations where GitHub does not offer pattern configurations pass.
+
+        **Why this matters**
+
+        Push protection is only as complete as its pattern list. Switching it off for one pattern, usually to silence a noisy detector, means every push carrying that kind of credential goes straight through, in every repository that uses push protection, with no prompt for the person pushing. The override is easy to forget, and nothing in the repository shows that it exists.
+
+        A pushed credential is exposed the moment it reaches GitHub. It sits in the history and in every clone and fork made afterward, and on a public repository automated harvesters test leaked keys within minutes. Detection after the fact still means rotating the credential everywhere it is used, which is exactly the work push protection exists to avoid.
+
+        Where a pattern produces false positives, review the bypass requests or narrow the affected repositories rather than disabling the pattern for the whole organization.
+      audit: |
+        ### Audit via Console
+
+        1. Navigate to your organization on GitHub.
+        2. Go to **Settings**. In the sidebar under **Security**, select **Advanced Security** > **Global settings**.
+        3. In the **Secret scanning** section, click the gear icon next to **Pattern configurations**.
+        4. Review the **Organization setting** column for the provider patterns.
+
+        The check passes when no provider pattern is set to **Disabled**. It fails when any is.
+
+        ### Audit via CLI
+
+        1. List the provider patterns the organization has disabled for push protection:
+
+           ```bash
+           gh api /orgs/ORG/secret-scanning/pattern-configurations \
+             --jq '.provider_pattern_overrides[] | select(.setting == "disabled") | .display_name'
+           ```
+
+        The check passes when the command prints nothing. It fails when it prints any pattern name.
+      remediation:
+        - id: github
+          desc: |
+            **Using the GitHub web UI**
+
+            1. Navigate to your organization on GitHub.
+            2. Go to **Settings**. In the sidebar under **Security**, select **Advanced Security** > **Global settings**.
+            3. In the **Secret scanning** section, click the gear icon next to **Pattern configurations**.
+            4. For each provider pattern set to **Disabled** in the **Organization setting** column, change the setting to **Enabled**.
+            5. Save the changes.
+
+            For more details, see [Configuring global security settings for your organization](https://docs.github.com/en/code-security/how-tos/secure-at-scale/configure-organization-security/establish-complete-coverage/configure-global-settings) in the GitHub documentation.
+        - id: cli
+          desc: |
+            **Using GitHub CLI**
+
+            To turn push protection back on for disabled provider patterns using GitHub CLI:
+
+            1. Read the current configuration version and the token types of the disabled provider patterns:
+
+               ```bash
+               gh api /orgs/ORG/secret-scanning/pattern-configurations \
+                 --jq '{pattern_config_version, disabled: [.provider_pattern_overrides[] | select(.setting == "disabled") | .token_type]}'
+               ```
+
+            2. Enable push protection for each of those token types, replacing `PATTERN_CONFIG_VERSION` and `TOKEN_TYPE` with the values from the previous step:
+
+               ```bash
+               gh api --method PATCH /orgs/ORG/secret-scanning/pattern-configurations --input - <<'EOF'
+               {
+                 "pattern_config_version": "PATTERN_CONFIG_VERSION",
+                 "provider_pattern_settings": [
+                   { "token_type": "TOKEN_TYPE", "push_protection_setting": "enabled" }
+                 ]
+               }
+               EOF
+               ```
+        # No Terraform remediation: the integrations/github provider (v6.13) cannot set push protection pattern settings.
+    refs:
+      - url: https://docs.github.com/en/code-security/how-tos/secure-at-scale/configure-organization-security/establish-complete-coverage/configure-global-settings
+        title: Configuring global security settings for your organization
+      - url: https://docs.github.com/en/code-security/concepts/secret-security/push-protection
+        title: Push protection
+  # No Terraform variants: the integrations/github provider (v6.13) has no resource for code
+  # security configurations.
+  #
+  # A configuration is in use when it is a default for new repositories or attached to at least
+  # one repository. `repositories` also lists detached and removed attachments, so the statuses
+  # are filtered explicitly.
+  - uid: mondoo-github-organization-security-push-protection-delegated-bypass
+    filters: asset.platform == "github-org"
+    title: Ensure push protection bypasses require approval from designated reviewers
+    impact: 70
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-dsp-17
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-5-17
+      compliance/nis-2: nis-2-21-2-e
+      compliance/nist-csf-1: nist-csf-1-pr-ac-1
+      compliance/nist-csf-2: nist-csf-2-pr-aa-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-ia-5
+      compliance/nist-sp-800-171: nist-sp-800-171--3-5-12
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a07
+      compliance/pci-dss-4: pcidss-requirement-8-6-2
+      compliance/soc2-2017: false
+      compliance/vda-isa-5: vda-isa-5-4-1-3
+    mql: |
+      github.organization.codeSecurityConfigurations == empty ||
+        github.organization.codeSecurityConfigurations
+          .where(secretScanningPushProtection == "enabled")
+          .where(defaultForNewRepos != "none" || repositories.any(status == "attached" || status == "attaching" || status == "updating" || status == "enforced"))
+          .all(secretScanningDelegatedBypass == "enabled")
+    docs:
+      desc: |
+        This check verifies that a contributor blocked by push protection cannot push the secret anyway on their own say-so, and must instead get approval from a reviewer the organization designated.
+
+        Without delegated bypass, push protection lets the person who was blocked choose a reason and push the secret through. Delegated bypass replaces that with a request that a reviewer approves or denies. It is set in each security configuration under Organization Settings, Advanced Security, Configurations, through **Bypass privileges** under Push protection, which must name **Specific actors**. The check covers every configuration that turns push protection on and is in use, meaning it is the default for new repositories or attached to at least one repository, and fails when any of them leaves delegated bypass off. Organizations with no such configuration, or where GitHub does not offer security configurations, pass.
+
+        **Why this matters**
+
+        A push protection block that the pusher can dismiss is a warning, not a control. Under deadline pressure the fastest path is to mark the secret as a false positive or as something to fix later and push, and the credential lands in the repository's history exactly as if push protection were off. An attacker using a stolen developer account clears the same prompt just as easily.
+
+        With delegated bypass, a second person who owns the risk sees the secret before it lands, and every bypass leaves a reviewed request behind. That turns push protection from an advisory into an enforced boundary, while still letting genuine false positives through after review.
+
+        Reviewers need to answer requests quickly, or contributors will route around the block by removing the commit and finding other ways to share the secret. Name teams with the capacity to review, not individual owners.
+      audit: |
+        ### Audit via Console
+
+        1. Navigate to your organization on GitHub.
+        2. Go to **Settings**. In the sidebar under **Security**, select **Advanced Security** > **Configurations**.
+        3. For each configuration that is the default for new repositories or applied to repositories, open it and review **Push protection**.
+
+        The check passes when every such configuration that enables push protection sets **Bypass privileges** to **Specific actors**. It fails when any of them allows anyone to bypass.
+
+        ### Audit via CLI
+
+        1. List the organization's configurations with their push protection and delegated bypass settings:
+
+           ```bash
+           gh api /orgs/ORG/code-security/configurations \
+             --jq '.[] | {id, name, secret_scanning_push_protection, secret_scanning_delegated_bypass}'
+           ```
+
+        2. List the configurations that are defaults for new repositories:
+
+           ```bash
+           gh api /orgs/ORG/code-security/configurations/defaults \
+             --jq '.[] | {default_for_new_repos, id: .configuration.id}'
+           ```
+
+        3. For each remaining configuration, check whether it is attached to any repository:
+
+           ```bash
+           gh api /orgs/ORG/code-security/configurations/CONFIGURATION_ID/repositories \
+             --jq '[.[] | select(.status == "attached" or .status == "enforced")] | length'
+           ```
+
+        The check passes when every configuration in use that reports `secret_scanning_push_protection` as `enabled` also reports `secret_scanning_delegated_bypass` as `enabled`. Otherwise it fails.
+      remediation:
+        - id: github
+          desc: |
+            **Using the GitHub web UI**
+
+            1. Navigate to your organization on GitHub.
+            2. Go to **Settings**. In the sidebar under **Security**, select **Advanced Security** > **Configurations**.
+            3. Edit each configuration in use that enables push protection, or create a custom configuration with the same settings to take its place.
+            4. Under **Push protection**, to the right of **Bypass privileges**, select **Specific actors**.
+            5. Open **Select actors** and add the teams or roles that review bypass requests.
+            6. Save the configuration. If you created a new one, apply it to the repositories that used the configuration it replaces.
+
+            For more details, see [Enabling delegated bypass for push protection](https://docs.github.com/en/code-security/how-tos/secure-your-secrets/manage-bypass-requests/enable-delegated-bypass) in the GitHub documentation.
+        - id: cli
+          desc: |
+            **Using GitHub CLI**
+
+            To require reviewed bypass requests in a security configuration using GitHub CLI:
+
+            1. Find the ID of the team that will review bypass requests:
+
+               ```bash
+               gh api /orgs/ORG/teams/TEAM_SLUG --jq '.id'
+               ```
+
+            2. Turn on delegated bypass in the configuration with that team as reviewer, replacing `1234567` with the team ID:
+
+               ```bash
+               gh api --method PATCH /orgs/ORG/code-security/configurations/CONFIGURATION_ID --input - <<'EOF'
+               {
+                 "secret_scanning_delegated_bypass": "enabled",
+                 "secret_scanning_delegated_bypass_options": {
+                   "reviewers": [ { "reviewer_id": 1234567, "reviewer_type": "TEAM" } ]
+                 }
+               }
+               EOF
+               ```
+        # No Terraform remediation: the integrations/github provider (v6.13) has no resource for code security configurations.
+    refs:
+      - url: https://docs.github.com/en/code-security/how-tos/secure-your-secrets/manage-bypass-requests/enable-delegated-bypass
+        title: Enabling delegated bypass for push protection
+  # No Terraform variants: the integrations/github provider (v6.13) has no resource for code
+  # security configurations.
+  #
+  # A configuration is in use when it is a default for new repositories or attached to at least
+  # one repository. `repositories` also lists detached and removed attachments, so the statuses
+  # are filtered explicitly.
+  - uid: mondoo-github-organization-security-code-security-configurations-enforced
+    filters: asset.platform == "github-org"
+    title: Ensure code security configurations in use are enforced
+    impact: 65
+    tags:
+      compliance/bsi-sys-1-5: false
+      compliance/csa-cloud-controls-matrix-4: cloud-controls-matrix-4-ccc-04
+      compliance/dora: dora-art-9
+      compliance/hipaa: false
+      compliance/iso-27001-2022: iso-27001-2022-a-8-9
+      compliance/nis-2: false
+      compliance/nist-csf-1: nist-csf-1-pr-ip-3
+      compliance/nist-csf-2: nist-csf-2-pr-ps-01
+      compliance/nist-sp-800-53-rev5: nist-sp-800-53-rev5-cm-5
+      compliance/nist-sp-800-171: nist-sp-800-171--3-4-5
+      compliance/owasp-top-10-2025: owasp-top-10-2025-a02
+      compliance/pci-dss-4: false
+      compliance/soc2-2017: soc2-control-cc8-1-6
+      compliance/vda-isa-5: vda-isa-5-5-2-1
+    mql: |
+      github.organization.codeSecurityConfigurations == empty ||
+        github.organization.codeSecurityConfigurations
+          .where(defaultForNewRepos != "none" || repositories.any(status == "attached" || status == "attaching" || status == "updating" || status == "enforced"))
+          .all(enforcement == "enforced" || enforcement == "enterprise_enforced")
+    docs:
+      desc: |
+        This check verifies that repository administrators cannot switch off the security features the organization rolls out through its code security configurations.
+
+        A security configuration applies secret scanning, push protection, Dependabot, and code scanning settings to every repository it is attached to. Its **Enforce configuration** option, under Organization Settings, Advanced Security, Configurations, decides whether those repositories' administrators can change the features it sets. The check covers every configuration in use, meaning it is the default for new repositories or attached to at least one repository, and fails when any of them is unenforced. A configuration enforced by the enterprise also passes. Organizations with no configuration in use, or where GitHub does not offer security configurations, pass.
+
+        **Why this matters**
+
+        An unenforced configuration is a starting point, not a policy. Every repository administrator can turn off secret scanning, push protection, or Dependabot alerts on their repository, and nothing at the organization level stops it or reports it. The features most often switched off are the ones that block work, and push protection is the first among them.
+
+        The same applies to an attacker who gains administrator access to one repository through a compromised account. Turning off push protection or code scanning before pushing a backdoor removes the controls that would have flagged it, and an unenforced configuration allows it.
+
+        Enforcement only covers the features a configuration actually sets. A feature left as Not set stays under each repository's own control, so set every feature the organization relies on explicitly.
+      audit: |
+        ### Audit via Console
+
+        1. Navigate to your organization on GitHub.
+        2. Go to **Settings**. In the sidebar under **Security**, select **Advanced Security** > **Configurations**.
+        3. For each configuration that is the default for new repositories or applied to repositories, open it and review **Enforce configuration**.
+
+        The check passes when every such configuration is enforced. It fails when any of them is not.
+
+        ### Audit via CLI
+
+        1. List the organization's configurations with their enforcement status:
+
+           ```bash
+           gh api /orgs/ORG/code-security/configurations --jq '.[] | {id, name, enforcement}'
+           ```
+
+        2. List the configurations that are defaults for new repositories:
+
+           ```bash
+           gh api /orgs/ORG/code-security/configurations/defaults \
+             --jq '.[] | {default_for_new_repos, id: .configuration.id}'
+           ```
+
+        3. For each remaining configuration, check whether it is attached to any repository:
+
+           ```bash
+           gh api /orgs/ORG/code-security/configurations/CONFIGURATION_ID/repositories \
+             --jq '[.[] | select(.status == "attached" or .status == "enforced")] | length'
+           ```
+
+        The check passes when every configuration in use reports `enforcement` as `enforced` or `enterprise_enforced`. Otherwise it fails.
+      remediation:
+        - id: github
+          desc: |
+            **Using the GitHub web UI**
+
+            1. Navigate to your organization on GitHub.
+            2. Go to **Settings**. In the sidebar under **Security**, select **Advanced Security** > **Configurations**.
+            3. Edit each configuration in use that is not enforced, or create a custom configuration with the same settings to take its place.
+            4. Under **Policy**, set **Enforce configuration** to **Enforce**.
+            5. Save the configuration. If you created a new one, apply it to the repositories that used the configuration it replaces.
+
+            For more details, see [Applying a custom security configuration](https://docs.github.com/en/code-security/how-tos/secure-at-scale/configure-organization-security/establish-complete-coverage/apply-custom-configuration) in the GitHub documentation.
+        - id: cli
+          desc: |
+            **Using GitHub CLI**
+
+            To enforce a security configuration using GitHub CLI:
+
+            1. List the organization's configurations and note the ID of each unenforced one in use:
+
+               ```bash
+               gh api /orgs/ORG/code-security/configurations --jq '.[] | {id, name, target_type, enforcement}'
+               ```
+
+            2. Enforce the configuration:
+
+               ```bash
+               gh api --method PATCH /orgs/ORG/code-security/configurations/CONFIGURATION_ID \
+                 -f enforcement=enforced
+               ```
+        # No Terraform remediation: the integrations/github provider (v6.13) has no resource for code security configurations.
+    refs:
+      - url: https://docs.github.com/en/code-security/how-tos/secure-at-scale/configure-organization-security/establish-complete-coverage/apply-custom-configuration
+        title: Applying a custom security configuration
