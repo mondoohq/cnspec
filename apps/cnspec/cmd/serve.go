@@ -235,7 +235,7 @@ func getServeConfig(runtimeEnv *execruntime.RuntimeEnv, explicitInventory bool) 
 	serviceAccount := opts.GetServiceCredential()
 	if serviceAccount != nil {
 		// determine information about the client
-		log.Info().Msg("using service account credentials")
+		log.Info().Msg(credentialsNote(&opts.Config))
 		runtime.UpstreamConfig = &upstream.UpstreamConfig{
 			SpaceMrn:    opts.GetParentMrn(),
 			ApiEndpoint: opts.UpstreamApiEndpoint(),

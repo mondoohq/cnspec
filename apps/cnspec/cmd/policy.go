@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/muesli/termenv"
 	"github.com/rs/zerolog/log"
@@ -93,6 +94,9 @@ var policyListCmd = &cobra.Command{
 		return nil
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// From here on a failure is the bundle's or the server's, not a
+		// mistyped command: do not print the usage after it.
+		cmd.SilenceUsage = true
 		bundleFile := viper.GetString("file")
 		var policies []*cnspec_upstream.UpstreamPolicy
 		if bundleFile != "" {
@@ -119,7 +123,7 @@ var policyListCmd = &cobra.Command{
 			policies, err = cnspec_upstream.SearchPolicy(
 				context.Background(), mondooClient, opts.GetParentMrn(), new(assignedOnly), new(true), new(true))
 			if err != nil {
-				return err
+				return loginSessionOf(opts).explain(err, time.Now())
 			}
 		}
 		for _, policy := range policies {
@@ -349,6 +353,9 @@ var policyInfoCmd = &cobra.Command{
 			log.Error().Msgf("either a policy mrn or a bundle file is required")
 			return cmd.Help()
 		}
+		// From here on a failure is the bundle's or the server's, not a
+		// mistyped command: do not print the usage after it.
+		cmd.SilenceUsage = true
 
 		var policies []*policy.Policy
 		if bundleFile != "" {
@@ -380,7 +387,7 @@ var policyInfoCmd = &cobra.Command{
 			ctx := context.Background()
 			p, err := policyHub.GetPolicy(ctx, &policy.Mrn{Mrn: policyMrn})
 			if err != nil {
-				log.Error().Msgf("failed to get policy: %s", err)
+				log.Error().Msgf("failed to get policy: %s", loginSessionOf(opts).explain(err, time.Now()))
 				os.Exit(1)
 			}
 			policies = append(policies, p)

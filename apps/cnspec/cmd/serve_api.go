@@ -62,7 +62,7 @@ var serveApiCmd = &cobra.Command{
 			log.Fatal().Msg("no service account configured")
 		}
 
-		log.Info().Msg("using service account credentials")
+		log.Info().Msg(credentialsNote(&opts.Config))
 		upstreamConfig := upstream.UpstreamConfig{
 			SpaceMrn:    opts.GetParentMrn(),
 			ApiEndpoint: opts.UpstreamApiEndpoint(),
