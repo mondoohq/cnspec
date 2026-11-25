@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"go.mondoo.com/cnspec/policy"
@@ -63,7 +64,7 @@ func NewOutputHandlers(formats []string, config HandlerConfig) (OutputHandler, e
 			target = conf.target
 		}
 		if target != "" {
-			key := strings.TrimPrefix(target, "file://")
+			key := destinationKey(target, conf.targetIsFile)
 			if prev, ok := used[key]; ok {
 				return nil, fmt.Errorf("outputs %q and %q both write to %s; give each its own %s= or %s=", prev, format, target, OptionFile, OptionTarget)
 			}
@@ -83,6 +84,20 @@ func NewOutputHandlers(formats []string, config HandlerConfig) (OutputHandler, e
 		return handlers[0], nil
 	}
 	return handlers, nil
+}
+
+// destinationKey names the place an output is written, so that two spellings of
+// one local path ("out", "./out", "/abs/out", "file://out") compare equal. Queue
+// URLs are compared as written.
+func destinationKey(target string, isFile bool) string {
+	if !isFile && determineOutputType(target) != LOCAL_FILE {
+		return target
+	}
+	path := strings.TrimPrefix(target, "file://")
+	if abs, err := filepath.Abs(path); err == nil {
+		return abs
+	}
+	return filepath.Clean(path)
 }
 
 // multiHandler writes the report to every handler in order. A failing output

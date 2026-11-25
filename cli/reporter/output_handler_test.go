@@ -256,6 +256,8 @@ func TestOutputHandlersRejectSharedDestination(t *testing.T) {
 		{"two outputs fall back to --output-target", []string{"json", "sarif"}, "out"},
 		{"file= collides with --output-target", []string{"json", "sarif,file=out"}, "out"},
 		{"target= collides with file=", []string{"json,target=out", "sarif,file=out"}, ""},
+		{"relative spellings of one file", []string{"json,file=out", "sarif,file=./out"}, ""},
+		{"relative and absolute spellings of one file", []string{"json,file=sub/../out", "sarif,target=" + mustAbs(t, "out")}, ""},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -292,4 +294,10 @@ func TestOutputHandlersTargetVsFile(t *testing.T) {
 			require.IsType(t, tc.want, handler)
 		})
 	}
+}
+
+func mustAbs(t *testing.T, path string) string {
+	abs, err := filepath.Abs(path)
+	require.NoError(t, err)
+	return abs
 }
