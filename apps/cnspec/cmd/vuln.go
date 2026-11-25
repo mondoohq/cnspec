@@ -78,6 +78,9 @@ var vulnCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 	if err != nil {
 		log.Fatal().Err(err).Msg("failed to parse config for reporter")
 	}
+	if printConf.Target() != "" {
+		log.Fatal().Msg("cnspec vuln prints to stdout only; the " + reporter.OptionFile + "= and " + reporter.OptionTarget + "= output options are not supported")
+	}
 
 	report, err := RunScan(dumpCtx, conf)
 	if err != nil {

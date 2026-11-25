@@ -89,6 +89,31 @@ func TestParseConfig(t *testing.T) {
 		assert.Contains(t, err.Error(), "unknown terms entered")
 	})
 
+	t.Run("file keeps the case of its path", func(t *testing.T) {
+		conf, err := ParseConfig("SARIF,File=Out/Results.sarif")
+		require.NoError(t, err)
+		assert.Equal(t, FormatSarif, conf.format)
+		assert.Equal(t, "Out/Results.sarif", conf.Target())
+	})
+
+	t.Run("file needs a path", func(t *testing.T) {
+		_, err := ParseConfig("sarif,file=")
+		require.Error(t, err)
+	})
+
+	t.Run("target keeps its value and is not forced to a file", func(t *testing.T) {
+		conf, err := ParseConfig("json,Target=https://sqs.us-east-1.amazonaws.com/123456789012/Q")
+		require.NoError(t, err)
+		assert.Equal(t, "https://sqs.us-east-1.amazonaws.com/123456789012/Q", conf.Target())
+		assert.False(t, conf.targetIsFile)
+	})
+
+	t.Run("one destination per output", func(t *testing.T) {
+		_, err := ParseConfig("json,file=a.json,target=b.json")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "one file= or target=")
+	})
+
 	t.Run("unknown options", func(t *testing.T) {
 		_, err := ParseConfig("notknown")
 		require.Error(t, err)

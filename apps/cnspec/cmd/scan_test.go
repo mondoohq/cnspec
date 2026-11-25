@@ -6,6 +6,8 @@ package cmd
 import (
 	"testing"
 
+	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.mondoo.com/mql/providers-sdk/v1/inventory"
@@ -134,4 +136,39 @@ func TestParallelismFlagDefaultsToAuto(t *testing.T) {
 	require.NotNil(t, flag, "--parallelism flag should be registered")
 	assert.Equal(t, "0", flag.DefValue,
 		"an unset --parallelism must reach the scanner as 0 so it resolves a provider default")
+}
+
+// TestOutputFlagKeepsEachValueWhole pins why outputValues reads the flag from
+// cobra: every -o is one output, and its commas separate that output's options.
+// Read through viper, the values below would come back as five separate terms.
+func TestOutputFlagKeepsEachValueWhole(t *testing.T) {
+	cmd := &cobra.Command{Use: "test"}
+	cmd.Flags().StringArrayP("output", "o", []string{"compact"}, "")
+	require.NoError(t, cmd.Flags().Parse([]string{"-o", "full,nodata", "-o", "sarif,file=r.sarif", "-o", "json"}))
+
+	assert.Equal(t, []string{"full,nodata", "sarif,file=r.sarif", "json"}, outputValues(cmd))
+}
+
+func TestOutputFlagDefault(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+	cmd := &cobra.Command{Use: "test"}
+	cmd.Flags().StringArrayP("output", "o", []string{"compact"}, "")
+	require.NoError(t, viper.BindPFlag("output", cmd.Flags().Lookup("output")))
+
+	assert.Equal(t, []string{"compact"}, outputValues(cmd))
+}
+
+func TestOutputFromConfigFile(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+	cmd := &cobra.Command{Use: "test"}
+	cmd.Flags().StringArrayP("output", "o", []string{"compact"}, "")
+	require.NoError(t, viper.BindPFlag("output", cmd.Flags().Lookup("output")))
+
+	viper.Set("output", "full,nodata")
+	assert.Equal(t, []string{"full,nodata"}, outputValues(cmd))
+
+	viper.Set("output", []any{"compact", "sarif,file=r.sarif"})
+	assert.Equal(t, []string{"compact", "sarif,file=r.sarif"}, outputValues(cmd))
 }

@@ -6,6 +6,8 @@ package reporter
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"strings"
 
@@ -37,13 +39,85 @@ type OutputHandler interface {
 	WriteReport(ctx context.Context, report *policy.ReportCollection) error
 }
 
+// NewOutputHandlers builds one handler per --output value and returns them as a
+// single handler that writes them in the order given. Every format renders the
+// same in-memory report, so each extra output costs rendering time only.
+//
+// config.OutputTarget is the default destination for an output that does not
+// name its own with file= or target=. At most one output may use any one destination,
+// stdout excepted: several reports printed to stdout appear one after another.
+func NewOutputHandlers(formats []string, config HandlerConfig) (OutputHandler, error) {
+	if len(formats) == 0 {
+		formats = []string{""}
+	}
+
+	handlers := make(multiHandler, 0, len(formats))
+	used := map[string]string{}
+	for _, format := range formats {
+		conf, err := ParseConfig(format)
+		if err != nil {
+			return nil, err
+		}
+		target := config.OutputTarget
+		if conf.target != "" {
+			target = conf.target
+		}
+		if target != "" {
+			key := strings.TrimPrefix(target, "file://")
+			if prev, ok := used[key]; ok {
+				return nil, fmt.Errorf("outputs %q and %q both write to %s; give each its own %s= or %s=", prev, format, target, OptionFile, OptionTarget)
+			}
+			used[key] = format
+		}
+
+		cur := config
+		cur.Format = format
+		h, err := newOutputHandler(conf, cur)
+		if err != nil {
+			return nil, err
+		}
+		handlers = append(handlers, h)
+	}
+
+	if len(handlers) == 1 {
+		return handlers[0], nil
+	}
+	return handlers, nil
+}
+
+// multiHandler writes the report to every handler in order. A failing output
+// does not stop the ones after it: a scan that cannot reach a queue should still
+// leave its SARIF file behind.
+type multiHandler []OutputHandler
+
+func (m multiHandler) WriteReport(ctx context.Context, report *policy.ReportCollection) error {
+	var errs []error
+	for _, h := range m {
+		if err := h.WriteReport(ctx, report); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
 func NewOutputHandler(config HandlerConfig) (OutputHandler, error) {
 	conf, err := ParseConfig(config.Format)
 	if err != nil {
 		return nil, err
 	}
+	return newOutputHandler(conf, config)
+}
+
+func newOutputHandler(conf *PrintConfig, config HandlerConfig) (OutputHandler, error) {
+	// file= and target= on the output itself win over --output-target.
+	if conf.target != "" {
+		config.OutputTarget = conf.target
+	}
 
 	typ := determineOutputType(config.OutputTarget)
+	if conf.targetIsFile {
+		typ = LOCAL_FILE
+	}
 	switch typ {
 	case LOCAL_FILE:
 		// An OHDF document describes a single asset, so a multi-asset scan needs a
