@@ -202,3 +202,102 @@ func TestOutputHandlerOcsfJsonSingleFile(t *testing.T) {
 	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
 	assert.Len(t, lines, 4, "3 checks + 1 inventory event, all in one stream")
 }
+
+// TestOutputHandlersWriteInOrder walks several outputs end to end: each lands at
+// its own destination, and file= on an output wins over --output-target.
+func TestOutputHandlersWriteInOrder(t *testing.T) {
+	dir := t.TempDir()
+	sarifPath := filepath.Join(dir, "results.sarif")
+	jsonPath := filepath.Join(dir, "report.json")
+
+	handler, err := NewOutputHandlers(
+		[]string{"sarif,file=" + sarifPath, "json"},
+		HandlerConfig{OutputTarget: jsonPath},
+	)
+	require.NoError(t, err)
+	require.IsType(t, multiHandler{}, handler)
+	require.NoError(t, handler.WriteReport(t.Context(), reportfixture.Sample()))
+
+	raw, err := os.ReadFile(sarifPath)
+	require.NoError(t, err)
+	var sarifDoc map[string]any
+	require.NoError(t, json.Unmarshal(raw, &sarifDoc))
+	assert.Equal(t, "2.1.0", sarifDoc["version"])
+
+	raw, err = os.ReadFile(jsonPath)
+	require.NoError(t, err)
+	assert.True(t, json.Valid(raw), "--output-target receives the output without file=")
+}
+
+func TestOutputHandlersSingleOutputUnchanged(t *testing.T) {
+	handler, err := NewOutputHandlers([]string{"json"}, HandlerConfig{OutputTarget: "report.json"})
+	require.NoError(t, err)
+	require.IsType(t, &localFileHandler{}, handler)
+
+	handler, err = NewOutputHandlers(nil, HandlerConfig{})
+	require.NoError(t, err)
+	require.IsType(t, &Reporter{}, handler)
+}
+
+func TestOutputHandlersStdoutCanRepeat(t *testing.T) {
+	handler, err := NewOutputHandlers([]string{"compact", "json"}, HandlerConfig{})
+	require.NoError(t, err)
+	require.Len(t, handler, 2)
+}
+
+func TestOutputHandlersRejectSharedDestination(t *testing.T) {
+	tests := []struct {
+		name    string
+		formats []string
+		target  string
+	}{
+		{"same file=", []string{"json,file=out", "sarif,file=out"}, ""},
+		{"file:// prefix is the same file", []string{"json,file=out", "sarif,file=file://out"}, ""},
+		{"two outputs fall back to --output-target", []string{"json", "sarif"}, "out"},
+		{"file= collides with --output-target", []string{"json", "sarif,file=out"}, "out"},
+		{"target= collides with file=", []string{"json,target=out", "sarif,file=out"}, ""},
+		{"relative spellings of one file", []string{"json,file=out", "sarif,file=./out"}, ""},
+		{"relative and absolute spellings of one file", []string{"json,file=sub/../out", "sarif,target=" + mustAbs(t, "out")}, ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := NewOutputHandlers(tc.formats, HandlerConfig{OutputTarget: tc.target})
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "both write to")
+		})
+	}
+}
+
+// TestOutputHandlersTargetVsFile pins the difference between the two options:
+// target= is routed like --output-target, file= is always a local path.
+func TestOutputHandlersTargetVsFile(t *testing.T) {
+	const sqsURL = "https://sqs.us-east-1.amazonaws.com/123456789012/MyQueue"
+	sbusURL := "https://my-sbus.servicebus.windows.net/my-queue"
+	dir := t.TempDir()
+
+	tests := []struct {
+		name   string
+		output string
+		want   OutputHandler
+	}{
+		{"target= to SQS", "json,target=" + sqsURL, &awsSqsHandler{}},
+		{"target= to Service Bus", "json,target=" + sbusURL, &azureSbusHandler{}},
+		{"target= to a file", "json,target=" + filepath.Join(dir, "r.json"), &localFileHandler{}},
+		{"target= to a directory", "hdf,target=" + dir, &hdfDirHandler{}},
+		{"file= that reads like a queue URL", "json,file=" + sqsURL, &localFileHandler{}},
+		{"file= to a directory", "hdf,file=" + dir, &hdfDirHandler{}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			handler, err := NewOutputHandlers([]string{tc.output}, HandlerConfig{})
+			require.NoError(t, err)
+			require.IsType(t, tc.want, handler)
+		})
+	}
+}
+
+func mustAbs(t *testing.T, path string) string {
+	abs, err := filepath.Abs(path)
+	require.NoError(t, err)
+	return abs
+}

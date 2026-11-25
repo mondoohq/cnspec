@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"syscall"
@@ -41,7 +42,7 @@ import (
 func init() {
 	rootCmd.AddCommand(scanCmd)
 
-	_ = scanCmd.Flags().StringP("output", "o", "compact", "Set the output format: "+reporter.AllFormats())
+	_ = scanCmd.Flags().StringArrayP("output", "o", []string{"compact"}, "Set the output format: "+reporter.AllFormats()+". Repeat to write several reports, in order; add file=<path> to write one to a file, or target=<url|path> to send it anywhere --output-target can")
 	_ = scanCmd.Flags().BoolP("json", "j", false, "Run the query and return the object in a JSON structure")
 	_ = scanCmd.Flags().String("platform-id", "", "Select a specific target asset by providing its platform ID")
 
@@ -84,7 +85,7 @@ func init() {
 	_ = scanCmd.Flags().Int("score-threshold", 0, "If any score falls below the threshold, exit 1")
 	_ = scanCmd.Flags().MarkDeprecated("score-threshold", "Please use --risk-threshold instead")
 	_ = scanCmd.Flags().Int("risk-threshold", reporter.DEFAULT_RISK_THRESHOLD, "Set the risk threshold. Exit with status 1 if any risk meets or exceeds this value")
-	_ = scanCmd.Flags().String("output-target", "", "Set the output target for the asset report: an AWS SQS topic URL, a local file, or a local directory (with -o hdf, one OHDF file per asset; with the OCSF formats, one file per event class)")
+	_ = scanCmd.Flags().String("output-target", "", "Set the output target for the asset report: an AWS SQS topic URL, a local file, or a local directory (with -o hdf, one OHDF file per asset; with the OCSF formats, one file per event class). Applies to every --output that does not set its own file= or target=")
 	_ = scanCmd.Flags().Int("parallelism", 0, "Set the number of assets to scan in parallel. Defaults to a per-provider value capped by the CPUs available on this machine. Use 1 for sequential")
 	_ = scanCmd.Flags().String("output-scan-db", "", "Save each asset's scan database (SQLite) to this directory in addition to uploading. Used to capture seeds for the cnspec loadtest tool")
 	_ = scanCmd.Flags().MarkHidden("output-scan-db")
@@ -111,8 +112,8 @@ To manually configure a policy, use this:
 		// Special handling for users that want to see what output options are
 		// available. We have to do this before printing the help because we
 		// don't have a target connection or provider.
-		output, _ := cmd.Flags().GetString("output")
-		if output == "help" {
+		outputs, _ := cmd.Flags().GetStringArray("output")
+		if slices.Contains(outputs, "help") {
 			fmt.Println(reporter.AllAvailableOptions())
 			os.Exit(0)
 		}
@@ -197,6 +198,18 @@ var scanCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 		log.Fatal().Err(err).Msg("failed to prepare config")
 	}
 
+	// Build the output handlers before scanning, so a bad --output or two
+	// outputs sharing a file fail in seconds rather than after the scan.
+	handlerConf := reporter.HandlerConfig{
+		OutputTarget:  conf.OutputTarget,
+		Incognito:     conf.IsIncognito,
+		RiskThreshold: conf.RiskThreshold,
+	}
+	outputHandler, err := reporter.NewOutputHandlers(conf.Outputs, handlerConf)
+	if err != nil {
+		log.Fatal().Err(err).Msg("failed to create an output handler")
+	}
+
 	err = conf.loadPolicies(ctx)
 	if err != nil {
 		conf.fatal(err, "failed to resolve policies")
@@ -216,17 +229,6 @@ var scanCmdRun = func(cmd *cobra.Command, runtime *providers.Runtime, cliRes *pl
 
 	scandump.JSON(ctx, "report", report)
 	recordResolvedAssets(ctx, report)
-
-	handlerConf := reporter.HandlerConfig{
-		Format:        conf.OutputFormat,
-		OutputTarget:  conf.OutputTarget,
-		Incognito:     conf.IsIncognito,
-		RiskThreshold: conf.RiskThreshold,
-	}
-	outputHandler, err := reporter.NewOutputHandler(handlerConf)
-	if err != nil {
-		log.Fatal().Err(err).Msg("failed to create an output handler")
-	}
 
 	fCtx := mql.SetFeatures(ctx, conf.Features)
 	if err := outputHandler.WriteReport(fCtx, report); err != nil {
@@ -330,6 +332,9 @@ type scanConfig struct {
 	ReportType   scan.ReportType
 	OutputTarget string
 	OutputFormat string
+	// Outputs holds one entry per --output, in the order given. OutputFormat is
+	// the first of them, for the commands that write a single report.
+	Outputs      []string
 	OutputScanDB string
 	PolicyPaths  []string
 	PolicyNames  []string
@@ -496,17 +501,22 @@ func getCobraScanConfig(cmd *cobra.Command, runtime *providers.Runtime, cliRes *
 
 	// if users want to get more information on available output options,
 	// print them before executing the scan
-	output := viper.GetString("output")
-	if output == "help" {
+	outputs := outputValues(cmd)
+	if slices.Contains(outputs, "help") {
 		fmt.Println(reporter.AllAvailableOptions())
 		os.Exit(0)
 	}
 
 	// --json takes precedence
 	if ok := viper.GetBool("json"); ok {
-		output = "json"
+		outputs = []string{"json"}
+	}
+	output := ""
+	if len(outputs) > 0 {
+		output = outputs[0]
 	}
 	conf.OutputFormat = output
+	conf.Outputs = outputs
 
 	// detect CI/CD runs and read labels from runtime and apply them to all assets in the inventory
 	runtimeEnv := execruntime.Detect()
@@ -804,4 +814,38 @@ func dedupe[T string | int](sliceList []T) []T {
 		}
 	}
 	return list
+}
+
+// outputValues returns one entry per --output value, in order. Each entry is a
+// format with its comma-separated options, e.g. "full,nodata".
+//
+// A repeated flag is read from cobra, not viper: viper reads a stringArray flag
+// back by joining it and splitting on commas again, which would merge the
+// separate outputs into one list of options. The config file's output key
+// takes a single string or a list.
+func outputValues(cmd *cobra.Command) []string {
+	if f := cmd.Flags().Lookup("output"); f != nil && f.Changed && f.Value.Type() == "stringArray" {
+		values, _ := cmd.Flags().GetStringArray("output")
+		return values
+	}
+	switch v := viper.Get("output").(type) {
+	case string:
+		return []string{v}
+	case []string:
+		// Only the flag default reaches here; return it unsplit.
+		if values, err := cmd.Flags().GetStringArray("output"); err == nil {
+			return values
+		}
+		return v
+	case []any:
+		res := make([]string, 0, len(v))
+		for _, x := range v {
+			res = append(res, fmt.Sprint(x))
+		}
+		return res
+	case nil:
+		return nil
+	default:
+		return []string{fmt.Sprint(v)}
+	}
 }

@@ -32,6 +32,17 @@ type PrintConfig struct {
 	ocsfVersion ocsf.Version
 	// ocsfFindings selects which OCSF class check results are reported as.
 	ocsfFindings ocsf.FindingClasses
+	// target is where this output is written, set with file= or target=. Empty
+	// means the handler's default: --output-target, or stdout.
+	target string
+	// targetIsFile is set by file=: the target is a local path, even one that
+	// reads like a queue URL. target= is read the way --output-target is.
+	targetIsFile bool
+}
+
+// Target returns the destination set with file= or target=, or "" if none.
+func (p *PrintConfig) Target() string {
+	return p.target
 }
 
 // ocsfOptions translates the output options into what the OCSF converter takes.
@@ -74,6 +85,14 @@ const (
 	// OptionOcsfFindings selects the OCSF class check results are reported as:
 	// compliance (the default) or detection.
 	OptionOcsfFindings = "ocsf-findings"
+
+	// OptionFile writes this output to a local file or directory instead of
+	// stdout, e.g. "--output sarif,file=results.sarif".
+	OptionFile = "file"
+
+	// OptionTarget sends this output where --output-target would: a queue URL,
+	// or else a local file or directory, e.g. "--output json,target=<sqs url>".
+	OptionTarget = "target"
 )
 
 func ParseConfig[T string | Format](raw T) (*PrintConfig, error) {
@@ -85,6 +104,22 @@ func ParseConfig[T string | Format](raw T) (*PrintConfig, error) {
 	parts := strings.Split(string(raw), ",")
 	var unknown []string
 	for _, cmd := range parts {
+		// file= and target= carry a path or URL, so only their key is
+		// case-insensitive.
+		if key, value, isPair := strings.Cut(cmd, "="); isPair &&
+			(strings.EqualFold(key, OptionFile) || strings.EqualFold(key, OptionTarget)) {
+			key = strings.ToLower(key)
+			if value == "" {
+				return res, errors.New("the " + key + "= option needs a value")
+			}
+			if res.target != "" {
+				return res, errors.New("an output takes one " + OptionFile + "= or " + OptionTarget + "=, got a second " + key + "=" + value)
+			}
+			res.target = value
+			res.targetIsFile = key == OptionFile
+			continue
+		}
+
 		cur := strings.ToLower(cmd)
 
 		format, ok := Formats[cur]
@@ -149,7 +184,8 @@ func ParseConfig[T string | Format](raw T) (*PrintConfig, error) {
 func AllAvailableOptions() string {
 	return "Available output formats: " + AllFormats() + ".\n" +
 		"Available options: " + AllOptions() + ".\n" +
-		"Combine with commas, example: compact,nodata,nocontrols"
+		"Combine with commas, example: compact,nodata,nocontrols\n" +
+		"Repeat --output to write several reports in order, example: -o compact -o sarif,file=results.sarif"
 }
 
 func (p *PrintConfig) setFormat(f Format) *PrintConfig {
@@ -241,7 +277,9 @@ func AllOptions() string {
 		"[no]" + OptionPrintVulns + ", " +
 		"[no]" + OptionDetailed + " (junit), " +
 		OptionOcsfVersion + "=" + strings.Join(ocsf.SupportedVersions(), "|") + " (ocsf), " +
-		OptionOcsfFindings + "=" + strings.Join(ocsf.SupportedFindingClasses(), "|") + " (ocsf)"
+		OptionOcsfFindings + "=" + strings.Join(ocsf.SupportedFindingClasses(), "|") + " (ocsf), " +
+		OptionFile + "=<path>, " +
+		OptionTarget + "=<url|path>"
 }
 
 func (r *Reporter) scoreColored(rating policy.ScoreRating, s string) string {
