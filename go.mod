@@ -1,6 +1,6 @@
 module go.mondoo.com/cnspec
 
-go 1.27.3
+go 1.27.4
 
 // replace go.mondoo.com/mql => ../mql
 
