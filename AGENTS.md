@@ -93,7 +93,7 @@ cnspec policy lint ./content/mondoo-linux-security.mql.yaml     # one policy
 
 ### Commits and PRs
 
-Titles are `<emoji> <scope>: <lowercase description>`. The emoji is part of the convention, not decoration. Counts over the last 200 commits on `main`: ✨ new capability or coverage (57), 🧹 cleanup/refactor/maintenance (47), 🐛 bug fix (40), 👷 CI and automation (8), 📝 docs (3). Scope is the area, not the file: `validation`, `content`, `ci`, or a provider name like `aws` or `alibaba`.
+Titles are `<emoji> <scope>: <lowercase description>`. The emoji is part of the convention, not decoration. Counts over the last 200 commits on `main`: ✨ new capability or coverage (57), 🧹 cleanup/refactor/maintenance (47), 🐛 bug fix (40), 👷 CI and automation (8), 📝 docs (3). Use 🌟 instead of ✨ for a headline feature: one the monthly release announcement would list as a top-level item. Use it sparingly. Scope is the area, not the file: `validation`, `content`, `ci`, or a provider name like `aws` or `alibaba`.
 
 **Public repo: never identify a customer.** No customer names in commit messages, PR titles or bodies, branch names, code comments or test fixtures. Never link to or cite an issue or repository that tracks a customer report, and leave out contact names, emails and hostnames from one. Describe the problem by its software, platform and symptom ("Debian hosts with ZFS installed"), not by who reported it.
 
