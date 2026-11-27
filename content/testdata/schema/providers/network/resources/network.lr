@@ -1,0 +1,677 @@
+// Copyright Mondoo, Inc. 2024, 2026
+// SPDX-License-Identifier: BUSL-1.1
+
+option provider = "go.mondoo.com/cnquery/v13/providers/network"
+option go_package = "go.mondoo.com/mql/v13/providers/network/resources"
+
+// Network socket
+//
+// Examine an addressable network endpoint by `protocol`, `port`, and
+// `address`. Used as a building block for higher-level resources like
+// `tls` that need to know "what to talk to".
+socket @defaults("protocol port address") {
+  // Transport protocol (e.g., tcp, udp)
+  protocol string
+  // Port number
+  port int
+  // Target address (hostname or IP)
+  address string
+}
+
+// HTTP endpoint
+//
+// Empty namespace for HTTP probing. Use `http.get(url: "https://...")`
+// to perform a GET against a URL and inspect the response status,
+// headers (parsed into typed sub-resources for HSTS, CSP, cookies,
+// etc.), and body.
+http {}
+
+// HTTP GET request
+//
+// Examine the result of an HTTP GET against a URL. Initialize with
+// `http.get(rawUrl: "https://example.com", followRedirects: true)`.
+// Surfaces the parsed `url`, the `statusCode`, the HTTP `version`,
+// the response `body`, and a typed `header` sub-resource exposing
+// HSTS, CSP, X-Frame-Options, X-XSS-Protection, X-Content-Type-Options,
+// Referrer-Policy, Content-Type, and Set-Cookie semantics.
+http.get @defaults("url statusCode") {
+  init(rawUrl string, followRedirects bool)
+  // URL for this request
+  url url
+  // Follow redirects
+  followRedirects bool
+  // Header returned from this request
+  header() http.header
+  // Status returned from this request
+  statusCode() int
+  // Version of the HTTP request, (e.g., 1.1)
+  version() string
+  // Body returned from this request
+  body() string
+}
+
+// HTTP header
+private http.header @defaults("length=params.length") {
+  // Raw list of parameters for this header
+  params map[string][]string
+  // HTTP Strict-Transport-Security (HSTS) header
+  sts() http.header.sts
+  // X-Frame-Options header: DENY, SAMEORIGIN, or ALLOW-FROM origin (obsolete)
+  xFrameOptions() string
+  // X-XSS-Protection header
+  xXssProtection() http.header.xssProtection
+  // X-Content-Type-Options header: nosniff
+  xContentTypeOptions() string
+  // Referrer-Policy header
+  referrerPolicy() string
+  // Content-Type header
+  contentType() http.header.contentType
+  // Set-Cookie header
+  setCookie() http.header.setCookie
+  // Content-Security-Policy header
+  csp() map[string]string
+  // Server header value, e.g. "nginx" or "Apache/2.4.62"
+  //
+  // The product token(s) the server discloses about itself. Empty when no
+  // Server header is sent. Frequently flagged by hardening policies because it
+  // leaks the server software and sometimes its version.
+  server() string
+}
+
+// HTTP header Strict-Transport-Security
+private http.header.sts @defaults("maxAge includeSubDomains preload") {
+  // How long to cache HTTPS-only policy in seconds
+  maxAge time
+  // Whether caching applies to subdomains
+  includeSubDomains bool
+  // Non-standard directive for preloading STS
+  preload bool
+}
+
+// HTTP header X-XSS-Protection
+//
+// Now outdated (replaced by Content Security Policy) and may even cause
+// security vulnerabilities. Examine `enabled`, `mode`, and `report` to
+// see how a server is configuring the legacy XSS filter.
+private http.header.xssProtection @defaults("enabled mode report") {
+  // Whether the header is enabled (Enabled when the header value is set to 1; disabled if set to 0)
+  enabled bool
+  // Mode for XSS filtering
+  mode string
+  // Report endpoint for violations (Chromium only)
+  report string
+}
+
+// HTTP header Content-Type
+private http.header.contentType @defaults("type") {
+  // MIME type for the content
+  type string
+  // Additional parameters for this content type
+  params map[string]string
+}
+
+// HTTP header Set-Cookie
+private http.header.setCookie @defaults("name value") {
+  // Name of the cookie to set
+  name string
+  // Value of the cookie to set
+  value string
+  // Additional parameters for setting this cookie
+  params map[string]string
+}
+
+// Parsed URL
+//
+// Examine a parsed URL, generally represented as
+// `[scheme:][//[user[:password]@]host[:port]][/]path[?query][#fragment]`.
+// Initialize with `url(raw: "https://user:pass@host:443/p?q=1#f")` and
+// inspect any of the parsed components individually: scheme, user /
+// password user-info pair, host, port, path, parsed query map, raw
+// query string, and fragment.
+url @defaults("string") {
+  init(raw string)
+  // The full URL as a string
+  string() string
+  // Scheme (e.g., http, https, ssh)
+  scheme string
+  // User component (can contain username or token but no password)
+  user string
+  // Password, an additional optional component of the user info
+  password string
+  // Host, either registered name or IP (e.g., mondoo.com)
+  host string
+  // Port, optional decimal number (e.g., 80)
+  port int
+  // Path, consisting of segments separated by '/'
+  path string
+  // Query, optional, attached to path via '?', parsed via '&' and ';' delimiters
+  query map[string]string
+  // Raw query, optional raw string attached to path after '?'
+  rawQuery string
+  // Fragment, optional raw string attached to path after '#'
+  rawFragment string
+}
+
+// TLS/SSL connection inspection
+//
+// Examine the TLS posture of a network endpoint. Initialize with
+// `tls(target: "host:port")` (an optional `domainName` enables SNI
+// testing). Surfaces every TLS / SSL version the endpoint accepts,
+// the cipher suites and extensions advertised, the version / cipher
+// / key-exchange group a modern client actually negotiates, and the
+// served certificate chain — both the SNI-aware chain and the
+// non-SNI fallback. The resource an audit uses to find weak protocol
+// versions, weak ciphers, expired certs, and missing OCSP / SCT
+// support.
+tls @defaults("socket domainName") {
+  init(target string)
+  // Socket of this connection
+  socket socket
+  // An optional domain name to test
+  domainName string
+  // List of all parameters for this TLS/SSL connection
+  params(socket, domainName) dict
+  // Version of TLS/SSL that is being used
+  versions(params) []string
+  // Ciphers supported by this TLS/SSL connection
+  ciphers(params) []string
+  // Supported cipher suites parsed into components and security properties
+  cipherSuites(params) []tls.cipher
+  // Extensions supported by this TLS/SSL connection
+  extensions(params) []string
+  // Key exchange group negotiated during the TLS handshake (e.g., X25519, X25519MLKEM768)
+  negotiatedGroup(socket, domainName) string
+  // TLS version negotiated by a modern client (e.g., "TLS 1.3")
+  negotiatedVersion(socket, domainName) string
+  // Cipher suite negotiated by a modern client (e.g., "TLS_AES_128_GCM_SHA256")
+  negotiatedCipher(socket, domainName) string
+  // Certificates provided in this TLS/SSL connection
+  certificates(socket, domainName) []certificate
+  // Certificates provided without server name indication (SNI)
+  nonSniCertificates(socket, domainName) []certificate
+  // Whether the served leaf certificate covers the connection hostname
+  //
+  // Matches the connection's domain name against the leaf certificate's
+  // Subject Alternative Name DNS entries using RFC 6125 wildcard rules,
+  // so `*.example.com` covers `api.example.com`. Unlike chain
+  // verification, this isolates hostname coverage — it is true when the
+  // certificate vouches for the host you connected to, independent of
+  // chain trust or expiry. Null when the connection has no domain name
+  // to match, such as when connecting directly to an IP address.
+  certificateMatchesDomain() bool
+}
+
+// TLS/SSL cipher suite
+//
+// Examine a single negotiable cipher suite broken into its key-exchange,
+// authentication, bulk-encryption, and MAC components, plus derived security
+// properties. Components are parsed best-effort from the IANA/OpenSSL suite
+// name, so audits can select suites by property — for example
+// `forwardSecrecy == false` or `cbc` — instead of matching the raw name with
+// regular expressions. Unknown components are empty.
+private tls.cipher @defaults("name") {
+  // Cipher suite name, e.g. "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"
+  name string
+  // Key-exchange algorithm, e.g. "ECDHE", "DHE", or "RSA"
+  //
+  // Empty for TLS 1.3 suites, where the key exchange is negotiated separately
+  // from the cipher suite.
+  keyExchange string
+  // Authentication algorithm, e.g. "RSA", "ECDSA", or "anon"
+  authentication string
+  // Bulk encryption algorithm, e.g. "AES_128_GCM", "3DES_EDE_CBC", or "RC4_128"
+  encryption string
+  // Message authentication or PRF hash, e.g. "SHA256", "SHA", or "MD5"
+  mac string
+  // Whether the suite provides forward secrecy
+  //
+  // True for ephemeral key exchanges (ECDHE, DHE) and all TLS 1.3 suites.
+  forwardSecrecy bool
+  // Whether the suite uses authenticated encryption (GCM, CCM, or ChaCha20-Poly1305)
+  aead bool
+  // Whether the suite is export-grade (deliberately weakened)
+  export bool
+  // Whether the suite uses null (no) encryption
+  nullCipher bool
+  // Whether the suite is anonymous and performs no server authentication
+  anonymous bool
+  // Whether the suite uses CBC mode, which is exposed to a class of padding attacks
+  cbc bool
+}
+
+// X.509 certificate bundle
+//
+// Examine a list of certificates parsed from PEM content. Use it to
+// iterate over a chain and apply per-certificate checks, or to
+// extract the underlying `pem` source.
+certificates {
+  []certificate
+  // PEM content
+  pem string
+}
+
+// X.509 certificate
+//
+// Examine a single X.509 certificate parsed from PEM. Surfaces the
+// raw PEM, every SHA-1 / SHA-256 fingerprint, the serial number, the
+// subject and authority key identifiers, the parsed PKIX subject and
+// issuer distinguished names, version, validity window
+// (`notBefore`, `notAfter`, `expiresIn`), signature and signing
+// algorithm, the `isCA` flag, key usages and extended key usages, the
+// raw and SAN extensions, policy identifiers, CRL distribution points,
+// OCSP server and issuing-certificate URLs, the revoked / verified /
+// expired flags, public-key algorithm and bit length, the
+// `hasSCTs` flag (Certificate Transparency) and the maximum CA chain
+// path length.
+certificate @defaults("serial subject.commonName subject.dn") {
+  // PEM content
+  pem string
+  // Certificate fingerprints
+  fingerprints() map[string]string
+  // Serial number
+  serial() string
+  // Subject unique identifier
+  subjectKeyID() string
+  // Authority key identifier
+  authorityKeyID() string
+  // Distinguished name of the certificate subject
+  subject() pkix.name
+  // Distinguished name of the certificate issuer
+  issuer() pkix.name
+  // Version number
+  version() int
+  // Validity period validity period
+  notBefore() time
+  // Validity period not after
+  notAfter() time
+  // Expiration duration
+  expiresIn() time
+  // Signature
+  signature() string
+  // Signature algorithm ID
+  signingAlgorithm() string
+  // Whether the certificate is from a certificate authority
+  isCA() bool
+  // Key usage
+  keyUsage() []string
+  // Extended key usage
+  extendedKeyUsage() []string
+  // Extensions
+  extensions() []pkix.extension
+  // Policy identifier
+  policyIdentifier() []string
+  // CRL distribution points
+  crlDistributionPoints() []string
+  // OCSP responder URLs for revocation checking
+  ocspServer() []string
+  // Issuing certificate URL
+  issuingCertificateUrl() []string
+  // Whether this certificate has been revoked
+  isRevoked() bool
+  // The time at which this certificate was revoked
+  revokedAt() time
+  // Whether the certificate is valid (based on its chain)
+  isVerified() bool
+  // SAN extension value params
+  sanExtension() pkix.sanExtension
+  // Public key algorithm (e.g., RSA, ECDSA, Ed25519)
+  publicKeyAlgorithm() string
+  // Public key size in bits (e.g., 2048, 256, 384)
+  publicKeyBits() int
+  // Whether the certificate has expired
+  isExpired() bool
+  // Whether Signed Certificate Timestamps (SCTs) are present (Certificate Transparency)
+  hasSCTs() bool
+  // Maximum CA chain depth (null if unconstrained, 0 = no intermediates allowed)
+  maxPathLen() int
+}
+
+// X.509 PKIX name
+//
+// Examine a parsed RFC 5280 distinguished name (DN) — the structured
+// form of a certificate's subject or issuer. Surfaces the canonical
+// DN string, common name, country, organization and organizational
+// unit, locality, province, street address, postal code, serial
+// number, and any extra named attributes.
+pkix.name @defaults("id dn commonName") {
+  // Cache key derived from the distinguished name
+  id string
+  // Distinguished name qualifier
+  dn string
+  // Serial number
+  serialNumber string
+  // Common name
+  commonName string
+  // Country
+  country []string
+  // Organization
+  organization []string
+  // Organizational unit
+  organizationalUnit []string
+  locality []string
+  // State or province
+  province []string
+  // Street address
+  streetAddress []string
+  // Postal code
+  postalCode []string
+  names      map[string]string
+  extraNames map[string]string
+}
+
+// X.509 PKIX extension
+//
+// Examine a single extension carried by an X.509 certificate: its
+// OID identifier (e.g., 2.5.29.37 for extKeyUsage), the `critical`
+// flag, and the raw extension value.
+pkix.extension @defaults("id") {
+  // Cache key derived from the extension identifier
+  id string
+  // Extension identifier (OID, e.g., 2.5.29.37 for extKeyUsage)
+  identifier string
+  // Whether the extension is critical
+  critical bool
+  // Extension value
+  value string
+}
+
+// X.509 certificate PKIX Subject Alternative Name (SAN) extension
+private pkix.sanExtension @defaults("dnsNames") {
+	// x509 certificate PKIX extension
+	extension pkix.extension
+	// DNS names
+	dnsNames []string
+	// IP addresses
+	ipAddresses []string
+	// Email addresses
+	emailAddresses []string
+	// URIs
+	uris []string
+}
+
+// List of OpenPGP entities parsed from a string
+private openpgp.entities {
+  []openpgp.entity(content)
+  content string
+}
+
+// OpenPGP entity
+private openpgp.entity {
+  // Primary public key, which must be a signing key
+  primaryPublicKey openpgp.publicKey
+  // Entity's identities
+  identities() []openpgp.identity
+}
+
+// OpenPGP public key
+private openpgp.publicKey {
+  // Key ID
+  id string
+  // Key version
+  version int
+  // Key fingerprint
+  fingerprint string
+  // Public key algorithm (e.g., RSA, ECDSA, Ed25519)
+  keyAlgorithm string
+  // Key bit length
+  bitLength int
+  // Key creation time
+  creationTime time
+}
+
+// OpenPGP identity
+private openpgp.identity {
+  // Primary key fingerprint
+  fingerprint string
+  // Full name in form of `Full Name (comment) <email@example.com>`
+  id string
+  // Real name from the OpenPGP user ID
+  name string
+  // Email address from the OpenPGP user ID
+  email string
+  // Free-form comment from the OpenPGP user ID
+  comment string
+  // Identity signatures
+  signatures() []openpgp.signature
+}
+
+// OpenPGP signature
+private openpgp.signature {
+  // Primary key fingerprint
+  fingerprint string
+  // Identity name
+  identityName string
+  // Signature hash
+  hash string
+  // Signature version
+  version int
+  // Signature type
+  signatureType string
+  // Public-key algorithm of the signing key (e.g., RSA, ECDSA, Ed25519)
+  keyAlgorithm string
+  // Creation time
+  creationTime time
+  // Signature lifetime in seconds
+  lifetimeSecs int
+  // Expiration duration
+  expiresIn time
+  // Key lifetime in seconds
+  keyLifetimeSecs int
+  // Key expiration duration
+  keyExpiresIn time
+}
+
+// Domain name
+//
+// Examine a parsed FQDN. Initialize with `domainName(fqdn: "x.example.com")`.
+// Surfaces the FQDN itself, the effective TLD plus one (the
+// registrable domain), the TLD, an `tldIcannManaged` flag indicating
+// whether the TLD is in the ICANN-managed list, and the individual
+// dot-separated labels.
+domainName @defaults("fqdn") {
+  init(fqdn string)
+  // Fully qualified domain name (FQDN)
+  fqdn string
+  // effectiveTLDPlusOne returns the effective top level domain plus one more label
+  effectiveTLDPlusOne string
+  // Top-level domain
+  tld string
+  // Whether the TLD is ICANN managed
+  tldIcannManaged bool
+  // Domain labels
+  labels []string
+}
+
+// DNS resource
+//
+// Examine the DNS records published for a fully-qualified domain
+// name. Initialize with `dns(fqdn: "example.com")`. Surfaces every
+// resolved record, the MX record list, and a parsed view of any DKIM
+// public-key records discovered for the domain.
+dns @defaults("fqdn") {
+  init(fqdn string)
+  // Fully qualified domain name (FQDN)
+  fqdn string
+  // Params is a list of all parameters for DNS FQDN
+  params(fqdn) dict
+  // Successful DNS records
+  records(params) []dns.record
+  // Successful DNS MX records
+  mx(params) []dns.mxRecord
+  // DKIM TXT records
+  dkim(params) []dns.dkimRecord
+  // DNSSEC signing state for the domain
+  dnssec(params) dns.dnssecConfig
+  // Parsed SPF (Sender Policy Framework) records
+  spf(params) []dns.spfRecord
+  // Parsed DMARC record published at the domain's _dmarc subdomain
+  dmarc() dns.dmarcRecord
+  // Reverse DNS (PTR) records for the domain's resolved addresses
+  //
+  // Resolves the domain's A and AAAA addresses, then looks up the PTR
+  // record for each — the forward-confirmed reverse DNS round trip. Use
+  // it to confirm an address resolves back to the expected hostname
+  // without hand-building `in-addr.arpa` names.
+  reverse(params) []dns.record
+}
+
+// DNS record
+//
+// Examine a single resolved DNS record: name, type, class, TTL, and
+// the rdata payload (IP addresses, hostnames, or other values
+// depending on the record type).
+dns.record @defaults("name type") {
+  // DNS name
+  name string
+  // Time-to-live (TTL) in seconds
+  ttl int
+  // DNS class
+  class string
+  // DNS type
+  type string
+  // DNS record response data (IP addresses, hostnames, or other values depending on record type)
+  rdata []string
+}
+
+// DNS MX record
+//
+// Examine a single MX record: the record name, the resolved target
+// `domainName`, and the `preference` value used to choose between
+// multiple MX records.
+dns.mxRecord @defaults("domainName") {
+  // Record name
+  name string
+  // Which mail server used if multiple MX records exist
+  preference int
+  // Domain name
+  domainName string
+}
+
+// DNSSEC configuration for a domain
+//
+// Examine whether a domain is signed with DNSSEC and how. Reports whether
+// the domain publishes DNSKEY records, the parsed signing keys, and the
+// distinct algorithm numbers in use, so audits can require DNSSEC and flag
+// weak or deprecated algorithms without parsing raw DNSKEY rdata. `enabled`
+// reflects the presence of published DNSKEY records and does not, on its own,
+// validate the DS chain of trust at the parent zone.
+dns.dnssecConfig @defaults("enabled") {
+  // Whether the domain publishes DNSKEY records
+  enabled bool
+  // Published DNSKEY signing keys
+  keys []dns.dnssecKey
+  // Distinct DNSSEC algorithm numbers across all published keys
+  //
+  // Algorithm numbers as defined in RFC 8624, e.g. 8 (RSASHA256) or
+  // 13 (ECDSAP256SHA256). Use it to flag deprecated algorithms such as
+  // 5/7 (RSASHA1) or 3 (DSA).
+  algorithms []int
+}
+
+// DNSKEY record (RFC 4034)
+//
+// Examine a single published DNSSEC key: its flags, protocol, algorithm
+// number, and base64-encoded public key. `keySigningKey` is true for a
+// key-signing key — the one whose SEP flag is set (flags value 257) — as
+// opposed to a zone-signing key (flags value 256).
+private dns.dnssecKey @defaults("algorithm keySigningKey") {
+  // DNSKEY flags field, e.g. 256 for a zone-signing key or 257 for a key-signing key
+  flags int
+  // Protocol field, always 3 for DNSSEC
+  protocol int
+  // DNSSEC algorithm number (RFC 8624), e.g. 8 (RSASHA256) or 13 (ECDSAP256SHA256)
+  algorithm int
+  // Base64-encoded public key
+  publicKey string
+  // Whether this is a key-signing key (the SEP flag is set)
+  keySigningKey bool
+}
+
+// SPF policy record (RFC 7208)
+//
+// Examine a parsed Sender Policy Framework record from a domain's TXT records:
+// the version, the ordered list of mechanisms, and the qualifier on the
+// terminating `all` mechanism that decides how unauthorized senders are
+// handled. Select a domain's records with `dns(fqdn: "example.com").spf`.
+private dns.spfRecord @defaults("dnsTxt allQualifier") {
+  // Raw TXT record
+  dnsTxt string
+  // Version tag, e.g. "spf1"
+  version string
+  // Ordered SPF mechanisms and modifiers
+  //
+  // All terms after the version, in order, including the terminating `all`
+  // term — for example `["ip4:192.0.2.0/24", "include:_spf.example.com",
+  // "-all"]`. The `all` qualifier is also surfaced separately as
+  // `allQualifier`.
+  mechanisms []string
+  // Qualifier on the terminating `all` mechanism
+  //
+  // One of `+` (pass), `-` (fail), `~` (softfail), or `?` (neutral). A bare
+  // `all` is reported as `+` (the SPF default). Empty when the record has no
+  // `all` mechanism.
+  allQualifier string
+}
+
+// DMARC policy record (RFC 7489)
+//
+// Examine a parsed DMARC record from a domain's `_dmarc` TXT record: the policy
+// applied to failing mail, the subdomain policy, the aggregate and forensic
+// report destinations, the percentage of mail the policy covers, and the
+// SPF/DKIM identifier alignment modes. Reachable as
+// `dns(fqdn: "example.com").dmarc`, which resolves the `_dmarc` subdomain
+// itself.
+private dns.dmarcRecord @defaults("policy") {
+  // Raw TXT record
+  dnsTxt string
+  // Version tag, e.g. "DMARC1"
+  version string
+  // Policy applied to mail that fails DMARC
+  //
+  // One of `none`, `quarantine`, or `reject` (the `p=` tag).
+  policy string
+  // Policy applied to subdomains (the `sp=` tag); empty when not set
+  subdomainPolicy string
+  // Aggregate report destination URIs (the `rua=` tag)
+  aggregateReportUris []string
+  // Forensic report destination URIs (the `ruf=` tag)
+  forensicReportUris []string
+  // Percentage of failing mail the policy is applied to (the `pct=` tag)
+  //
+  // Defaults to 100 when the tag is absent.
+  percentage int
+  // SPF identifier alignment mode (the `aspf=` tag): `r` relaxed or `s` strict
+  spfAlignment string
+  // DKIM identifier alignment mode (the `adkim=` tag): `r` relaxed or `s` strict
+  dkimAlignment string
+}
+
+// DKIM public-key DNS record (RFC 6376)
+//
+// Examine a parsed DKIM TXT record: the raw DNS text, the selector
+// domain, the version, the acceptable hash algorithms, the key type,
+// the base64-encoded public-key data, the service-type restrictions,
+// the DKIM flags, free-form notes, and a `valid()` predicate that
+// validates the record and its public key.
+dns.dkimRecord @defaults("dnsTxt") {
+  // DNS text representation
+  dnsTxt string
+  // DKIM selector domain
+  domain string
+  // Version
+  version string
+  // Acceptable hash algorithms
+  hashAlgorithms []string
+  // Key type
+  keyType string
+  // Free-form notes about the DKIM record
+  notes string
+  // Public key data base64-encoded
+  publicKeyData string
+  // Service types this DKIM key is restricted to (e.g., email, *)
+  serviceTypes []string
+  // DKIM flags (e.g., y for testing, s to require exact selector match)
+  flags []string
+  // Whether the DKIM entry and public key is valid
+  valid() bool
+}
