@@ -48,6 +48,7 @@ require (
 	go.mondoo.com/mondoo-go v0.0.0-20261112084338-6bd209e2cc03
 	go.mondoo.com/mql v0.0.0-20261124204500-245500bdcb95
 	go.mondoo.com/ranger-rpc v0.8.3
+	go.yaml.in/yaml/v3 v3.0.6
 	gocloud.dev v0.49.0
 	golang.org/x/sync v0.25.0
 	golang.org/x/sys v0.50.0
@@ -345,7 +346,6 @@ require (
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap v1.28.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.5 // indirect
-	go.yaml.in/yaml/v3 v3.0.6 // indirect
 	golang.org/x/crypto v0.58.0 // indirect
 	golang.org/x/exp v0.0.0-20261014143641-f0251eb4aa3e // indirect
 	golang.org/x/mod v0.42.0 // indirect
